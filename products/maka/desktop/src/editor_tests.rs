@@ -298,6 +298,34 @@ impl Scene {
             std::thread::park_timeout(std::time::Duration::from_millis(1));
         }
     }
+    // Multi-scene fixtures must observe the previous application's foreground
+    // owner release before creating its successor in the same GPUI context.
+    fn close_and_drain(&self, cx: &mut TestAppContext) {
+        self.close(cx);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            cx.run_until_parked();
+            let drained = cx.update(|cx| {
+                actions::quit_when_drained(&self.app, cx);
+                !cx.has_global::<actions::Owner>()
+            });
+            let cleaned = match self.cleanup.borrow().as_ref() {
+                Some(result) => {
+                    result.as_ref().unwrap();
+                    true
+                }
+                None => false,
+            };
+            if cleaned && drained {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "original application owner did not finish cleanup"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+    }
     fn close(&self, cx: &mut TestAppContext) {
         cx.update_window(self.window, |_, window, _| window.remove_window())
             .unwrap();
@@ -1189,7 +1217,7 @@ fn real_composer_snapshot_precedes_reset_and_capture_conflict_does_not_fake_scen
         }
         assert_eq!(scene.app.borrow().accepted_action_count(), 0);
         drop(owner);
-        scene.close(cx);
+        scene.close_and_drain(cx);
     }
 }
 struct HeldRead {

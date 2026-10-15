@@ -29,9 +29,11 @@
 
 首次安装会在 TUI 内确认工作目录信任，然后才启动 Host、启用项目技能与工具。Tab 或方向键选择，Enter 确认，Esc 退出；默认选中退出。确认后在同一终端画面中初始化并进入产品。再次打开使用已保存的安装，不重复询问。
 
+启动时自动发现并连接本机 Host；不存在则自动启动。TUI 与 Desktop 可以共享同一个 Host。默认退出 UI 时，若没有其他客户端连接，Host 也会退出。TUI 中可用 Ctrl+Alt+Q 仅关闭界面，让已接受的后台任务继续运行，重连后观察结果。
+
 ## 产品恢复与 URL 安装
 
-通过 CLI 修改已有 Root 前，先关闭该产品的 UI 和本地 Host。两个命令默认使用 `~/.maka/application`；可用 `--root DIRECTORY` 选择其他安装。
+恢复前先关闭产品 UI；恢复通过管理服务更新独立 Host。直接安装插件包时，所选 Root 必须处于未运行状态。两个命令默认使用 `~/.maka/application`；可用 `--root DIRECTORY` 选择其他安装。
 
 ```sh
 maka application restore-defaults

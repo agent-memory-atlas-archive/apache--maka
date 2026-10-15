@@ -34,6 +34,8 @@ use std::{
     sync::Arc,
     task::{Wake, Waker},
 };
+gpui_kit::actions!(maka, [Quit, CloseUiAndKeepHost]);
+
 type Connections = Arc<tokio::sync::Mutex<maka_transport::Connections>>;
 type Observer = Shared<LocalBoxFuture<'static, ()>>;
 struct Job {
@@ -47,6 +49,7 @@ struct State {
     caller: Option<Arc<maka_event_log::EventLog>>,
     draining: Cell<bool>,
     quitting: Cell<bool>,
+    exit_mode: Cell<maka_transport::ExitMode>,
     launch: RefCell<Option<launch::State>>,
     failure: RefCell<Option<String>>,
     native: RefCell<BTreeMap<uuid::Uuid, Rc<RefCell<super::resources::NativeResources>>>>,
@@ -68,6 +71,9 @@ impl Wake for UiWake {
     }
 }
 impl Owner {
+    pub(super) fn exit_mode(&self) -> maka_transport::ExitMode {
+        self.0.exit_mode.get()
+    }
     pub(super) fn retain_native(&self, resources: Rc<RefCell<super::resources::NativeResources>>) {
         let root = resources.borrow().surface().id();
         let mut native = self.0.native.borrow_mut();
@@ -239,6 +245,7 @@ pub(super) fn own(
         caller,
         draining: Cell::new(false),
         quitting: Cell::new(false),
+        exit_mode: Cell::new(maka_transport::ExitMode::Quit),
         launch: RefCell::new(None),
         failure: RefCell::new(None),
         native: RefCell::new(BTreeMap::new()),
@@ -307,6 +314,37 @@ pub(super) fn own(
     .detach();
     // Installed once per App. The callback captures no application/Root lease.
     if !cx.has_global::<QuitGate>() {
+        cx.on_action(|_: &Quit, cx| {
+            // Menu/key actions run inside the active Window's update. Release
+            // that borrow before requesting removal of every native window.
+            cx.defer(|cx| {
+                request_quit(cx);
+            });
+        });
+        cx.on_action(|_: &CloseUiAndKeepHost, cx| {
+            if let Some(owner) = cx.try_global::<Owner>() {
+                if owner.0.quitting.get() || owner.0.draining.get() {
+                    return;
+                }
+                owner.0.exit_mode.set(maka_transport::ExitMode::KeepHost);
+            }
+            cx.defer(|cx| {
+                request_quit(cx);
+            });
+        });
+        cx.set_menus([gpui_kit::Menu::new("Maka").items([
+            gpui_kit::MenuItem::action("Close UI and Keep Host", CloseUiAndKeepHost),
+            gpui_kit::MenuItem::action("Quit Maka", Quit),
+        ])]);
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-q"
+            } else {
+                "ctrl-q"
+            },
+            Quit,
+            None,
+        )]);
         cx.on_request_quit(request_quit)
             .map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
         cx.set_global(QuitGate);
@@ -470,13 +508,14 @@ pub(super) fn quit_when_drained(application: &Rc<RefCell<DesktopApplication>>, c
         let connections = owner.0.connections.clone();
         let caller = owner.0.caller.clone();
         let updates = owner.take_updates();
+        let exit_mode = owner.exit_mode();
         owner.0.draining.set(true);
         let task = application.borrow().scheduler().spawn(async move {
             if let Some(updates) = updates {
                 updates.drain().await;
             }
             if let Some(connections) = connections {
-                connections.lock().await.drain().await;
+                connections.lock().await.drain_with(exit_mode).await;
             }
             if let Some(caller) = caller {
                 caller.drain().await;

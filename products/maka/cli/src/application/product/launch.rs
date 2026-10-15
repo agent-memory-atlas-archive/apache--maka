@@ -117,7 +117,7 @@ impl Launch {
                 Ok(Some(selected))
             }
         }.await;
-        let (deployment, configuration) = match result {
+        let (deployment, configuration, anchors) = match result {
             Ok(Some(value)) => value,
             Ok(None) => {
                 store.drain().await;
@@ -128,7 +128,7 @@ impl Launch {
                 return Err(error);
             }
         };
-        run_tui(store, deployment, configuration, startup).await
+        run_tui(store, deployment, configuration, startup, anchors).await
     }
 }
 async fn standard_configuration(
@@ -195,12 +195,12 @@ pub(super) fn targets(
     configuration: &Configuration,
 ) -> Result<(PathBuf, String, Uuid, Uuid), HostError> {
     configuration.validate().map_err(HostError::from)?;
-    let mut process = None;
+    let mut public = None;
     let mut management = None;
     for host in &configuration.hosts {
         match &host.location {
-            HostLocation::Process { root, state_domain } if process.is_none() => {
-                process = Some((
+            HostLocation::Public { root, state_domain } if public.is_none() => {
+                public = Some((
                     root.clone(),
                     state_domain
                         .clone()
@@ -209,10 +209,10 @@ pub(super) fn targets(
                 ))
             }
             HostLocation::Cohost {} if management.is_none() => management = Some(host.deployment),
-            _ => return Err("product launch requires one process Host and one cohost".into()),
+            _ => return Err("product launch requires one public Host and one cohost".into()),
         }
     }
-    let (path, domain, host) = process.ok_or("product Host is missing")?;
+    let (path, domain, host) = public.ok_or("product Host is missing")?;
     Ok((
         path,
         domain,
@@ -224,7 +224,14 @@ pub(super) async fn prepare(
     store: &EventLog,
     configuration: Option<Installation>,
     product: Product,
-) -> Result<(Uuid, Configuration), HostError> {
+) -> Result<
+    (
+        Uuid,
+        Configuration,
+        Vec<maka_host_runtime::application::host::Client>,
+    ),
+    HostError,
+> {
     let record = match store.application_launch().await? {
         Some(record) => {
             if configuration.is_some() {
@@ -262,25 +269,55 @@ pub(super) async fn prepare(
             &preparation.sources.remote_exports,
             &packages,
         )?;
-        let host_store = open(root, false, Some(domain)).await?;
+        if preparation.restore.is_empty() {
+            bootstrap_host(
+                &root,
+                &domain,
+                host,
+                &connections,
+                &preparation.sources.host,
+                &host_packages,
+            )
+            .await?;
+        }
+        let public = super::public::Host::connect(root.clone(), domain.clone(), host).await?;
         let result = async {
-            for (target, deployment, input, observations, packages) in [
+            if preparation.restore.is_empty() {
+                public
+                    .ensure_initial(&preparation.sources.host, &[], &host_packages)
+                    .await?;
+            } else {
+                let previous = host_configuration(&connections)?;
+                let desired = host_configuration(&serde_json::from_value(
+                    preparation.sources.connections.clone(),
+                )?)?;
+                let configuration =
+                    if serde_json::to_value(&previous)? == serde_json::to_value(&desired)? {
+                        None
+                    } else {
+                        Some((previous, desired))
+                    };
+                public
+                    .ensure_restore(
+                        *preparation
+                            .restore
+                            .get(&host)
+                            .ok_or("restore revision missing")?,
+                        &preparation.sources.host,
+                        &[],
+                        &host_packages,
+                        configuration,
+                    )
+                    .await?;
+            }
+            for (deployment, input, observations, packages) in [
                 (
-                    &host_store,
-                    host,
-                    &preparation.sources.host,
-                    &[][..],
-                    host_packages.as_slice(),
-                ),
-                (
-                    store,
                     management,
                     &preparation.sources.management_host,
                     &[][..],
                     management_packages.as_slice(),
                 ),
                 (
-                    store,
                     record.deployment,
                     &preparation.sources.ui,
                     preparation.sources.remote_exports.as_slice(),
@@ -288,10 +325,10 @@ pub(super) async fn prepare(
                 ),
             ] {
                 if preparation.restore.is_empty() {
-                    ensure(target, deployment, input, observations, packages).await?;
+                    ensure(store, deployment, input, observations, packages).await?;
                 } else {
                     super::restore::ensure(
-                        target,
+                        store,
                         deployment,
                         *preparation
                             .restore
@@ -319,13 +356,67 @@ pub(super) async fn prepare(
             Ok::<_, HostError>(())
         }
         .await;
-        host_store.drain().await;
         result?;
-    } else if maka_event_log::root::resolve(&root)?.root_id() != domain {
-        return Err("original product Host Root changed".into());
+        return Ok((record.deployment, connections, vec![public.into_client()]));
     }
-    Ok((record.deployment, connections))
+    let public = super::public::Host::connect(root, domain, host).await?;
+    Ok((record.deployment, connections, vec![public.into_client()]))
 }
+fn host_configuration(
+    configuration: &Configuration,
+) -> Result<maka_host_runtime::application::host::Configuration, HostError> {
+    let connection = configuration
+        .hosts
+        .iter()
+        .find(|connection| matches!(&connection.location, HostLocation::Public { .. }))
+        .ok_or("product public Host missing")?;
+    let configuration = maka_host_runtime::application::host::Configuration::PublicHost {
+        endpoints: connection.endpoints.clone(),
+        native: connection.native.clone(),
+    };
+    configuration.validate()?;
+    Ok(configuration)
+}
+
+async fn bootstrap_host(
+    root: &std::path::Path,
+    domain: &str,
+    deployment: Uuid,
+    connections: &Configuration,
+    input: &Input,
+    packages: &[Package],
+) -> Result<(), HostError> {
+    let host_store = match open(root.into(), false, Some(domain.into())).await {
+        Ok(store) => store,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock) =>
+        {
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    let connection = connections
+        .hosts
+        .iter()
+        .find(|connection| matches!(&connection.location, HostLocation::Public { .. }))
+        .ok_or("product public Host missing")?;
+    let result = super::headless::save_product(
+        &host_store,
+        deployment,
+        input,
+        packages,
+        connection.endpoints.clone(),
+        connection.native.clone(),
+    )
+    .await;
+    // Public startup can acquire Root only after bootstrap has actually drained.
+    host_store.drain().await;
+    drop(host_store);
+    result
+}
+
 async fn begin(store: &EventLog, input: Installation, product: Product) -> Result<(), HostError> {
     let version = super::bundle_fingerprint()?;
     let authoring = super::authoring()?;
@@ -363,9 +454,9 @@ async fn begin(store: &EventLog, input: Installation, product: Product) -> Resul
         }
         let packages = tokio::task::spawn_blocking(packages).await??;
         let version = super::verified_fingerprint(&authoring, &packages, &version)?;
-        let (mut sources, installation) = super::author_with_source(product, configuration, &packages, &authoring).await?;
+        let (mut sources, installation, _) = super::author_with_source(product, configuration, &packages, &authoring).await?;
         for host in sources.connections["hosts"].as_array_mut().ok_or("product connections missing")? {
-            if host["location"]["kind"] == "process" {
+            if host["location"]["kind"] == "public" {
                 host["location"]["stateDomain"] = Value::String(owner.root_id().into());
             }
         }

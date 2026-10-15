@@ -31,6 +31,7 @@ fn default_product_input_continues_while_the_original_stdout_owner_is_blocked() 
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let host = directory.path().join("host");
+    let host_guard = HostRootGuard::new(&host);
     let ui = directory.path().join("ui");
     let configuration = directory.path().join("installation.json");
     let namespaces = RootNamespaces::for_current_account().unwrap();
@@ -111,6 +112,7 @@ fn default_product_input_continues_while_the_original_stdout_owner_is_blocked() 
     tui.wait_for("Native input after original output completion");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     server.join().unwrap();
     assert!(!tui.screen.snapshot().unwrap().alternate_screen);
     drop(RootOwner::open(&host, &namespaces).unwrap());
@@ -124,6 +126,7 @@ fn large_history_fixture(model_base: Option<&str>) -> (tempfile::TempDir, std::p
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
     let host = ui.join("host");
+    let host_guard = HostRootGuard::new(&host);
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -144,7 +147,7 @@ fn large_history_fixture(model_base: Option<&str>) -> (tempfile::TempDir, std::p
     let mut bootstrap = Pty::spawn(&args);
     bootstrap.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     bootstrap.send(b"\x11");
-    // Wait for the original Host shutdown as well as terminal restoration.
+    // First restore the terminal, then explicitly retire the business Host.
     let closing = Instant::now();
     while bootstrap.child.try_wait().unwrap().is_none() {
         bootstrap.read();
@@ -154,6 +157,7 @@ fn large_history_fixture(model_base: Option<&str>) -> (tempfile::TempDir, std::p
         );
     }
     bootstrap.finish();
+    host_guard.stop();
     runtime.block_on(async {
         let identity = maka_fs_tools::workspace::ensure_identity(&workspace).await.unwrap();
         let published = maka_fs_tools::workspace::directory::PublishedDirectory::open(&workspace).unwrap();
@@ -210,6 +214,7 @@ fn large_history_fixture(model_base: Option<&str>) -> (tempfile::TempDir, std::p
 #[ignore = "manual default product history scroll profiling in a real PTY"]
 fn default_product_scrolls_large_imported_history() {
     let (_directory, ui) = large_history_fixture(None);
+    let host_guard = HostRootGuard::new(&ui.join("host"));
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     eprintln!("scroll fixture PID {}", tui.child.id());
     tui.wait_until_with_timeout(|s| s.contains("Scroll fixture"), Duration::from_secs(60));
@@ -300,6 +305,7 @@ fn default_product_scrolls_large_imported_history() {
     evidence(&tui, "scroll-profile");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
 }
 
 #[test]
@@ -314,6 +320,7 @@ fn default_product_sends_over_large_imported_history() {
         .unwrap_or(2);
     let server = model_server(listener, requests, rounds, 0);
     let (_directory, ui) = large_history_fixture(Some(&base));
+    let host_guard = HostRootGuard::new(&ui.join("host"));
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     eprintln!("send fixture PID {}", tui.child.id());
     tui.wait_until_with_timeout(|s| s.contains("Scroll fixture"), Duration::from_secs(60));
@@ -409,6 +416,7 @@ fn default_product_sends_over_large_imported_history() {
     tui.wait_for(draft);
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     server.join().unwrap();
     for reopen in 0..2 {
         let mut restored = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
@@ -427,6 +435,7 @@ fn default_product_sends_over_large_imported_history() {
         evidence(&restored, "large-history-draft-restored");
         restored.send(b"\x11");
         restored.finish();
+        host_guard.stop();
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             use sqlx::{Connection, Row};
             let mut db = sqlx::SqliteConnection::connect_with(&sqlx::sqlite::SqliteConnectOptions::new()

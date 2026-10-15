@@ -19,7 +19,7 @@
 
 //! Public application caller: an anchored authenticated session, no legacy operations.
 use super::{
-    Status, VERSION,
+    Configuration, Status, VERSION,
     protocol::{Connected, Opening, Request, Response, SessionControl},
 };
 use crate::{
@@ -142,6 +142,9 @@ impl Client {
     pub fn epoch(&self) -> Uuid {
         self.connected.epoch
     }
+    pub fn source(&self) -> &DeploymentRef {
+        &self.connected.source
+    }
     /// Open inert custody for one exact captured endpoint. A caller retains this
     /// Call through errors; reconnection never retries an unconfirmed mutation.
     pub async fn call(
@@ -180,29 +183,19 @@ impl Client {
     /// Establish only the authenticated session channel. The native adapter retains
     /// its original checked Source, Call and caller-side RecordedIntent.
     pub async fn open_call_channel(&self) -> Result<BufReader<LocalStream>> {
+        self.call_channel_opener()?.open().await
+    }
+    /// Freeze only this already authenticated session's physical target. It owns
+    /// no anchor, caller approval, source, or operation token and cannot reconnect.
+    pub fn call_channel_opener(&self) -> Result<CallChannelOpener> {
         if self.phase != Phase::Ready {
             return Err("Host session control is not ready".into());
         }
-        let mut stream = ipc::connect(&self.address)
-            .await
-            .map_err(|error| error.to_string())?;
-        wire::write(
-            &mut stream,
-            &Opening {
-                client_instance: None,
-                version: VERSION,
-                epoch: Some(self.connected.epoch),
-                request: Request::Call {
-                    session: self.connected.session,
-                },
-            },
-        )
-        .await?;
-        let mut reader = wire::Reader::new(stream);
-        if !matches!(reader.read::<Response>().await?, Response::Accepted) {
-            return Err("Host did not accept application channel".into());
-        }
-        Ok(reader.inner)
+        Ok(CallChannelOpener {
+            address: self.address.clone(),
+            epoch: self.connected.epoch,
+            session: self.connected.session,
+        })
     }
     fn ready_peer(&self) -> Result<&DeploymentRef> {
         if self.phase != Phase::Ready {
@@ -356,6 +349,56 @@ impl Client {
             }
         }
     }
+    /// Close this local session and stop its Host when no other session remains.
+    /// A separate epoch-pinned channel also works after losing a control observer;
+    /// a partial frame on the original anchor must never receive another command.
+    pub async fn quit(&mut self) -> Result<()> {
+        if self.phase == Phase::Closed {
+            return Ok(());
+        }
+        self.phase = Phase::Lost;
+        match control(
+            &self.address,
+            Some(self.connected.epoch),
+            Request::Quit {
+                session: self.connected.session,
+            },
+        )
+        .await?
+        {
+            Response::Closed => {
+                self.phase = Phase::Closed;
+                Ok(())
+            }
+            _ => Err("Host quit cleanup remains unconfirmed".into()),
+        }
+    }
+    /// Persist trusted configuration and apply it to this same Host incarnation.
+    /// A lost response must be retried with the same source and desired value.
+    pub async fn configure(
+        &self,
+        source: DeploymentRef,
+        previous: Configuration,
+        configuration: Configuration,
+    ) -> Result<()> {
+        if self.phase != Phase::Ready || self.peer.is_some() {
+            return Err("Host configuration requires a ready local owner session".into());
+        }
+        match control(
+            &self.address,
+            Some(self.connected.epoch),
+            Request::Configure {
+                source,
+                previous,
+                configuration,
+            },
+        )
+        .await?
+        {
+            Response::Configured(result) => result,
+            _ => Err("Host configuration response mismatch".into()),
+        }
+    }
     pub async fn prepare_access(
         address: &Path,
         epoch: Uuid,
@@ -408,6 +451,38 @@ impl Client {
             Response::Retired(result) => result,
             _ => Err("Host retirement response mismatch".into()),
         }
+    }
+}
+/// An immutable physical target captured from an authenticated Client. The
+/// embedding must fence native calls before detaching that Client's anchor.
+#[derive(Clone)]
+pub struct CallChannelOpener {
+    address: PathBuf,
+    epoch: Uuid,
+    session: Uuid,
+}
+impl CallChannelOpener {
+    pub async fn open(&self) -> Result<BufReader<LocalStream>> {
+        let mut stream = ipc::connect(&self.address)
+            .await
+            .map_err(|error| error.to_string())?;
+        wire::write(
+            &mut stream,
+            &Opening {
+                client_instance: None,
+                version: VERSION,
+                epoch: Some(self.epoch),
+                request: Request::Call {
+                    session: self.session,
+                },
+            },
+        )
+        .await?;
+        let mut reader = wire::Reader::new(stream);
+        if !matches!(reader.read::<Response>().await?, Response::Accepted) {
+            return Err("Host did not accept application channel".into());
+        }
+        Ok(reader.inner)
     }
 }
 async fn control(address: &Path, epoch: Option<Uuid>, request: Request) -> Result<Response> {

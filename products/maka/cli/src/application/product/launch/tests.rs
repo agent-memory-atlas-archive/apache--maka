@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::super::test_public::PublishedHost;
 use super::*;
 use maka_plugin_core::composition::{Environment, ExecutionLocation, PresentationTarget};
 use serde_json::json;
@@ -39,7 +40,7 @@ async fn pending(store: &EventLog, host: &EventLog) -> (Uuid, Uuid, Uuid) {
     let endpoint = json!({"service":{"consumer":[Uuid::new_v4()],"import":"service","grant":{"methods":["read"],"recovery":true}}});
     let owner = host.owned_root().unwrap();
     let connections = json!({"hosts":[
-        {"name":"local","location":{"kind":"process","root":owner.canonical_path(),"stateDomain":owner.root_id()},"deployment":host_id,"endpoints":endpoint},
+        {"name":"local","location":{"kind":"public","root":owner.canonical_path(),"stateDomain":owner.root_id()},"deployment":host_id,"endpoints":endpoint},
         {"name":"manager","location":{"kind":"cohost"},"deployment":management,"endpoints":endpoint}
     ]});
     let selection = connections.clone();
@@ -73,7 +74,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
     let ui_path = directory.path().join("ui");
     let host_path = directory.path().join("host");
     let store = open(ui_path.clone(), true, None).await.unwrap();
-    let host = open(host_path.clone(), true, None).await.unwrap();
+    let host = Arc::new(open(host_path.clone(), true, None).await.unwrap());
     let (ui, host_id, management) = pending(&store, &host).await;
     ensure(&host, host_id, &input(), &[], &[]).await.unwrap();
     let mut edited = input();
@@ -87,12 +88,11 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
     ensure(&store, management, &input(), &[], &[])
         .await
         .unwrap();
-    host.drain().await;
+    let serving = PublishedHost::start(host.clone(), host_id).await;
     store.drain().await;
-    drop(host);
     drop(store);
     let store = open(ui_path.clone(), false, None).await.unwrap();
-    let (selected, _) = prepare(&store, None, Product::Studio).await.unwrap();
+    let (selected, _, clients) = prepare(&store, None, Product::Studio).await.unwrap();
     assert_eq!(selected, ui);
     assert!(
         store
@@ -125,7 +125,6 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .revision,
         1
     );
-    let host = open(host_path, false, None).await.unwrap();
     assert_eq!(
         host.load_application(host_id)
             .await
@@ -136,7 +135,7 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .revision,
         2
     );
-    host.drain().await;
+    drop(clients);
     store
         .commit_application(ui, 1, input(), vec![], vec![])
         .await
@@ -162,6 +161,8 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
             .revision,
         2
     );
+    serving.stop().await;
+    drop(host);
     store.drain().await;
 }
 
@@ -169,9 +170,11 @@ async fn partial_initialization_resumes_original_inputs_and_preserves_new_heads(
 async fn conflicting_original_commit_keeps_pending_record_and_does_not_create_ui() {
     let directory = tempfile::tempdir().unwrap();
     let store = open(directory.path().join("ui"), true, None).await.unwrap();
-    let host = open(directory.path().join("host"), true, None)
-        .await
-        .unwrap();
+    let host = Arc::new(
+        open(directory.path().join("host"), true, None)
+            .await
+            .unwrap(),
+    );
     let (ui, host_id, _) = pending(&store, &host).await;
     let mut conflicting = input();
     conflicting.environment = Environment {
@@ -181,8 +184,7 @@ async fn conflicting_original_commit_keeps_pending_record_and_does_not_create_ui
     host.commit_application(host_id, 0, conflicting, vec![], vec![])
         .await
         .unwrap();
-    host.drain().await;
-    drop(host);
+    let serving = PublishedHost::start(host.clone(), host_id).await;
     let error = prepare(&store, None, Product::Agent).await.err().unwrap();
     assert!(error.to_string().contains("conflicts"), "{error}");
     assert!(
@@ -195,6 +197,8 @@ async fn conflicting_original_commit_keeps_pending_record_and_does_not_create_ui
             .is_some()
     );
     assert!(store.load_application(ui).await.unwrap().is_none());
+    serving.stop().await;
+    drop(host);
     store.drain().await;
 }
 

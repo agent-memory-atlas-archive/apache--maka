@@ -188,7 +188,7 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
         composition::PresentationTarget,
         package::{EntryTarget, Implementation},
     };
-    use maka_transport::{Connections, HostExecutable};
+    use maka_transport::Connections;
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("cohost");
     let namespaces = RootNamespaces {
@@ -284,7 +284,7 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
         PresentationTarget::Desktop,
         configuration,
         namespaces.clone(),
-        HostExecutable::new("absent-cohost-executable".into(), vec![]).unwrap(),
+        std::path::PathBuf::from("unused-cohost-startup-helper"),
         native,
         Some(maka_host_js::factory(Default::default())),
     )
@@ -348,7 +348,7 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cohost_retains_independent_receipts_when_selected_business_cannot_start() {
     use maka_plugin_core::composition::PresentationTarget;
-    use maka_transport::{Connections, HostExecutable};
+    use maka_transport::Connections;
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("cohost");
@@ -366,7 +366,7 @@ async fn cohost_retains_independent_receipts_when_selected_business_cannot_start
             "name":"local", "location":{"kind":"cohost"}, "deployment":host, "endpoints":{"business":{"consumer":support::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},"receipts":{"consumer":support::identity(14),"import":"receipts","grant":{"methods":["read"],"recovery":true}}}
         }]})).unwrap();
         let mut connections = Connections::prepare(store.clone(), ui.deployment, PresentationTarget::Tui,
-            configuration, namespaces.clone(), HostExecutable::new("unused-cohost-program".into(), vec![]).unwrap(), NativeRegistry::default(),
+            configuration, namespaces.clone(), std::path::PathBuf::from("unused-cohost-startup-helper"), NativeRegistry::default(),
 Some(maka_host_js::factory(Default::default())),).await.unwrap();
         connections.start().await.unwrap();
         assert_eq!(connections.registrations().len(), 1);

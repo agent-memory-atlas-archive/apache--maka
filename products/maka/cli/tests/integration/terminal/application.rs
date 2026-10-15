@@ -270,7 +270,89 @@ fn plugin_application_setup_rejection_is_clean_and_diagnostics_cannot_emit_escap
 #[allow(dead_code)]
 #[path = "../../../../../../platform/transport/tests/support/mod.rs"]
 mod local_fixture;
-fn local_arguments(directory: &std::path::Path, unrelated_failure: bool) -> Vec<String> {
+/// Tests retain the business Host independently of every foreground UI. This
+/// guard also retires product auto-started Hosts before temporary Roots vanish.
+pub(super) struct HostRootGuard(std::path::PathBuf);
+impl HostRootGuard {
+    pub(super) fn new(root: &std::path::Path) -> Self {
+        Self(root.to_path_buf())
+    }
+    pub(super) fn stop(&self) {
+        self.retire().unwrap();
+    }
+    fn retire(&self) -> Result<(), String> {
+        use maka_host_runtime::application::host::{Client, discovery};
+        if !self.0.exists() {
+            return Ok(());
+        }
+        let discovery = match discovery::read(&self.0) {
+            Ok(discovery) => Some(discovery),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.to_string()),
+        };
+        if let Some(discovery) = discovery {
+            let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
+            runtime.block_on(async {
+                // A startup failure may already be draining. Its disappearing
+                // status channel is not cleanup proof; the Root lease below is.
+                if let Ok(status) =
+                    Client::status(&discovery.endpoint, Some(discovery.host_epoch)).await
+                    && !status.closing
+                    && !status.closed
+                {
+                    discovery
+                        .verify(&status)
+                        .map_err(|error| error.to_string())?;
+                    if !Client::retire_with_options(
+                        &discovery.endpoint,
+                        discovery.host_epoch,
+                        true,
+                        false,
+                    )
+                    .await?
+                    {
+                        return Err("Host did not accept explicit retirement".into());
+                    }
+                }
+                Ok::<_, String>(())
+            })?;
+        }
+        let namespaces = maka_event_log::root::RootNamespaces::for_current_account()
+            .map_err(|error| error.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            match maka_event_log::root::RootOwner::open(&self.0, &namespaces) {
+                Ok(owner) => {
+                    drop(owner);
+                    return Ok(());
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::park_timeout(Duration::from_millis(5));
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+    }
+}
+impl Drop for HostRootGuard {
+    fn drop(&mut self) {
+        if let Err(error) = self.retire() {
+            if !std::thread::panicking() {
+                panic!("Host cleanup failed: {error}");
+            }
+            eprintln!("Host cleanup after test failure: {error}");
+        }
+    }
+}
+
+fn local_arguments(
+    directory: &std::path::Path,
+    unrelated_failure: bool,
+    automatic: bool,
+) -> (Vec<String>, Option<std::process::Child>) {
     let timer = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_time()
@@ -306,32 +388,112 @@ fn local_arguments(directory: &std::path::Path, unrelated_failure: bool) -> Vec<
         }
     });
     let path = directory.join("connections.json");
+    let endpoints = serde_json::json!({"business":{"consumer":local_fixture::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},"receipts":{"consumer":local_fixture::identity(13),"import":"receipts","grant":{"methods":["read"],"recovery":true}}});
+    let endpoints_path = directory.join("endpoints.json");
+    std::fs::write(&endpoints_path, serde_json::to_vec(&endpoints).unwrap()).unwrap();
     std::fs::write(&path,serde_json::to_vec(&serde_json::json!({"hosts":[{
-        "name":"local","location":{"kind":"process","root":directory.join("host")},"deployment":host,"endpoints":{"business":{"consumer":local_fixture::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},"receipts":{"consumer":local_fixture::identity(13),"import":"receipts","grant":{"methods":["read"],"recovery":true}}}
+        "name":"local","location":{"kind":"public","root":directory.join("host")},"deployment":host,"endpoints":endpoints
     }]})).unwrap()).unwrap();
-    vec![
-        "application".into(),
-        "run".into(),
-        "--root".into(),
-        directory.join("caller").to_str().unwrap().into(),
-        "--deployment".into(),
-        caller.to_string(),
-        "--connections".into(),
-        path.to_str().unwrap().into(),
-    ]
+    let child = if automatic {
+        None
+    } else {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_maka"))
+            .args(["application", "serve", "--root"])
+            .arg(directory.join("host"))
+            .args(["--deployment", &host.to_string(), "--endpoints"])
+            .arg(endpoints_path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::BufRead;
+        let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut poll = libc::pollfd {
+            fd: stdout.get_ref().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        assert!(
+            unsafe { libc::poll(&mut poll, 1, 30_000) } > 0,
+            "public Host did not become ready"
+        );
+        let mut line = String::new();
+        stdout.read_line(&mut line).unwrap();
+        let ready: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(ready["kind"], "ready");
+        Some(child)
+    };
+    (
+        vec![
+            "application".into(),
+            "run".into(),
+            "--root".into(),
+            directory.join("caller").to_str().unwrap().into(),
+            "--deployment".into(),
+            caller.to_string(),
+            "--connections".into(),
+            path.to_str().unwrap().into(),
+        ],
+        child,
+    )
 }
 #[test]
 fn production_terminal_connections_execute_host_mutation_and_read_original_receipt_before_exit() {
-    check_terminal_connections(false);
+    check_terminal_connections(false, false);
 }
 #[test]
 fn production_terminal_connections_remain_available_after_independent_host_startup_failure() {
-    check_terminal_connections(true);
+    check_terminal_connections(true, false);
 }
-fn check_terminal_connections(unrelated_failure: bool) {
+#[test]
+fn generic_terminal_automatically_starts_its_committed_host_and_reuses_it_on_reopen() {
+    check_terminal_connections(false, true);
+}
+#[test]
+fn default_terminal_exit_stops_its_last_client_host_process_and_releases_both_roots() {
     let directory = tempfile::tempdir().unwrap();
-    let args = local_arguments(directory.path(), unrelated_failure);
-    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let host_root = directory.path().join("host");
+    let _guard = HostRootGuard::new(&host_root);
+    // A service Host has no idle retirement, so exit proves the UI requested it.
+    let (arguments, child) = local_arguments(directory.path(), false, false);
+    let mut child = child.unwrap();
+    let args = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut tui = Pty::spawn(&args);
+    tui.wait_for("Read Host");
+    tui.send(b"\r");
+    tui.wait_for("\"effects\":0");
+    tui.send(b"\x11");
+    tui.finish();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "last-client Host exit failed: {status}");
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "default UI exit left its last-client Host running"
+        );
+        std::thread::park_timeout(Duration::from_millis(5));
+    }
+    let namespaces = maka_event_log::root::RootNamespaces::for_current_account().unwrap();
+    drop(
+        maka_event_log::root::RootOwner::open(&directory.path().join("caller"), &namespaces)
+            .unwrap(),
+    );
+    drop(maka_event_log::root::RootOwner::open(&host_root, &namespaces).unwrap());
+}
+
+fn check_terminal_connections(unrelated_failure: bool, automatic: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let host_root = directory.path().join("host");
+    let guard = HostRootGuard::new(&host_root);
+    let (arguments, mut host_child) =
+        local_arguments(directory.path(), unrelated_failure, automatic);
+    let args = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+    if automatic {
+        assert!(maka_host_runtime::application::host::discovery::read(&host_root).is_err());
+    }
     let mut tui = Pty::spawn(&args);
     if unrelated_failure {
         tui.wait_for("unrelated initializer rejected");
@@ -339,6 +501,15 @@ fn check_terminal_connections(unrelated_failure: bool) {
         tui.send(b"\r");
     }
     tui.wait_for("Read Host");
+    let discovery = maka_host_runtime::application::host::discovery::read(&host_root).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    // Default UI exit must leave the Host available to this independent client.
+    let keepalive = runtime
+        .block_on(maka_host_runtime::application::host::Client::connect(
+            &discovery.endpoint,
+            Some(discovery.host_epoch),
+        ))
+        .unwrap();
     tui.send(b"\r");
     tui.wait_for("\"effects\":0");
     tui.send(b"\t\r");
@@ -349,7 +520,104 @@ fn check_terminal_connections(unrelated_failure: bool) {
     tui.finish();
     let ns = maka_event_log::root::RootNamespaces::for_current_account().unwrap();
     drop(maka_event_log::root::RootOwner::open(&directory.path().join("caller"), &ns).unwrap());
-    drop(maka_event_log::root::RootOwner::open(&directory.path().join("host"), &ns).unwrap());
+    if let Some(child) = &mut host_child {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "UI exit stopped the independent Host"
+        );
+    }
+    let error = maka_event_log::root::RootOwner::open(&host_root, &ns)
+        .err()
+        .expect("Host must retain its original Root");
+    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    runtime.block_on(async {
+        use maka_host_runtime::application::host::Client;
+        use maka_host_runtime::application::transport::{Call, Reply, Source};
+        let status = Client::status(&discovery.endpoint, Some(discovery.host_epoch))
+            .await
+            .unwrap();
+        discovery.verify(&status).unwrap();
+        assert!(!status.closing && !status.closed);
+        assert_eq!(status.sessions, 1);
+        let caller = std::sync::Arc::new(
+            maka_event_log::root::RootOwner::open(&directory.path().join("caller"), &ns).unwrap(),
+        );
+        let store = maka_event_log::EventLog::for_root(caller).await.unwrap();
+        let caller_id = arguments[5].parse().unwrap();
+        let intents = store
+            .application_intents(caller_id, local_fixture::identity(2), 0, 10)
+            .await
+            .unwrap();
+        assert_eq!(intents.len(), 1, "one original UI write, never replayed");
+        let intent = &intents[0];
+        let configuration: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join("connections.json")).unwrap(),
+        )
+        .unwrap();
+        let endpoints =
+            serde_json::from_value(configuration["hosts"][0]["endpoints"].clone()).unwrap();
+        let mut peer = Client::connect_peer(
+            &discovery.endpoint,
+            Some(discovery.host_epoch),
+            intent.caller.clone(),
+            [intent.consumer.clone()].into(),
+            endpoints,
+        )
+        .await
+        .unwrap();
+        let channel = peer.open_call_channel().await.unwrap();
+        let (reader, writer) = tokio::io::split(channel);
+        let mut read = Call::new(
+            reader,
+            writer,
+            peer.catalogue().select("receipts").unwrap(),
+            Source {
+                deployment: intent.caller.clone(),
+                consumer: intent.consumer.clone(),
+                mount: uuid::Uuid::new_v4(),
+                request: uuid::Uuid::new_v4(),
+            },
+            "read".into(),
+            serde_json::to_value(&intent.reference).unwrap(),
+            Default::default(),
+        );
+        read.start().await.unwrap();
+        let Reply::Finished {
+            result: Ok(value),
+            cleanup: Ok(()),
+        } = read.receive().await.unwrap()
+        else {
+            panic!("original receipt was not readable after UI exit");
+        };
+        assert_eq!(
+            value["reference"],
+            serde_json::to_value(&intent.reference).unwrap()
+        );
+        assert_eq!(value["receipt"]["kind"], "recorded");
+        assert_eq!(value["receipt"]["outcome"]["value"]["effects"], 1);
+        peer.close().await.unwrap();
+        store.close().await.unwrap();
+    });
+    let mut reopened = Pty::spawn(&args);
+    if unrelated_failure {
+        reopened.wait_for("unrelated initializer rejected");
+        reopened.wait_for("open recovery interface");
+        reopened.send(b"\r");
+    }
+    reopened.wait_for("Read Host");
+    reopened.send(b"\r");
+    reopened.wait_for("\"effects\":1");
+    reopened.send(b"\x11");
+    reopened.finish();
+    if let Some(child) = &mut host_child {
+        assert!(child.try_wait().unwrap().is_none());
+    }
+    drop(keepalive);
+    guard.stop();
+    if let Some(mut child) = host_child {
+        assert!(child.wait().unwrap().success());
+    }
+    drop(maka_event_log::root::RootOwner::open(&host_root, &ns).unwrap());
     let snapshot = tui.screen.snapshot().unwrap();
     assert!(!snapshot.alternate_screen);
     assert!(snapshot.cursor.visible);

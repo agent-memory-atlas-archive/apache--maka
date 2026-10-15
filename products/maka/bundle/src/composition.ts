@@ -580,7 +580,7 @@ function settingsComposition(
       },
       {
         name: 'local',
-        location: { kind: 'process', root: configuration.hostRoot },
+        location: { kind: 'public', root: configuration.hostRoot },
         deployment: configuration.hostDeployment,
         endpoints: {
           management: expose(

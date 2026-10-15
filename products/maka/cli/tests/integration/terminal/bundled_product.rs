@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::application::HostRootGuard;
 use super::*;
 use maka_event_log::root::{RootNamespaces, RootOwner};
 use serde_json::json;
@@ -52,6 +53,7 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let host = directory.path().join("host");
+    let host_guard = HostRootGuard::new(&host);
     let ui = directory.path().join("ui");
     let configuration = directory.path().join("installation.json");
     std::fs::write(
@@ -70,6 +72,9 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
     )
     .unwrap();
     let namespaces = RootNamespaces::for_current_account().unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut anchor = None;
+    let mut host_epoch = None;
     for first in [true, false] {
         let mut args = vec!["application", "launch", "--root", ui.to_str().unwrap()];
         if first {
@@ -92,6 +97,20 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
             "bundled launch first={first}: first frame in {:?}",
             started.elapsed()
         );
+        if first {
+            // An independent client keeps the shared Host resident across UI
+            // exits and the offline UI edits between these two launches.
+            let discovery = maka_host_runtime::application::host::discovery::read(&host).unwrap();
+            host_epoch = Some(discovery.host_epoch);
+            anchor = Some(
+                runtime
+                    .block_on(maka_host_runtime::application::host::Client::connect(
+                        &discovery.endpoint,
+                        Some(discovery.host_epoch),
+                    ))
+                    .unwrap(),
+            );
+        }
         tui.send(b"\x0b");
         tui.wait_for("Close commands");
         // The first character after a newly visible dialog must survive its
@@ -113,7 +132,6 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
             // No authoring input remains for reopening; the record selects the
             // committed deployment, whose user-updated head must remain authoritative.
             std::fs::remove_file(&configuration).unwrap();
-            let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {
                 let owner = std::sync::Arc::new(RootOwner::open(&ui, &namespaces).unwrap());
                 let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
@@ -147,7 +165,6 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
                 store.close().await.unwrap();
             });
         } else {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {
                 let owner = std::sync::Arc::new(RootOwner::open(&ui, &namespaces).unwrap());
                 let store = maka_event_log::EventLog::for_root(owner).await.unwrap();
@@ -166,10 +183,31 @@ fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() 
                 store.close().await.unwrap();
             });
         }
-        for root in [&host, &ui] {
-            drop(RootOwner::open(root, &namespaces).unwrap());
+        drop(RootOwner::open(&ui, &namespaces).unwrap());
+        let error = RootOwner::open(&host, &namespaces)
+            .err()
+            .expect("UI exit must leave the business Host resident");
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+        let discovery = maka_host_runtime::application::host::discovery::read(&host).unwrap();
+        if let Some(epoch) = host_epoch {
+            assert_eq!(discovery.host_epoch, epoch);
         }
+        host_epoch = Some(discovery.host_epoch);
+        runtime.block_on(async {
+            let status = maka_host_runtime::application::host::Client::status(
+                &discovery.endpoint,
+                Some(discovery.host_epoch),
+            )
+            .await
+            .unwrap();
+            discovery.verify(&status).unwrap();
+        });
     }
+    runtime.block_on(async {
+        anchor.take().unwrap().close().await.unwrap();
+    });
+    host_guard.stop();
+    drop(RootOwner::open(&host, &namespaces).unwrap());
 }
 
 #[test]
@@ -180,6 +218,7 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
     use std::sync::Arc;
     let directory = tempfile::tempdir().unwrap();
     let host = directory.path().join("host");
+    let host_guard = HostRootGuard::new(&host);
     let ui = directory.path().join("ui");
     let configuration = directory.path().join("installation.json");
     std::fs::write(
@@ -227,6 +266,7 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
         "{}",
         String::from_utf8_lossy(&failed.stderr)
     );
+    host_guard.stop();
     let (ui_id, host_id) = runtime.block_on(async {
         let owner = Arc::new(RootOwner::open(&ui, &namespaces).unwrap());
         let store = EventLog::for_root(owner.clone()).await.unwrap();
@@ -243,7 +283,7 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|host| host["location"]["kind"] == "process")
+            .find(|host| host["location"]["kind"] == "public")
             .unwrap()["deployment"]
             .as_str()
             .unwrap()
@@ -309,6 +349,7 @@ fn bundled_product_launch_recovers_partial_commits_without_reauthoring() {
     );
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     runtime.block_on(async {
         let owner = Arc::new(RootOwner::open(&ui, &namespaces).unwrap());
         let store = EventLog::for_root(owner).await.unwrap();
@@ -355,6 +396,7 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let host = directory.path().join("host");
+    let host_guard = HostRootGuard::new(&host);
     let ui = directory.path().join("ui");
     let configuration = directory.path().join("configuration.json");
     std::fs::write(&configuration,serde_json::to_vec(&json!({
@@ -375,6 +417,7 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
     );
     first.send(b"\x11");
     first.finish();
+    host_guard.stop();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let namespaces = RootNamespaces::for_current_account().unwrap();
     let namespace = Namespace::new("maka.application.authoring", Scope::Profile).unwrap();
@@ -434,6 +477,7 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
     runtime.block_on(sql.close()).unwrap();
     resumed.send(b"\x11");
     resumed.finish();
+    host_guard.stop();
     runtime.block_on(async {
         let store = EventLog::for_root(Arc::new(RootOwner::open(&host, &namespaces).unwrap()))
             .await
@@ -493,6 +537,7 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
     );
     restored_ui.send(b"\x11");
     restored_ui.finish();
+    host_guard.stop();
     runtime.block_on(async {
         let store = EventLog::for_root(Arc::new(RootOwner::open(&host, &namespaces).unwrap()))
             .await
@@ -515,6 +560,7 @@ fn bundled_ui_authoring_installs_and_reloads_original_source_without_replaying()
 fn first_install_trust_uses_one_terminal_and_cancel_has_no_product_effects() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("ui");
+    let _host_guard = HostRootGuard::new(&root.join("host"));
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let args = [
@@ -563,6 +609,7 @@ fn first_install_trust_uses_one_terminal_and_cancel_has_no_product_effects() {
 fn first_install_failure_keeps_original_host_error_after_terminal_restoration() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("ui");
+    let _host_guard = HostRootGuard::new(&root.join("host"));
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let mut tui = Pty::spawn(&[
@@ -626,6 +673,7 @@ fn first_install_failure_keeps_original_host_error_after_terminal_restoration() 
 #[ignore = "starts the bundled product and checks connection settings in a native PTY"]
 fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
     let directory = tempfile::tempdir().unwrap();
+    let _host_guard = HostRootGuard::new(&directory.path().join("host"));
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let configuration = directory.path().join("installation.json");
@@ -729,6 +777,7 @@ fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
 #[ignore = "checks live language changes and persistence in the real product PTY"]
 fn bundled_language_switch_updates_and_remains_responsive() {
     let directory = tempfile::tempdir().unwrap();
+    let _host_guard = HostRootGuard::new(&directory.path().join("host"));
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let configuration = directory.path().join("installation.json");

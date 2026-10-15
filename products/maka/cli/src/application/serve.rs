@@ -17,21 +17,70 @@
  * under the License.
  */
 
-//! Compiled product availability for the shared private Host process.
+//! Explicit persisted deployment served by the public Host owner.
 use clap::Args;
-use maka_host_runtime::{HostError, application::NativeRegistry};
+use maka_host_runtime::{
+    HostError,
+    application::{
+        NativeRegistry,
+        host::{Host, LifecycleMode, Options},
+        transport::{HostEndpoint, NativeGrant},
+    },
+};
+use serde_json::json;
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use tokio_util::sync::CancellationToken;
+
 #[derive(Args)]
-pub(crate) struct Serve {}
+pub(crate) struct Serve {
+    /// Existing State Root containing the committed Host deployment.
+    #[arg(long)]
+    root: PathBuf,
+    #[arg(long)]
+    deployment: uuid::Uuid,
+    /// Public endpoint selections and their explicit method grants in JSON.
+    #[arg(long, value_name = "FILE")]
+    endpoints: PathBuf,
+    /// Explicit grants for native background calls in JSON.
+    #[arg(long, value_name = "FILE")]
+    native: Option<PathBuf>,
+}
 pub(super) fn native() -> Result<NativeRegistry, HostError> {
     let mut native = NativeRegistry::default();
     maka_product_native::provide(&mut native)?;
     Ok(native)
 }
-pub(super) async fn run(_: Serve) -> Result<(), HostError> {
-    maka_transport::transport::process::serve(
+pub(super) async fn run(args: Serve) -> Result<(), HostError> {
+    let endpoints: BTreeMap<String, HostEndpoint> = super::read_json(&args.endpoints)?;
+    let grants: Vec<NativeGrant> = args
+        .native
+        .as_deref()
+        .map(super::read_json)
+        .transpose()?
+        .unwrap_or_default();
+    let store = Arc::new(super::open_store(args.root).await?);
+    let host = Host::open_with_options(
+        store,
+        args.deployment,
         native()?,
         Some(maka_host_js::factory(Default::default())),
+        endpoints,
+        grants,
+        Options {
+            lifecycle_mode: LifecycleMode::Service,
+            ..Default::default()
+        },
     )
     .await
-    .map_err(Into::into)
+    .map_err(HostError::from)?;
+    let endpoint = crate::endpoint::LocalEndpoint::bind()?;
+    let cancellation = CancellationToken::new();
+    let _signals = crate::signals::watch(cancellation.clone())?;
+    let registration = host.publish_registration(&endpoint.path, None)?;
+    println!(
+        "{}",
+        json!({"kind":"ready","rootId":host.root_id(),"socketPath":endpoint.path})
+    );
+    let result = crate::serve::listen(endpoint, None, host, cancellation).await;
+    result.and(registration.remove().map_err(Into::into))
 }

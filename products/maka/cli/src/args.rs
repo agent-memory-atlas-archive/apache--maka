@@ -107,6 +107,9 @@ enum HostCommand {
         #[arg(long)]
         allow_interrupt_active_tasks: bool,
     },
+    /// Coordinate automatic local startup for a trusted UI launcher.
+    #[command(hide = true)]
+    Ensure(crate::startup::Ensure),
     /// Run a discoverable ephemeral Host under its launcher.
     Candidate(candidate::Candidate),
     /// Run only the currently admitted supervised deployment.
@@ -148,7 +151,7 @@ impl Cli {
         }
         let finite = matches!(&self.command, Some(Command::Host(command)) if !matches!(command,
             HostCommand::Candidate(_) | HostCommand::Serve { .. } | HostCommand::ServiceRun(_)
-            | HostCommand::Connect(_)));
+            | HostCommand::Connect(_) | HostCommand::Ensure(_)));
         if finite {
             let default = if matches!(
                 &self.command,
@@ -191,6 +194,7 @@ impl Cli {
             Command::Host(HostCommand::Fetch(args)) => args.run().await,
             Command::Host(HostCommand::Access(args)) => args.run().await,
             Command::Host(HostCommand::Candidate(args)) => args.run().await,
+            Command::Host(HostCommand::Ensure(args)) => args.run().await,
             Command::Host(HostCommand::Install(args)) => args.run().await,
             Command::Host(HostCommand::Setup(args)) => args.run().await,
             Command::Host(HostCommand::Activate(args)) => args.run().await,

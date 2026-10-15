@@ -60,8 +60,9 @@ pub type Stream = Box<dyn Channel>;
 /// Trusted physical admission only. A fresh channel belongs to the same
 /// authenticated Host incarnation that published the frozen Selection.
 /// Cancellation requests settlement of this same opening. Its future must
-/// complete before custody is released; an error confirms that no execution or
-/// physical custody remains outside the embedding. Dropping or panicking an
+/// complete before custody is released; an error confirms that no caller input,
+/// operation token or admitted execution escaped. An independent Host may still
+/// own inert pre-Open channels. Dropping or panicking an
 /// opening observer does not establish that confirmation.
 pub trait Connector: Send + Sync + 'static {
     fn connect(&self, stop: CancellationToken) -> BoxFuture<'static, Result<Stream>>;

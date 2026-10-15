@@ -55,6 +55,7 @@ fn default_product_restores_accepted_code_mode_and_original_native_effect() {
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
     let host = ui.join("host");
+    let host_guard = HostRootGuard::new(&host);
     let namespaces = RootNamespaces::for_current_account().unwrap();
     // The standard Host is nested inside an already owned UI Root.
     drop(RootOwner::create(&ui, &namespaces).unwrap());
@@ -122,6 +123,7 @@ fn default_product_restores_accepted_code_mode_and_original_native_effect() {
     assert!(received.try_recv().is_err());
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
 
     // Change the next-message policy only after the original product has closed.
     runtime.block_on(async {
@@ -194,6 +196,7 @@ fn default_product_restores_accepted_code_mode_and_original_native_effect() {
     );
     restored.send(b"\x11");
     restored.finish();
+    host_guard.stop();
     server.join().unwrap();
     runtime.block_on(async {
         sql.close().await.unwrap();

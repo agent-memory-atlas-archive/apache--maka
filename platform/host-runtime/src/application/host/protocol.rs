@@ -18,11 +18,44 @@
  */
 
 use super::super::Result;
-use super::super::transport::{Catalogue, HostEndpoint};
+use super::super::transport::{Catalogue, HostEndpoint, NativeGrant};
 use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
+
+/// Persisted trusted-local Host publication and native invocation authority.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Configuration {
+    PublicHost {
+        endpoints: BTreeMap<String, HostEndpoint>,
+        native: Vec<NativeGrant>,
+    },
+}
+impl Configuration {
+    pub fn validate(&self) -> Result<()> {
+        let Self::PublicHost { endpoints, native } = self;
+        if endpoints.is_empty()
+            || endpoints.len() > 128
+            || endpoints
+                .keys()
+                .any(|name| name.is_empty() || name.len() > 256)
+        {
+            return Err("invalid public Host endpoint configuration".into());
+        }
+        for endpoint in endpoints.values() {
+            endpoint.validate()?;
+        }
+        if native.len() > 128 {
+            return Err("maximum 128 native service grants".into());
+        }
+        for grant in native {
+            grant.validate()?;
+        }
+        Ok(())
+    }
+}
 
 pub const VERSION: u32 = 1;
 #[derive(Serialize, Deserialize)]
@@ -48,6 +81,15 @@ pub enum Request {
         session: Uuid,
     },
     Status,
+    Quit {
+        session: Uuid,
+    },
+    /// Current-account owner only. Source/packages remain a separate CAS operation.
+    Configure {
+        source: DeploymentRef,
+        previous: Configuration,
+        configuration: Configuration,
+    },
     Retire {
         #[serde(default)]
         interrupt: bool,
@@ -79,6 +121,7 @@ pub enum Response {
         result: Result<()>,
     },
     Status(Status),
+    Configured(Result<()>),
     Retired(Result<bool>),
     Closed,
     Pairing(Result<super::Pairing>),

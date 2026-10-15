@@ -108,6 +108,10 @@ fn validate(
     observations: &[RemoteObservation],
     bytes: &[Package],
 ) -> Result<Plan, StoreError> {
+    let packages = validate_packages(bytes)?;
+    validate_plan(input, observations, &packages)
+}
+fn validate_packages(bytes: &[Package]) -> Result<Packages, StoreError> {
     let mut packages = Packages::default();
     let mut references = BTreeSet::new();
     for package in bytes {
@@ -123,6 +127,13 @@ fn validate(
             .insert(package.application_ref(), declaration.clone())
             .map_err(|e| invalid(e.to_string()))?;
     }
+    Ok(packages)
+}
+fn validate_plan(
+    input: &Input,
+    observations: &[RemoteObservation],
+    packages: &Packages,
+) -> Result<Plan, StoreError> {
     let mut remote = RemoteExports::new();
     for observation in observations {
         if remote
@@ -135,7 +146,7 @@ fn validate(
             return Err(invalid("duplicate remote capability observation"));
         }
     }
-    Plan::prepare(input, &packages, &remote).map_err(|e| invalid(e.to_string()))
+    Plan::prepare(input, packages, &remote).map_err(|e| invalid(e.to_string()))
 }
 fn check_document(
     input: &Input,
@@ -167,6 +178,23 @@ pub fn validate_application(
         bytes.iter().map(Package::application_ref).collect(),
     )?;
     validate(input, observations, bytes).map(|_| ())
+}
+
+/// Check several sources against the same immutable package set. Each source
+/// keeps its own document budget, remote observations and resulting plan.
+pub fn validate_applications(
+    sources: &[(&Input, &[RemoteObservation])],
+    bytes: &[Package],
+) -> Result<Vec<Plan>, StoreError> {
+    let references: Vec<_> = bytes.iter().map(Package::application_ref).collect();
+    for (input, observations) in sources {
+        check_document(input, observations, references.clone())?;
+    }
+    let packages = validate_packages(bytes)?;
+    sources
+        .iter()
+        .map(|(input, observations)| validate_plan(input, observations, &packages))
+        .collect()
 }
 impl EventLog {
     fn application_domain(&self) -> Result<String, StoreError> {

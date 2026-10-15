@@ -306,8 +306,7 @@ fn actual_reading_tail_checks_wheel_and_completed_selection_before_whole_scene_p
             }
             assert!(!scene.app.borrow().is_retiring(&scene.root));
             assert_eq!(scene.app.borrow().accepted_action_count(), 0);
-            scene.close(cx);
-            scene.app.borrow_mut().shutdown().unwrap();
+            scene.close_and_drain(cx);
         }
     });
 }

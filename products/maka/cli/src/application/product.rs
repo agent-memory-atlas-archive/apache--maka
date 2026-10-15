@@ -20,15 +20,19 @@
 use super::{HostError, Input, Package, RemoteObservation, read_json};
 use clap::{Args, ValueEnum};
 use maka_js_runtime::plugin::Vm;
+use maka_plugin_core::plan::Plan;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, io::Write, path::PathBuf};
 
 mod headless;
 mod launch;
+mod public;
 mod restore;
+#[cfg(test)]
+mod test_public;
 mod update;
-pub(crate) use headless::{Roots, open_host};
+pub(crate) use headless::{Roots, open_host, select_committed_host};
 pub(crate) use launch::Launch;
 pub(super) use restore::Restore;
 pub(super) use update::Update;
@@ -86,7 +90,7 @@ impl Compose {
         let packages = tokio::task::spawn_blocking(packages).await??;
         let authoring = authoring()?;
         verified_fingerprint(&authoring, &packages, &version)?;
-        let (sources, installation) =
+        let (sources, installation, _) =
             author_with_source(self.product, configuration, &packages, &authoring).await?;
         tokio::task::spawn_blocking(move || export(self.output, sources, installation, packages))
             .await??;
@@ -229,7 +233,7 @@ async fn author(
     product: Product,
     configuration: Value,
     packages: &BTreeMap<String, Package>,
-) -> Result<(Sources, Value), HostError> {
+) -> Result<(Sources, Value, Plan), HostError> {
     let source = authoring()?;
     verified_fingerprint(&source, packages, &bundle_fingerprint()?)?;
     author_with_source(product, configuration, packages, &source).await
@@ -239,7 +243,7 @@ async fn author_with_source(
     mut configuration: Value,
     packages: &BTreeMap<String, Package>,
     source: &str,
-) -> Result<(Sources, Value), HostError> {
+) -> Result<(Sources, Value, Plan), HostError> {
     let values = configuration
         .as_object_mut()
         .ok_or("installation configuration must be an object")?;
@@ -298,18 +302,22 @@ async fn author_with_source(
     vm.shutdown().await;
     let sources: Sources = serde_json::from_value(result?)?;
     let checked: Vec<_> = packages.values().cloned().collect();
-    for (input, remote) in [
-        (&sources.host, &[][..]),
-        (&sources.management_host, &[][..]),
-        (&sources.ui, sources.remote_exports.as_slice()),
-    ] {
-        maka_event_log::applications::validate_application(input, remote, &checked)?;
-    }
+    let host_plan = maka_event_log::applications::validate_applications(
+        &[
+            (&sources.host, &[][..]),
+            (&sources.management_host, &[][..]),
+            (&sources.ui, sources.remote_exports.as_slice()),
+        ],
+        &checked,
+    )?
+    .into_iter()
+    .next()
+    .expect("validated Host plan");
     let connections: maka_transport::Configuration =
         serde_json::from_value(sources.connections.clone())?;
     connections.validate().map_err(HostError::from)?;
     values.remove("packages");
-    Ok((sources, configuration))
+    Ok((sources, configuration, host_plan))
 }
 
 fn export(

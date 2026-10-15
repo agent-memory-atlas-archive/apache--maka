@@ -49,6 +49,7 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
+    let host_guard = HostRootGuard::new(&ui.join("host"));
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -187,6 +188,7 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     assert!(received.try_recv().is_err());
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     command(&mut tui, "WorkHub");
@@ -199,5 +201,6 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     assert!(received.try_recv().is_err());
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     server.join().unwrap();
 }

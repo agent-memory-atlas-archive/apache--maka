@@ -17,58 +17,34 @@
  * under the License.
  */
 
-//! Physical pairing on private current-account IPC, not network authentication.
-use super::{native, wire};
+//! Fixed physical channels for an authenticated independent Host session.
+use super::native;
 use crate::Result;
 use futures_util::future::BoxFuture;
-use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
-use uuid::Uuid;
-use wire::{Accepted, Hello};
 
-/// Only the trusted launcher constructs this from its actual child bootstrap.
-/// The address and nonce stay fixed; a lost Host is never retargeted by alias.
+/// Physical channels for one independently owned, already authenticated Host
+/// session. This snapshot never retains the anchor or retargets a restarted Host.
 pub struct Connector {
-    path: PathBuf,
-    nonce: Uuid,
+    opener: maka_host_runtime::application::host::CallChannelOpener,
 }
 impl Connector {
-    pub fn new(path: PathBuf, nonce: Uuid) -> Result<Self> {
-        if nonce.is_nil() {
-            return Err("private channel nonce must be nonnil".into());
-        }
-        Ok(Self { path, nonce })
+    pub fn new(opener: maka_host_runtime::application::host::CallChannelOpener) -> Self {
+        Self { opener }
     }
 }
 impl native::Connector for Connector {
     fn connect(&self, stop: CancellationToken) -> BoxFuture<'static, Result<native::Stream>> {
-        let path = self.path.clone();
-        let nonce = self.nonce;
+        let opener = self.opener.clone();
         Box::pin(async move {
-            // Before Open, no Application request or immutable resource can be
-            // admitted. Dropped OS-opening/Hello custody remains within the
-            // original embedding's tracked Server, which its child owner drains.
-            let mut stream = tokio::select! {
+            // No business Open or resources have been sent. Cancellation drops
+            // only inert IPC; the independent Host retains its own channel tasks.
+            let stream = tokio::select! {
                 biased;
-                () = stop.cancelled() => return Err("private opening cancelled".into()),
-                result = maka_host_runtime::ipc::connect(&path) => result.map_err(|e| e.to_string())?,
+                () = stop.cancelled() => return Err("public opening cancelled".into()),
+                stream = opener.open() => stream?,
             };
-            let hello = Hello { nonce };
-            tokio::select! {
-                biased;
-                () = stop.cancelled() => return Err("private opening cancelled".into()),
-                result = wire::write(&mut stream, &hello) => result?,
-            }
-            let mut reader = wire::Reader::new(stream);
-            let accepted: Accepted = tokio::select! {
-                biased;
-                () = stop.cancelled() => return Err("private opening cancelled".into()),
-                result = reader.read_bounded(512) => result?,
-            };
-            if accepted.nonce != nonce {
-                return Err("private channel belongs to a different Host incarnation".into());
-            }
-            Ok(Box::new(reader.inner) as native::Stream)
+            Ok(Box::new(stream) as native::Stream)
         })
     }
 }

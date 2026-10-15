@@ -68,4 +68,4 @@ For a direct HTTP(S) `.maka-plugin` download, submit `UIRequest` with `method: "
 
 The download is bounded to 32 MiB and 60 seconds, follows at most five redirects without HTTPS downgrade, and uses the UI management process's proxy environment. A revision change during download rejects the stale install. A URL must point to an exported bundle, not a repository or web page.
 
-If the foreground cannot open, close its UI/local Host and run `maka application restore-defaults --root UI_ROOT`. This restores the originally installed Host/management/UI compositions and exact package versions while preserving their instance identities and data. It does not choose a new product or upgrade the installation. Interrupted restoration resumes from its saved preparation.
+If the foreground cannot open, close its UI and run `maka application restore-defaults --root UI_ROOT`. This restores the originally installed Host/management/UI compositions and exact package versions while preserving their instance identities and data. It does not choose a new product or upgrade the installation. Interrupted restoration resumes from its saved preparation.

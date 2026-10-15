@@ -17,7 +17,7 @@
  * under the License.
  */
 //! A public Host opens the same persisted product source across process restarts.
-use super::{HostError, Input, Product, author, installation, launch, packages, selected};
+use super::{HostError, Input, Product, author, installation, launch, packages};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use maka_event_log::{EventLog, applications::launch::Launch, root::RootOwner};
 use maka_host_runtime::{
@@ -48,19 +48,92 @@ fn directories(roots: Option<Vec<DirectoryRootSpec>>) -> Result<Vec<DirectoryRoo
     })
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum Selection {
-    PublicHost {
-        endpoints: BTreeMap<String, HostEndpoint>,
-        native: Vec<NativeGrant>,
-    },
-}
+use maka_host_runtime::application::host::Configuration as Selection;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Preparation {
     input: Input,
     packages: Vec<BTreeMap<String, String>>,
+}
+
+/// Persist the exact UI-authored business Host selection before any public
+/// process starts. Resumption checks the original selection and revision one.
+pub(super) async fn save_product(
+    store: &EventLog,
+    deployment: Uuid,
+    input: &Input,
+    packages: &[super::Package],
+    endpoints: BTreeMap<String, HostEndpoint>,
+    native: Vec<NativeGrant>,
+) -> Result<(), HostError> {
+    let selection = serde_json::to_value(Selection::PublicHost { endpoints, native })?;
+    match store.application_launch().await? {
+        Some(record) => {
+            if record.deployment != deployment || record.configuration != selection {
+                return Err("original public Host selection changed".into());
+            }
+        }
+        None => {
+            let preparation = Preparation {
+                input: input.clone(),
+                packages: packages
+                    .iter()
+                    .map(|package| {
+                        package
+                            .files()
+                            .iter()
+                            .map(|(path, bytes)| (path.clone(), STANDARD.encode(bytes)))
+                            .collect()
+                    })
+                    .collect(),
+            };
+            store
+                .begin_application_launch(Launch {
+                    deployment,
+                    configuration: selection,
+                    pending: Some(serde_json::to_vec(&preparation)?),
+                })
+                .await?;
+        }
+    }
+    prepare(store, Roots::Saved).await?;
+    launch::ensure(store, deployment, input, &[], packages).await
+}
+
+/// Bind an explicitly committed generic Host without reauthoring its source.
+pub(crate) async fn select_committed_host(
+    store: &EventLog,
+    request: &maka_transport::startup::Request,
+) -> Result<(), HostError> {
+    if let Some(record) = store.application_launch().await? {
+        let _: Selection = serde_json::from_value(record.configuration)?;
+        if record.deployment != request.deployment {
+            return Err("saved public Host selects another application deployment".into());
+        }
+        // Existing publication/grants remain authoritative, even when this UI
+        // selects a narrower subset. The peer handshake validates that subset.
+        return Ok(());
+    }
+    let source = store
+        .read_application_metadata(request.deployment)
+        .await?
+        .ok_or("commit the selected Host deployment before opening its UI")?;
+    if source.source.input.environment.location
+        != maka_plugin_core::composition::ExecutionLocation::Host
+        || !source.source.remote_exports.is_empty()
+    {
+        return Err("selected deployment is not a local Host source".into());
+    }
+    store
+        .select_committed_application_launch(
+            source.source.reference,
+            serde_json::to_value(Selection::PublicHost {
+                endpoints: request.endpoints.clone(),
+                native: request.native.clone(),
+            })?,
+        )
+        .await?;
+    Ok(())
 }
 
 pub(crate) async fn open_host(
@@ -133,18 +206,22 @@ async fn begin(store: &EventLog, roots: Option<Vec<DirectoryRootSpec>>) -> Resul
             .collect(),
     );
     let packages = tokio::task::spawn_blocking(packages).await??;
-    let (sources, _) = author(Product::Agent, configuration, &packages).await?;
+    let (sources, _, host_plan) = author(Product::Agent, configuration, &packages).await?;
     let connections: maka_transport::Configuration = serde_json::from_value(sources.connections)?;
     let connection = connections
         .hosts
         .into_iter()
         .find(|host| host.name == "local")
         .ok_or("product public Host missing")?;
-    let packages = selected(
-        &sources.host,
-        &[],
-        &packages.into_values().collect::<Vec<_>>(),
-    )?;
+    let required: std::collections::BTreeSet<_> = host_plan
+        .instances()
+        .values()
+        .map(|instance| &instance.package)
+        .collect();
+    let packages: Vec<_> = packages
+        .into_values()
+        .filter(|package| required.contains(&package.application_ref()))
+        .collect();
     let selection = Selection::PublicHost {
         endpoints: connection.endpoints,
         native: connection.native,

@@ -17,10 +17,12 @@
  * under the License.
  */
 
+use super::super::test_public::PublishedHost;
 use super::*;
 use maka_event_log::applications::launch::Launch;
 use maka_packages::Package;
 use serde_json::json;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[test]
@@ -50,9 +52,12 @@ fn three_way_merge_preserves_customizations_and_reports_ambiguous_changes() {
     assert_eq!(outcome.conflicts, ["/deleted"]);
 }
 
-async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, Uuid) {
+async fn old_installation(
+    path: &std::path::Path,
+    standard: bool,
+) -> (EventLog, Uuid, PublishedHost) {
     let store = launch::open(path.join("ui"), true, None).await.unwrap();
-    let host = launch::open(path.join("host"), true, None).await.unwrap();
+    let host = Arc::new(launch::open(path.join("host"), true, None).await.unwrap());
     let options = json!({"workspace": path, "hostRoot": path.join("host"), "themeFile": path.join("theme.json"), "helper": std::env::current_exe().unwrap(), "locale":"zh-CN"});
     let mut config = super::super::installation(options.clone()).await.unwrap();
     // Previous ceilings blocked network and external-write approval requests.
@@ -78,7 +83,7 @@ async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, 
         .unwrap()
         .extend_from_slice(b"\n// previous product release\n");
     packages.insert("agent-screen".into(), Package::new(files).unwrap());
-    let (mut sources, installation) = super::super::author_with_source(
+    let (mut sources, installation, _) = super::super::author_with_source(
         Product::Agent,
         config,
         &packages,
@@ -87,7 +92,7 @@ async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, 
     .await
     .unwrap();
     for endpoint in sources.connections["hosts"].as_array_mut().unwrap() {
-        if endpoint["location"]["kind"] == "process" {
+        if endpoint["location"]["kind"] == "public" {
             endpoint["location"]["stateDomain"] = json!(host.owned_root().unwrap().root_id());
         }
     }
@@ -122,17 +127,29 @@ async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, 
         })
         .await
         .unwrap();
-    host.drain().await;
-    drop(host);
+    let configuration = serde_json::from_value(preparation.sources.connections.clone()).unwrap();
+    let (_, _, host_id, _) = launch::targets(&configuration).unwrap();
+    let available = launch::decode_packages(preparation.packages).unwrap();
+    let selected = super::super::selected(&preparation.sources.host, &[], &available).unwrap();
+    launch::ensure(&host, host_id, &preparation.sources.host, &[], &selected)
+        .await
+        .unwrap();
+    let connection = configuration
+        .hosts
+        .into_iter()
+        .find(|connection| connection.deployment == host_id)
+        .unwrap();
+    let serving =
+        PublishedHost::start_product(host, host_id, connection.endpoints, connection.native).await;
     launch::prepare(&store, None, Product::Agent).await.unwrap();
-    (store, ui)
+    (store, ui, serving)
 }
 
 #[tokio::test]
 #[ignore = "requires the built bundled product"]
 async fn explicit_installation_keeps_its_selected_tools_when_packages_upgrade() {
     let directory = tempfile::tempdir().unwrap();
-    let (store, _) = old_installation(directory.path(), false).await;
+    let (store, _, serving) = old_installation(directory.path(), false).await;
     assert!(begin(&store).await.unwrap());
     let record = store.application_launch().await.unwrap().unwrap();
     let preparation: launch::Preparation =
@@ -166,6 +183,7 @@ async fn explicit_installation_keeps_its_selected_tools_when_packages_upgrade() 
     assert!(!tools.iter().any(|tool| tool["import"] == "computer"));
     launch::prepare(&store, None, Product::Agent).await.unwrap();
     assert!(!begin(&store).await.unwrap());
+    serving.stop().await;
     store.drain().await;
 }
 
@@ -173,7 +191,7 @@ async fn explicit_installation_keeps_its_selected_tools_when_packages_upgrade() 
 #[ignore = "requires the built bundled product"]
 async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() {
     let directory = tempfile::tempdir().unwrap();
-    let (store, ui) = old_installation(directory.path(), true).await;
+    let (store, ui, serving) = old_installation(directory.path(), true).await;
     let original = store.load_application(ui).await.unwrap().unwrap();
     let (original_source, _, _, _) = original.into_parts();
     let preview = synchronize(&store, true, false).await.unwrap();
@@ -273,6 +291,7 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
             .pending
             .is_none()
     );
+    serving.stop().await;
     store.drain().await;
 }
 
@@ -280,7 +299,7 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
 #[ignore = "requires the built bundled product"]
 async fn explicit_sync_keeps_custom_configuration_and_advances_the_default_baseline() {
     let directory = tempfile::tempdir().unwrap();
-    let (store, ui) = old_installation(directory.path(), true).await;
+    let (store, ui, serving) = old_installation(directory.path(), true).await;
     let current = store.load_application(ui).await.unwrap().unwrap();
     let (current_source, current_packages, _, _) = current.into_parts();
     let mut customized = current_source.input;
@@ -327,6 +346,7 @@ async fn explicit_sync_keeps_custom_configuration_and_advances_the_default_basel
     let preview = synchronize(&store, true, false).await.unwrap();
     assert!(preview.customized && !preview.changed);
     assert!(!begin(&store).await.unwrap());
+    serving.stop().await;
     store.drain().await;
 }
 
@@ -334,7 +354,7 @@ async fn explicit_sync_keeps_custom_configuration_and_advances_the_default_basel
 #[ignore = "requires the built bundled product"]
 async fn conflicting_custom_plugin_does_not_prepare_or_change_any_head() {
     let directory = tempfile::tempdir().unwrap();
-    let (store, ui) = old_installation(directory.path(), true).await;
+    let (store, ui, serving) = old_installation(directory.path(), true).await;
     let current = store.load_application(ui).await.unwrap().unwrap();
     let (current_source, current_packages, _, _) = current.into_parts();
     let old_ref = match &current_source.input.instances["agent-screen"].package {
@@ -392,6 +412,7 @@ async fn conflicting_custom_plugin_does_not_prepare_or_change_any_head() {
             .revision,
         2
     );
+    serving.stop().await;
     store.drain().await;
 }
 
@@ -423,7 +444,7 @@ fn product_version_covers_authoring_and_each_named_package() {
 #[ignore = "requires the built bundled product"]
 async fn unchanged_product_records_version_without_rewriting_deployments() {
     let directory = tempfile::tempdir().unwrap();
-    let (store, ui) = old_installation(directory.path(), true).await;
+    let (store, ui, serving) = old_installation(directory.path(), true).await;
     assert!(begin(&store).await.unwrap());
     launch::prepare(&store, None, Product::Agent).await.unwrap();
     let original = store.application_product().await.unwrap().unwrap();
@@ -469,6 +490,7 @@ async fn unchanged_product_records_version_without_rewriting_deployments() {
             .pending
             .is_none()
     );
+    serving.stop().await;
     store.drain().await;
 }
 

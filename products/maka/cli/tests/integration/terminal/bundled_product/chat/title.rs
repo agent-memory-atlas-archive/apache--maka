@@ -36,6 +36,7 @@ fn default_product_title_updates_once_and_preserves_manual_name_after_restart() 
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
     let host = ui.join("host");
+    let host_guard = HostRootGuard::new(&host);
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -71,6 +72,7 @@ fn default_product_title_updates_once_and_preserves_manual_name_after_restart() 
     evidence(&tui, "automatic-title");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     let mut restored = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     restored.wait_until_with_timeout(
         |s| s.contains("Workspace conversation"),
@@ -104,6 +106,7 @@ fn default_product_title_updates_once_and_preserves_manual_name_after_restart() 
     evidence(&restored, "manual-title");
     restored.send(b"\x11");
     restored.finish();
+    host_guard.stop();
     server.join().unwrap();
     runtime.block_on(async {
         let owner = Arc::new(RootOwner::open(&host, &namespaces).unwrap());

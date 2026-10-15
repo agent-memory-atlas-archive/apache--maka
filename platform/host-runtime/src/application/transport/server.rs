@@ -21,7 +21,7 @@
 use super::{
     catalogue::Catalogue,
     policy::{Peers, PolicyOwner},
-    wire::{self, Accepted, Control, Hello, Open, Reader, Reply},
+    wire::{self, Control, Open, Reader, Reply},
 };
 use crate::application::Result;
 use crate::application::{Client, QueryCompletion, RESOURCE_CHUNK_LIMIT, ResourceDescriptor};
@@ -96,26 +96,7 @@ impl Server {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        self.serve_inner(reader, writer, peer, None, false)
-    }
-    /// An inherited-bootstrap nonce pairs a private current-account channel
-    /// with this original Host incarnation. Hello uses the same tracked
-    /// connection owner as Open; it never creates request authority.
-    pub fn serve_private<R, W>(
-        self: &Arc<Self>,
-        reader: R,
-        writer: W,
-        peer: Arc<Peers>,
-        nonce: uuid::Uuid,
-    ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
-    where
-        R: AsyncRead + Unpin + Send + 'static,
-        W: AsyncWrite + Unpin + Send + 'static,
-    {
-        if nonce.is_nil() {
-            return Err("private channel nonce must be nonnil".into());
-        }
-        self.serve_inner(reader, writer, peer, Some(nonce), false)
+        self.serve_inner(reader, writer, peer, false)
     }
     /// The embedding has authenticated a public principal and selected its
     /// Host gateway consumers and endpoint grants. This mode records caller
@@ -130,14 +111,13 @@ impl Server {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        self.serve_inner(reader, writer, peer, None, true)
+        self.serve_inner(reader, writer, peer, true)
     }
     fn serve_inner<R, W>(
         self: &Arc<Self>,
         reader: R,
         writer: W,
         peer: Arc<Peers>,
-        nonce: Option<uuid::Uuid>,
         owned: bool,
     ) -> Result<impl Future<Output = Result<()>> + Send + 'static>
     where
@@ -160,7 +140,7 @@ impl Server {
                 lost: false,
                 pending: None,
             };
-            let execution = AssertUnwindSafe(session.run(&server, peer, nonce, owned))
+            let execution = AssertUnwindSafe(session.run(&server, peer, owned))
                 .catch_unwind()
                 .await;
             let panicked = execution.is_err();
@@ -354,29 +334,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Session<R, W> {
         })
         .await
     }
-    async fn run(
-        &mut self,
-        server: &Server,
-        peer: Arc<Peers>,
-        nonce: Option<uuid::Uuid>,
-        owned: bool,
-    ) -> Result<()> {
-        if let Some(nonce) = nonce {
-            let hello: Hello = tokio::select! {
-                biased;
-                () = self.stop.cancelled() => return Err("Application transport is closing".into()),
-                result = self.reader.read_bounded(512) => result?,
-            };
-            if hello.nonce != nonce {
-                return Err("private channel belongs to a different Host incarnation".into());
-            }
-            let accepted = Accepted { nonce };
-            tokio::select! {
-                biased;
-                () = self.stop.cancelled() => return Err("Application transport is closing".into()),
-                result = wire::write(&mut self.writer, &accepted) => result?,
-            }
-        }
+    async fn run(&mut self, server: &Server, peer: Arc<Peers>, owned: bool) -> Result<()> {
         let open: Open = self.read().await?;
         let descriptors: BTreeMap<String, ResourceDescriptor> = self.read().await?;
         let Some(endpoint) = server

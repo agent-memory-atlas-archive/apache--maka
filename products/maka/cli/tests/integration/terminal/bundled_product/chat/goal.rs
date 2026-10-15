@@ -63,6 +63,7 @@ fn default_product_goal_preserves_approval_and_resumes_original_objective_after_
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
+    let host_guard = HostRootGuard::new(&ui.join("host"));
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -110,6 +111,7 @@ fn default_product_goal_preserves_approval_and_resumes_original_objective_after_
     tui.wait_for("Retain this independent draft.");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     open(&mut tui);
@@ -163,5 +165,6 @@ fn default_product_goal_preserves_approval_and_resumes_original_objective_after_
     tui.wait_for("Retain this independent draft.");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     server.join().unwrap();
 }

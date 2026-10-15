@@ -272,6 +272,7 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let host = directory.path().join("host");
+    let host_guard = HostRootGuard::new(&host);
     let ui = directory.path().join("ui");
     let configuration = directory.path().join("installation.json");
     let namespaces = RootNamespaces::for_current_account().unwrap();
@@ -410,7 +411,169 @@ fn bundled_chat_sends_follows_renders_markdown_and_scrolls_original_history() {
     evidence(&tui, "restored-following");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     server.join().unwrap();
     assert!(!tui.screen.snapshot().unwrap().alternate_screen);
+    drop(RootOwner::open(&host, &namespaces).unwrap());
+}
+
+#[test]
+#[ignore = "real Agent invocation continues after explicitly closing only its UI"]
+fn ui_only_exit_preserves_accepted_agent_invocation_and_reopens_without_resend() {
+    use maka_host_runtime::application::host::{Client, discovery};
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+    const PROMPT: &str = "Finish this original invocation after the UI closes.";
+    const ANSWER: &str = "Original background job finished.";
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let (requests, received) = mpsc::channel();
+    let server = model_server(listener, requests, 1, 0);
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let host = directory.path().join("host");
+    let host_guard = HostRootGuard::new(&host);
+    let ui = directory.path().join("ui");
+    let configuration = directory.path().join("installation.json");
+    let namespaces = RootNamespaces::for_current_account().unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(seed_connection(&host, &namespaces, &base, json!({})));
+    std::fs::write(
+        &configuration,
+        serde_json::to_vec(&json!({
+            "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":host,
+            "agent":{
+                "workspaceRoots":[{"label":"Workspace","path":workspace}], "tools":[],
+                "automaticTitles":false,
+                "permissions":{"access":"read_only","requestPermissions":true}
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut tui = Pty::spawn(&[
+        "application",
+        "launch",
+        "--root",
+        ui.to_str().unwrap(),
+        "--configuration",
+        configuration.to_str().unwrap(),
+    ]);
+    tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
+    tui.send(b"\x0b");
+    tui.wait_for("Close commands");
+    tui.send(b"New conversation");
+    tui.wait_for("› New conversation");
+    tui.send(b"\r");
+    tui.wait_for("Message…");
+    click(&mut tui, "Message…");
+    paste(&mut tui, PROMPT);
+    tui.wait_for(PROMPT);
+    tui.send(b"\r");
+    let (sent, mut socket) = next_request(&mut tui, &received);
+    assert_eq!(sent["model"], "fixture-model");
+    assert!(sent.to_string().contains(PROMPT));
+    assert!(!is_title(&sent));
+    server.join().unwrap();
+
+    // Receiving this HTTP request proves admission reached the real model
+    // executor. Its answer is physically gated until the foreground has exited.
+    let (release, gated) = mpsc::sync_channel::<()>(0);
+    let responder = std::thread::spawn(move || {
+        gated.recv_timeout(Duration::from_secs(60)).unwrap();
+        delta(&mut socket, ANSWER);
+        complete(&mut socket);
+    });
+    let original = discovery::read(&host).unwrap();
+    let mut sql = runtime
+        .block_on(SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(host.join(maka_event_log::root::ROOT_DATABASE))
+                .read_only(true),
+        ))
+        .unwrap();
+    let opened: Vec<String> = runtime.block_on(
+        sqlx::query_scalar("SELECT invocation_id FROM event_log WHERE kind='invocation_opened' ORDER BY sequence")
+            .fetch_all(&mut sql),
+    ).unwrap();
+    assert_eq!(opened.len(), 1);
+    let invocation = &opened[0];
+    let ended: i64 = runtime
+        .block_on(
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM event_log WHERE invocation_id=? AND kind='invocation_ended'",
+            )
+            .bind(invocation)
+            .fetch_one(&mut sql),
+        )
+        .unwrap();
+    assert_eq!(
+        ended, 0,
+        "the explicit model gate must still hold the original invocation"
+    );
+    tui.send(b"\x1b\x11");
+    tui.finish();
+    assert!(!tui.screen.snapshot().unwrap().alternate_screen);
+    drop(RootOwner::open(&ui, &namespaces).unwrap());
+    let error = RootOwner::open(&host, &namespaces)
+        .err()
+        .expect("business Host must remain resident");
+    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+    runtime.block_on(async {
+        let status = Client::status(&original.endpoint, Some(original.host_epoch))
+            .await
+            .unwrap();
+        original.verify(&status).unwrap();
+        assert_eq!(
+            status.sessions, 0,
+            "foreground detachment must finish before releasing the answer"
+        );
+    });
+    release.send(()).unwrap();
+    responder.join().unwrap();
+
+    // Observe durable completion before starting another UI. Reconnection must
+    // only read this result, never resume or resend the accepted model request.
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let ended: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log WHERE invocation_id=? AND kind='invocation_ended'")
+                    .bind(invocation).fetch_one(&mut sql).await.unwrap();
+                if ended == 1 { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("original invocation did not complete without its UI");
+        let completed: Vec<String> = sqlx::query_scalar("SELECT event_json FROM event_log WHERE invocation_id=? AND kind='model_completed'")
+            .bind(invocation).fetch_all(&mut sql).await.unwrap();
+        assert_eq!(completed.len(), 1);
+        assert!(completed[0].contains(ANSWER), "persisted output belongs to the original invocation");
+    });
+    let mut reopened = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
+    reopened.wait_until_with_timeout(|screen| screen.contains(ANSWER), Duration::from_secs(45));
+    let current = discovery::read(&host).unwrap();
+    assert_eq!(current.host_epoch, original.host_epoch);
+    assert_eq!(current.source, original.source);
+    let after: Vec<String> = runtime.block_on(
+        sqlx::query_scalar("SELECT invocation_id FROM event_log WHERE kind='invocation_opened' ORDER BY sequence")
+            .fetch_all(&mut sql),
+    ).unwrap();
+    assert_eq!(
+        after, opened,
+        "reopening must preserve the original invocation identity"
+    );
+    let attempts: i64 = runtime
+        .block_on(
+            sqlx::query_scalar("SELECT COUNT(*) FROM event_log WHERE kind='model_requested'")
+                .fetch_one(&mut sql),
+        )
+        .unwrap();
+    assert_eq!(
+        attempts, 1,
+        "UI reconnection must not resend the model request"
+    );
+    reopened.send(b"\x11");
+    reopened.finish();
+    runtime.block_on(sql.close()).unwrap();
+    host_guard.stop();
     drop(RootOwner::open(&host, &namespaces).unwrap());
 }

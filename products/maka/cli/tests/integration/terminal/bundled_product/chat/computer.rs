@@ -31,6 +31,7 @@ fn default_product_computer_approval_and_restart_keep_grant_but_reset_vm() {
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
     let host = ui.join("host");
+    let host_guard = HostRootGuard::new(&host);
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -111,6 +112,7 @@ fn default_product_computer_approval_and_restart_keep_grant_but_reset_vm() {
     tui.wait_for("Computer access is ready.");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     // Reopen the saved default composition and original Session in a new Host.
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     tui.wait_until_with_timeout(
@@ -155,6 +157,7 @@ fn default_product_computer_approval_and_restart_keep_grant_but_reset_vm() {
     evidence(&tui, "computer-restarted");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     drop(received);
     server.join().unwrap();
     runtime.block_on(async {

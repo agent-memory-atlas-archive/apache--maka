@@ -194,7 +194,7 @@ impl NativeRegistry {
 
 pub(super) struct Method {
     operation: Option<maka_event_log::applications::operations::OperationTemplate>,
-    input: jsonschema::Validator,
+    input: Arc<jsonschema::Validator>,
     output: Arc<jsonschema::Validator>,
     progress: Option<Arc<jsonschema::Validator>>,
 }
@@ -225,16 +225,13 @@ impl Service {
                             .progress
                             .as_ref()
                             .map(|schema| {
-                                jsonschema::validator_for(schema)
-                                    .map(Arc::new)
-                                    .map_err(|e| e.to_string())
+                                maka_plugin_core::validator(schema).map_err(|e| e.to_string())
                             })
                             .transpose()?,
-                        input: jsonschema::validator_for(&method.input)
+                        input: maka_plugin_core::validator(&method.input)
                             .map_err(|e| e.to_string())?,
-                        output: Arc::new(
-                            jsonschema::validator_for(&method.output).map_err(|e| e.to_string())?,
-                        ),
+                        output: maka_plugin_core::validator(&method.output)
+                            .map_err(|e| e.to_string())?,
                     },
                 ))
             })

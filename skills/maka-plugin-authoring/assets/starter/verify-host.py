@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""Isolated Unix launcher smoke test for the generated Host Echo service."""
+"""Public Unix Host smoke test for the generated Echo service."""
 import argparse
 import json
 import pathlib
@@ -50,7 +50,7 @@ def read_frame(stream):
             data.extend(chunk)
         return data
     size = struct.unpack(">I", exact(4))[0]
-    if size > 8 * 1024 * 1024:
+    if size > 2 * 1024 * 1024:
         raise ValueError("Host frame exceeds test budget")
     return json.loads(exact(size))
 
@@ -97,32 +97,56 @@ def main():
         source = run("application", "commit", "--root", root, "--deployment", str(uuid.uuid4()),
                      "--expected-revision", "0", "--input", project / "composition.json",
                      "--package", project / "plugin", "--package", consumer)
-        nonce = str(uuid.uuid4())
-        address = str(base / "host.sock")
-        bootstrap = {
-            "root": str(root), "deployment": source["deployment"],
-            "namespaces": {"ownership": str(base / "owners"), "control": str(base / "control")},
-            "source": source, "consumers": [[key]], "native": [], "address": address, "nonce": nonce,
-            "endpoints": {"echo": {"consumer": [key], "import": "echo", "grant": {"methods": ["echo"], "recovery": False}}},
-        }
-        # The launcher owns bootstrap/control and grants only this declared query.
-        # Plugin business code uses its bound capability, not this wire protocol.
-        with subprocess.Popen([args.maka, "application", "serve"], stdin=subprocess.PIPE,
+        endpoints = base / "endpoints.json"
+        save(endpoints, {
+            "echo": {"consumer": [key], "import": "echo", "grant": {"methods": ["echo"], "recovery": False}},
+        })
+        # The trusted launcher publishes only this declared query. Plugin
+        # business code uses its bound capability, not this public wire adapter.
+        with subprocess.Popen([args.maka, "application", "serve", "--root", str(root),
+                               "--deployment", source["deployment"], "--endpoints", str(endpoints)],
+                              stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, bufsize=0) as host:
             try:
-                write_frame(host.stdin, bootstrap)
-                ready = read_frame(host.stdout)
+                if not select.select([host.stdout], [], [], 15)[0]:
+                    raise TimeoutError("Host startup timed out")
+                ready = json.loads(host.stdout.readline(16 * 1024))
                 assert ready["kind"] == "ready", ready
-                epoch = ready["catalogue"]["endpoints"]["echo"]["registration_epoch"]
-                for value, valid in [("hello Maka", True), ("😀" * 4096, True), (42, False), ("x" * 4097, False)]:
-                    with socket.socket(socket.AF_UNIX) as connection:
-                        connection.settimeout(15)
-                        connection.connect(address)
-                        with connection.makefile("rwb", buffering=0) as channel:
-                            write_frame(channel, {"nonce": nonce})
-                            read_frame(channel)
+                assert ready["rootId"] == source["stateDomain"], ready
+                address = ready["socketPath"]
+
+                def connect():
+                    connection = socket.socket(socket.AF_UNIX)
+                    connection.settimeout(15)
+                    connection.connect(address)
+                    return connection
+
+                def opening(channel, request, epoch=None):
+                    write_frame(channel, {"version": 1, "epoch": epoch, "request": request})
+                    return read_frame(channel)
+
+                with connect() as connection, connection.makefile("rwb", buffering=0) as control:
+                    connected = opening(control, {"kind": "connect"})
+                    assert connected["kind"] == "connected", connected
+                    connected = connected["value"]
+                    assert connected["version"] == 1 and connected["source"] == source, connected
+                    assert connected["consumers"]["echo"] == [key], connected
+                    epoch = connected["epoch"]
+                    registration = connected["catalogue"]["endpoints"]["echo"]["registration_epoch"]
+                    assert registration, connected
+                    with connect() as probe, probe.makefile("rwb", buffering=0) as channel:
+                        status = opening(channel, {"kind": "status"}, epoch)
+                        assert status["kind"] == "status", status
+                        assert status["value"]["lifecycle_mode"] == "service", status
+                        assert status["value"]["source"] == source, status
+                        assert not status["value"]["closing"], status
+                    for value, valid in [("hello Maka", True), ("😀" * 4096, True), (42, False), ("x" * 4097, False)]:
+                        with connect() as call, call.makefile("rwb", buffering=0) as channel:
+                            accepted = opening(channel, {"kind": "call", "session": connected["session"]}, epoch)
+                            assert accepted == {"kind": "accepted"}, accepted
                             write_frame(channel, {
-                                "endpoint": "echo", "registration_epoch": epoch, "method": "echo", "input": value,
+                                "endpoint": "echo", "registration_epoch": registration,
+                                "method": "echo", "input": value,
                                 "source": {"deployment": source, "consumer": [key], "mount": str(uuid.uuid4()), "request": str(uuid.uuid4())},
                             })
                             write_frame(channel, {})
@@ -134,9 +158,24 @@ def main():
                                 assert reply["kind"] == "finished" and reply["result"] == {"Ok": value}, reply
                             else:
                                 assert reply["kind"] == "aborted", reply
-                write_frame(host.stdin, {"kind": "close", "nonce": nonce})
-                assert read_frame(host.stdout) == {"kind": "closed", "nonce": nonce}
+                    # Closing the session confirms original call cleanup without
+                    # stopping this Service-mode Host.
+                    write_frame(control, {"kind": "close"})
+                    assert read_frame(control) == {"kind": "closed"}
+                with connect() as connection, connection.makefile("rwb", buffering=0) as channel:
+                    status = opening(channel, {"kind": "status"}, epoch)
+                    assert status["value"]["sessions"] == 0, status
+                    assert status["value"]["active_calls"] == 0, status
+                    assert not status["value"]["closing"], status
+                with connect() as connection, connection.makefile("rwb", buffering=0) as channel:
+                    retired = opening(channel, {"kind": "retire", "interrupt": False}, epoch)
+                    assert retired == {"kind": "retired", "value": {"Ok": True}}, retired
                 assert host.wait(timeout=15) == 0
+                assert not pathlib.Path(address).exists(), "Host socket was not removed"
+                # Reopening validates both persisted content and release of the
+                # original Root lease after successful Host cleanup.
+                persisted = run("application", "read", "--root", root, "--deployment", source["deployment"])
+                assert persisted["reference"] == source, persisted
             finally:
                 if host.poll() is None:
                     host.kill()

@@ -25,9 +25,9 @@ mod lifecycle;
 pub mod websocket;
 pub use access::Pairing;
 pub mod protocol;
-pub use client::{Client, LocalCall};
+pub use client::{CallChannelOpener, Client, LocalCall};
 pub use discovery::Registration;
-pub use protocol::{LifecycleMode, Status, VERSION};
+pub use protocol::{Configuration, LifecycleMode, Status, VERSION};
 
 use super::transport::{
     Catalogue, Endpoints, HostEndpoint, NativeGrant, Peer, PeerPolicy, Peers, Server, wire,
@@ -73,13 +73,12 @@ pub struct Host {
     application: Application,
     store: Arc<EventLog>,
     access: Arc<maka_config::ConfigurationStore>,
-    access_grant: String,
+    access_grant: Mutex<String>,
     access_gate: tokio::sync::Mutex<()>,
     epoch: Uuid,
     source: DeploymentRef,
     policy: Arc<PeerPolicy>,
-    endpoints: Endpoints,
-    selections: BTreeMap<String, HostEndpoint>,
+    selections: Mutex<BTreeMap<String, HostEndpoint>>,
     sessions: Mutex<BTreeMap<Uuid, Arc<Session>>>,
     stop: CancellationToken,
     residency: Mutex<lifecycle::Residency>,
@@ -146,13 +145,10 @@ impl Host {
             scripts,
         )
         .await?;
-        let endpoints = match Endpoints::start(&application.client(), &selections).await {
-            Ok(endpoints) => endpoints,
-            Err(error) => {
-                application.shutdown().await?;
-                return Err(error);
-            }
-        };
+        if let Err(error) = Endpoints::start(&application.client(), &selections).await {
+            application.shutdown().await?;
+            return Err(error);
+        }
         let access = match maka_config::ConfigurationStore::for_root(root.clone()).await {
             Ok(access) => Arc::new(access),
             Err(error) => {
@@ -163,8 +159,14 @@ impl Host {
         let access_grant = format!(
             "application.owner:{:x}",
             sha2::Sha256::digest(
-                serde_json::to_vec(&(application.source(), &selections))
-                    .map_err(|error| error.to_string())?
+                serde_json::to_vec(&(
+                    application.source(),
+                    Configuration::PublicHost {
+                        endpoints: selections.clone(),
+                        native: policy.native_grants(),
+                    }
+                ))
+                .map_err(|error| error.to_string())?
             )
         );
         Ok(Arc::new(Self {
@@ -174,16 +176,65 @@ impl Host {
             application,
             store,
             access,
-            access_grant,
+            access_grant: Mutex::new(access_grant),
             access_gate: tokio::sync::Mutex::new(()),
             policy,
-            endpoints,
             epoch: Uuid::new_v4(),
-            selections,
+            selections: Mutex::new(selections),
             sessions: Mutex::default(),
             stop: CancellationToken::new(),
             residency: Mutex::new(lifecycle::Residency::default()),
         }))
+    }
+    /// This configuration step is durable independently of source replacement.
+    /// The launcher's original pending operation coordinates their retries.
+    async fn configure(
+        &self,
+        source: DeploymentRef,
+        previous: Configuration,
+        configuration: Configuration,
+    ) -> Result<()> {
+        previous.validate()?;
+        configuration.validate()?;
+        if source.state_domain != self.root_id() || source.deployment != self.source.deployment {
+            return Err("foreign Host configuration source".into());
+        }
+        let _gate = self.access_gate.lock().await;
+        if self.stop.is_cancelled() {
+            return Err("Host is closing".into());
+        }
+        let current = Configuration::PublicHost {
+            endpoints: self.selections.lock().unwrap().clone(),
+            native: self.policy.native_grants(),
+        };
+        let current = serde_json::to_value(current).map_err(|error| error.to_string())?;
+        let previous = serde_json::to_value(previous).map_err(|error| error.to_string())?;
+        let desired = serde_json::to_value(&configuration).map_err(|error| error.to_string())?;
+        if current != previous && current != desired {
+            return Err("Host configuration conflicts with current authority".into());
+        }
+        let access_grant = format!(
+            "application.owner:{:x}",
+            sha2::Sha256::digest(
+                serde_json::to_vec(&(Some(&self.source), &configuration))
+                    .map_err(|error| error.to_string())?
+            )
+        );
+        if !self
+            .store
+            .compare_and_set_application_launch_configuration(source, previous, desired)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Err("Host configuration source or persisted authority changed".into());
+        }
+        // No await between durable confirmation and publication of live authority.
+        // Existing sessions retain their captured bindings and accepted jobs.
+        let Configuration::PublicHost { endpoints, native } = configuration;
+        *self.selections.lock().unwrap() = endpoints;
+        self.policy.replace_native_grants(native);
+        *self.access_grant.lock().unwrap() = access_grant;
+        Ok(())
     }
     pub fn root_id(&self) -> &str {
         self.root.root_id()
@@ -337,6 +388,15 @@ impl Host {
                 drop(gate);
                 wire::write(&mut output, &Response::Status(self.status())).await
             }
+            Request::Configure {
+                source,
+                previous,
+                configuration,
+            } => {
+                authority.local()?;
+                let result = self.configure(source, previous, configuration).await;
+                wire::write(&mut output, &Response::Configured(result)).await
+            }
             Request::PrepareAccess { principal } => {
                 authority.local()?;
                 wire::write(
@@ -371,24 +431,51 @@ impl Host {
                 let result = self.retire(interrupt, allow_idle_connections).await;
                 wire::write(&mut output, &Response::Retired(result)).await
             }
+            Request::Quit { session: id } => {
+                authority.local()?;
+                let session = self.sessions.lock().unwrap().get(&id).cloned();
+                if let Some(session) = session {
+                    session.peer.replace(vec![])?;
+                    session.transport.close().await?;
+                }
+                let stop = {
+                    // Admission and the last-session decision share the same gate.
+                    let _gate = self.access_gate.lock().await;
+                    let mut sessions = self.sessions.lock().unwrap();
+                    sessions.remove(&id);
+                    let stop = sessions.is_empty();
+                    if stop {
+                        self.residency.lock().unwrap().paused = true;
+                        self.stop.cancel();
+                    }
+                    stop
+                };
+                if stop {
+                    self.shutdown().await?;
+                }
+                wire::write(&mut output, &Response::Closed).await
+            }
             request @ (Request::Connect | Request::ConnectPeer { .. }) => {
                 let gate = self.access_gate.lock().await;
                 let principal = self
                     .identify(&authority, opening.client_instance.as_deref())
                     .await?;
                 let (mode, peer, endpoints, selections) = match request {
-                    Request::Connect => (
-                        SessionMode::Owned,
-                        Peer::new(
-                            self.source.clone(),
-                            self.selections
-                                .values()
-                                .map(|endpoint| endpoint.consumer.clone())
-                                .collect(),
-                        )?,
-                        self.endpoints.clone(),
-                        self.selections.clone(),
-                    ),
+                    Request::Connect => {
+                        let selections = self.selections.lock().unwrap().clone();
+                        (
+                            SessionMode::Owned,
+                            Peer::new(
+                                self.source.clone(),
+                                selections
+                                    .values()
+                                    .map(|endpoint| endpoint.consumer.clone())
+                                    .collect(),
+                            )?,
+                            Endpoints::capture(&self.application.client(), &selections).await?,
+                            selections,
+                        )
+                    }
                     Request::ConnectPeer {
                         source,
                         consumers,
@@ -547,7 +634,10 @@ impl Host {
                 // drains all original calls before releasing the session.
                 session.peer.replace(vec![])?;
                 session.transport.close().await?;
-                self.sessions.lock().unwrap().remove(&id);
+                {
+                    let _gate = self.access_gate.lock().await;
+                    self.sessions.lock().unwrap().remove(&id);
+                }
                 // EOF or a partial control frame still requests this same
                 // session's drain. Only the completed cleanup above authorizes
                 // its acknowledgement; writing that acknowledgement may fail.
@@ -596,10 +686,10 @@ impl Host {
         if selections.is_empty() || selections.len() > 128 {
             return Err("invalid peer endpoint selections".into());
         }
+        let published = self.selections.lock().unwrap();
         for (name, selection) in selections {
             selection.validate()?;
-            let published = self
-                .selections
+            let published = published
                 .get(name)
                 .ok_or("Host endpoint is not published")?;
             if selection.consumer != published.consumer

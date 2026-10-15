@@ -17,47 +17,13 @@
  * under the License.
  */
 
-//! Original process/cohost execution and physical-call custody.
+//! Public session attachment and locally owned cohost execution.
 use super::*;
-use tokio::process::{Child, ChildStdin, ChildStdout};
-
-pub(super) struct Address {
-    pub(super) path: PathBuf,
-    // The parent retains the private directory until this same child has closed
-    // and actually exited. Failed cleanup never recycles an old address.
-    #[cfg(unix)]
-    _directory: tempfile::TempDir,
-}
-impl Address {
-    pub(super) fn create(nonce: Uuid) -> Result<Self> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            // Short account-private paths also fit Darwin's sockaddr_un limit.
-            let directory = tempfile::Builder::new()
-                .prefix("maka-")
-                .permissions(std::fs::Permissions::from_mode(0o700))
-                .tempdir_in("/tmp")
-                .map_err(|e| e.to_string())?;
-            let _ = nonce;
-            Ok(Self {
-                path: directory.path().join("host"),
-                _directory: directory,
-            })
-        }
-        #[cfg(windows)]
-        {
-            Ok(Self {
-                path: PathBuf::from(format!(r"\\.\pipe\maka-application-{nonce}")),
-            })
-        }
-    }
-}
-pub(super) struct OwnedHost {
-    pub(super) owner: HostOwner,
+pub(super) struct ConnectedHost {
+    pub(super) owner: HostLink,
     pub(super) connection: Option<Arc<native::Connection>>,
     pub(super) ready: bool,
-    // Publication is distinct from bootstrap readiness: an unused controller
+    // Publication is distinct from connection readiness: an unused controller
     // must keep custody without obstructing healthy UI-source retention.
     pub(super) published: bool,
     // Last approved endpoint observations, never executable registrations.
@@ -65,11 +31,9 @@ pub(super) struct OwnedHost {
     pub(super) configuration: Host,
     pub(super) peers: Arc<crate::transport::Peers>,
 }
-pub(super) enum HostOwner {
-    Process {
-        child: Child,
-        control: Box<Control<ChildStdout, ChildStdin>>,
-        _address: Address,
+pub(super) enum HostLink {
+    Public {
+        client: Option<Box<maka_host_runtime::application::host::Client>>,
     },
     Cohost {
         application: Option<maka_host_runtime::application::Application>,
@@ -77,11 +41,17 @@ pub(super) enum HostOwner {
         captured: Option<crate::transport::Endpoints>,
     },
 }
-impl OwnedHost {
+impl ConnectedHost {
     pub(super) async fn registrations_changed(&mut self) -> Result<bool> {
         let current = match &mut self.owner {
-            HostOwner::Process { control, .. } => control.epochs().await?,
-            HostOwner::Cohost { application, .. } => crate::transport::Endpoints::capture(
+            HostLink::Public { client } => {
+                client
+                    .as_mut()
+                    .ok_or("public Host session is detached")?
+                    .epochs()
+                    .await?
+            }
+            HostLink::Cohost { application, .. } => crate::transport::Endpoints::capture(
                 &application
                     .as_ref()
                     .ok_or("cohost is not initialized")?
@@ -98,8 +68,14 @@ impl OwnedHost {
     }
     pub(super) async fn capture(&mut self) -> Result<crate::transport::Catalogue> {
         match &mut self.owner {
-            HostOwner::Process { control, .. } => control.capture().await,
-            HostOwner::Cohost {
+            HostLink::Public { client } => {
+                client
+                    .as_mut()
+                    .ok_or("public Host session is detached")?
+                    .capture()
+                    .await
+            }
+            HostLink::Cohost {
                 application,
                 captured,
                 ..
@@ -126,10 +102,11 @@ impl OwnedHost {
         catalogue: &Option<crate::transport::Catalogue>,
     ) -> Result<()> {
         match &self.owner {
-            HostOwner::Process { control, .. } => {
-                control.check_approval(source, consumers, retain, catalogue)
-            }
-            HostOwner::Cohost {
+            HostLink::Public { client } => client
+                .as_ref()
+                .ok_or("public Host session is detached")?
+                .check_approval(source, consumers, retain, catalogue),
+            HostLink::Cohost {
                 server, captured, ..
             } => {
                 if server.is_none() || consumers.is_empty() != catalogue.is_none() {
@@ -156,10 +133,14 @@ impl OwnedHost {
     ) -> Result<()> {
         self.check_approval(&source, &consumers, &retain, &catalogue)?;
         match &mut self.owner {
-            HostOwner::Process { control, .. } => {
-                control.approve(source, consumers, retain, catalogue).await
+            HostLink::Public { client } => {
+                client
+                    .as_mut()
+                    .ok_or("public Host session is detached")?
+                    .approve(source, consumers, retain, catalogue)
+                    .await
             }
-            HostOwner::Cohost {
+            HostLink::Cohost {
                 server, captured, ..
             } => {
                 if catalogue.is_some() {
@@ -172,19 +153,31 @@ impl OwnedHost {
             }
         }
     }
-    pub(super) async fn close_owner(&mut self) -> Result<()> {
+    pub(super) async fn close_owner(
+        &mut self,
+        mode: crate::ExitMode,
+        namespaces: &RootNamespaces,
+    ) -> Result<()> {
         match &mut self.owner {
-            HostOwner::Process { child, control, .. } => {
-                let closed = control.close().await;
-                let exited = child.wait().await.map_err(|e| e.to_string());
-                closed?;
-                let status = exited?;
-                if self.ready && !status.success() {
-                    return Err(format!("original Host exited unsuccessfully: {status}"));
+            HostLink::Public { client } => {
+                if mode == crate::ExitMode::Quit
+                    && let Some(client) = client.as_mut()
+                    && let Err(error) = client.quit().await
+                {
+                    let HostLocation::Public { root, .. } = &self.configuration.location else {
+                        unreachable!();
+                    };
+                    if !released(root, namespaces, client).await {
+                        return Err(error);
+                    }
                 }
+                // The caller has already confirmed all original physical Calls.
+                // Keeping the Host only detaches this anchor. Normal quit instead
+                // receives the original session's last-client decision above.
+                drop(client.take());
                 Ok(())
             }
-            HostOwner::Cohost {
+            HostLink::Cohost {
                 server,
                 application,
                 ..
@@ -201,6 +194,25 @@ impl OwnedHost {
             }
         }
     }
+}
+/// An externally stopped Host cannot answer quit. Prove the original owner is
+/// gone without opening its database or treating a disconnected socket as cleanup.
+async fn released(root: &Path, namespaces: &RootNamespaces, client: &Client) -> bool {
+    let domain = &client.source().state_domain;
+    if let Ok(owner) = maka_event_log::root::RootOwner::open(root, namespaces) {
+        return owner.root_id() == domain;
+    }
+    // A replacement may already hold the Root; never send it the old UI's quit.
+    let Ok(found) = discovery::read_with_namespaces(root, namespaces) else {
+        return false;
+    };
+    if found.root_id != *domain || found.host_epoch == client.epoch() {
+        return false;
+    }
+    let Ok(status) = Client::status(&found.endpoint, Some(found.host_epoch)).await else {
+        return false;
+    };
+    found.verify(&status).is_ok()
 }
 pub(super) struct CohostConnector {
     pub(super) server: Arc<crate::transport::Server>,

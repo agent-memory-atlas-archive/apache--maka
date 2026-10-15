@@ -73,6 +73,7 @@ fn default_product_health_checks_process_and_independent_endpoint() {
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
     let host = ui.join("host");
+    let host_guard = HostRootGuard::new(&host);
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -187,6 +188,7 @@ fn default_product_health_checks_process_and_independent_endpoint() {
     evidence(&tui, "health-completed");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     tui.wait_until_with_timeout(
         |s| s.contains("Process finished; endpoint independently responded."),
@@ -241,5 +243,6 @@ fn default_product_health_checks_process_and_independent_endpoint() {
     evidence(&tui, "health-restarted");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     server.join().unwrap();
 }
