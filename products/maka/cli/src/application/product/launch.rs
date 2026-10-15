@@ -90,6 +90,7 @@ impl Launch {
                 "Maka needs an interactive terminal. Use --help for automation commands.".into(),
             );
         }
+        eprintln!("Opening product…");
         let root = super::root_path(self.root.clone())?;
         let store = Arc::new(open(root.clone(), true, None).await?);
 
@@ -127,9 +128,6 @@ impl Launch {
                 return Err(error);
             }
         };
-        if startup.is_none() {
-            eprintln!("Opening product…");
-        }
         run_tui(store, deployment, configuration, startup).await
     }
 }
@@ -329,6 +327,7 @@ pub(super) async fn prepare(
     Ok((record.deployment, connections))
 }
 async fn begin(store: &EventLog, input: Installation, product: Product) -> Result<(), HostError> {
+    let version = super::bundle_fingerprint()?;
     let authoring = super::authoring()?;
     let (mut configuration, mut default_options) = match input {
         Installation::Standard(options) => (
@@ -363,7 +362,7 @@ async fn begin(store: &EventLog, input: Installation, product: Product) -> Resul
             options["hostRoot"] = configuration["hostRoot"].clone();
         }
         let packages = tokio::task::spawn_blocking(packages).await??;
-        let version = super::fingerprint(&authoring, packages.iter().map(|(name, package)| (name.clone(), package.digest().to_owned())));
+        let version = super::verified_fingerprint(&authoring, &packages, &version)?;
         let (mut sources, installation) = super::author_with_source(product, configuration, &packages, &authoring).await?;
         for host in sources.connections["hosts"].as_array_mut().ok_or("product connections missing")? {
             if host["location"]["kind"] == "process" {

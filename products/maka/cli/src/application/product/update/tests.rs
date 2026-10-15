@@ -78,9 +78,14 @@ async fn old_installation(path: &std::path::Path, standard: bool) -> (EventLog, 
         .unwrap()
         .extend_from_slice(b"\n// previous product release\n");
     packages.insert("agent-screen".into(), Package::new(files).unwrap());
-    let (mut sources, installation) = super::super::author(Product::Agent, config, &packages)
-        .await
-        .unwrap();
+    let (mut sources, installation) = super::super::author_with_source(
+        Product::Agent,
+        config,
+        &packages,
+        &super::super::authoring().unwrap(),
+    )
+    .await
+    .unwrap();
     for endpoint in sources.connections["hosts"].as_array_mut().unwrap() {
         if endpoint["location"]["kind"] == "process" {
             endpoint["location"]["stateDomain"] = json!(host.owned_root().unwrap().root_id());
@@ -463,6 +468,128 @@ async fn unchanged_product_records_version_without_rewriting_deployments() {
             .unwrap()
             .pending
             .is_none()
+    );
+    store.drain().await;
+}
+
+#[test]
+fn generated_product_version_matches_canonical_unicode_and_binary_vectors() {
+    let files = [
+        ("z", &[0, 255][..]),
+        ("😀.js", "你好".as_bytes()),
+        ("\u{e000}.js", b"x".as_slice()),
+    ];
+    let digest = maka_packages::content_digest(files);
+    assert_eq!(
+        digest,
+        "sha256-1be108087645221ec647c9ce43ad7d10de9d6433c533fb2b67e1bb93609d302c"
+    );
+    assert_eq!(
+        super::super::fingerprint(
+            "author 😀\n",
+            [("b".into(), "two".into()), ("a".into(), digest)]
+        ),
+        "sha256-41298191ef2403397572e03ff6aa1b82f8d5f839f32260bfa02925628406d86e"
+    );
+}
+
+#[test]
+fn generated_version_reads_no_packages_and_rejects_invalid_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    assert!(super::super::read_bundle_fingerprint(directory.path()).is_err());
+    let version = super::super::fingerprint("author", []);
+    // There is deliberately no authoring or packages directory to scan.
+    std::fs::write(
+        directory.path().join("product-version.txt"),
+        format!("{version}\n"),
+    )
+    .unwrap();
+    assert_eq!(
+        super::super::read_bundle_fingerprint(directory.path()).unwrap(),
+        version
+    );
+    for invalid in [
+        "sha256-wrong".to_owned(),
+        version.to_uppercase(),
+        format!("{version}\nextra"),
+    ] {
+        std::fs::write(directory.path().join("product-version.txt"), invalid).unwrap();
+        assert!(super::super::read_bundle_fingerprint(directory.path()).is_err());
+    }
+}
+
+#[test]
+fn stale_generated_version_cannot_admit_changed_candidates() {
+    let manifest = json!({"schemaVersion":2,"id":"example.notes","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"entry.js","realm":"shared"},"configuration":{"type":"object"}}}}});
+    let package = Package::new(BTreeMap::from([
+        (
+            "maka.extension.json".into(),
+            serde_json::to_vec(&manifest).unwrap(),
+        ),
+        ("entry.js".into(), b"export function main() {}".to_vec()),
+    ]))
+    .unwrap();
+    let packages = BTreeMap::from([("notes".to_owned(), package)]);
+    let version = super::super::fingerprint(
+        "author",
+        packages
+            .iter()
+            .map(|(name, package)| (name.clone(), package.digest().to_owned())),
+    );
+    assert_eq!(
+        super::super::verified_fingerprint("author", &packages, &version).unwrap(),
+        version
+    );
+    assert!(super::super::verified_fingerprint("changed author", &packages, &version).is_err());
+    let mut changed = packages.clone();
+    let mut files = changed["notes"].files().clone();
+    files
+        .get_mut("entry.js")
+        .unwrap()
+        .extend_from_slice(b"\n// changed");
+    changed.insert("notes".into(), Package::new(files).unwrap());
+    assert!(super::super::verified_fingerprint("author", &changed, &version).is_err());
+}
+
+#[tokio::test]
+async fn matching_reopen_skips_baseline_sources_and_changed_version_requires_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = launch::open(directory.path().join("ui"), true, None)
+        .await
+        .unwrap();
+    let deployment = Uuid::new_v4();
+    store
+        .begin_application_launch(Launch {
+            deployment,
+            configuration: json!({}),
+            pending: Some(vec![1]),
+        })
+        .await
+        .unwrap();
+    let version = super::super::fingerprint("author", []);
+    // A matching reopen needs neither typed baseline sources nor Host/package access.
+    store
+        .complete_application_product(deployment, json!({}), json!({"version": version}))
+        .await
+        .unwrap();
+    let outcome = synchronize_version(&store, false, true, version.clone())
+        .await
+        .unwrap();
+    assert!(!outcome.changed && !outcome.applied);
+    assert!(
+        synchronize_version(
+            &store,
+            false,
+            true,
+            super::super::fingerprint("changed", [])
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        synchronize_version(&store, true, false, version)
+            .await
+            .is_err()
     );
     store.drain().await;
 }

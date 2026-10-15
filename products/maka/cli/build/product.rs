@@ -101,7 +101,8 @@ pub fn bundle() {
         "product bundle failed; install locked npm dependencies first"
     );
     let mut source = format!(
-        "const AUTHORING: &str = include_str!({:?});\nconst BUNDLED: &[Bundled] = &[\n",
+        "const PRODUCT_VERSION: &str = include_str!({:?});\nconst AUTHORING: &str = include_str!({:?});\nconst BUNDLED: &[Bundled] = &[\n",
+        product.join("product-version.txt").to_str().unwrap(),
         product.join("authoring/composition.mjs").to_str().unwrap()
     );
     let packages = product.join("packages");

@@ -40,7 +40,7 @@ just run --root /tmp/maka-workhub --product workhub
 
 自定义组合可在关闭 Maka 后运行 `maka application update-defaults`，预览“上次默认组合、当前自定义组合、新版默认组合”的三方合并。没有冲突时加 `--apply` 执行同步；`--root PATH` 可选择其他安装。独立修改按字段合并；同一值、删除或有序列表发生冲突时，输出 JSON Pointer 路径，整次更新不写入。预览会校验合并后的组合和实际插件包。同步完成后记录新版默认基线；中断的写入会在重新启动时继续完成。尚未记录该基线的旧开发存储需要删除后重新初始化。
 
-`just product` 重建 TypeScript bundle。开发二进制读取 `dist` 或 `MAKA_PRODUCT_BUNDLE` 指定的目录，仅修改 TypeScript 无需重新编译 Rust。发布二进制嵌入 bundle。需要与开发构建同时生成产物时，使用独立输出目录：
+`just product` 重建 TypeScript bundle。开发二进制读取 `dist` 或 `MAKA_PRODUCT_BUNDLE` 指定的目录，仅修改 TypeScript 无需重新编译 Rust。发布二进制嵌入 bundle。构建根据组合生成代码及具名包的精确字节生成 `product-version.txt`；未变化的启动只读取该标识，不扫描包内容，安装与更新仍校验实际包字节是否匹配。`dist` 和 `MAKA_PRODUCT_BUNDLE` 都是生成产物：修改源文件后重新构建，不要直接编辑输出文件。标识缺失、格式错误或内容不匹配时需要重新构建。需要与开发构建同时生成产物时，使用独立输出目录：
 
 ```sh
 node products/maka/bundle/scripts/build.mjs --output /tmp/maka-product-bundle

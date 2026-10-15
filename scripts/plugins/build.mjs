@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve, relative } from 'node:path';
 import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
+import { writeProductVersion } from './product-version.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const dependencyRoot = process.env.MAKA_JS_DEPS || repo;
@@ -133,6 +134,8 @@ export async function bundle({ packages, output, composition }) {
     resolve(destination, 'bundle-inputs.json'),
     JSON.stringify([...inputs].sort()) + '\n',
   );
+  // Publish the version last: incomplete builds must not advertise new bytes.
+  if (composition) await writeProductVersion(destination, names);
   console.log(`${names.length} ordinary plugin packages built`);
 }
 

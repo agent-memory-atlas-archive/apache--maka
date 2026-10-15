@@ -82,8 +82,12 @@ struct Sources {
 impl Compose {
     pub(super) async fn run(self) -> Result<(), HostError> {
         let configuration = read_json(&self.configuration)?;
+        let version = bundle_fingerprint()?;
         let packages = tokio::task::spawn_blocking(packages).await??;
-        let (sources, installation) = author(self.product, configuration, &packages).await?;
+        let authoring = authoring()?;
+        verified_fingerprint(&authoring, &packages, &version)?;
+        let (sources, installation) =
+            author_with_source(self.product, configuration, &packages, &authoring).await?;
         tokio::task::spawn_blocking(move || export(self.output, sources, installation, packages))
             .await??;
         println!("Checked product sources and immutable packages written");
@@ -154,23 +158,59 @@ fn fingerprint(source: &str, packages: impl IntoIterator<Item = (String, String)
     }
     format!("sha256-{:x}", hash.finalize())
 }
+// This generated identifier is a no-op hint, never package execution admission.
+// Actual installation/update candidates must pass verified_fingerprint below.
 fn bundle_fingerprint() -> Result<String, HostError> {
     #[cfg(maka_embedded_product)]
-    let digests = BUNDLED
-        .iter()
-        .map(|p| {
-            (
-                p.name.to_owned(),
-                maka_packages::content_digest(p.files.iter().copied()),
-            )
-        })
-        .collect::<Vec<_>>();
+    {
+        parse_bundle_fingerprint(PRODUCT_VERSION)
+    }
     #[cfg(not(maka_embedded_product))]
-    let digests = package_paths()?
-        .into_iter()
-        .map(|(name, path)| Ok((name, Package::directory_digest(&path)?)))
-        .collect::<Result<Vec<_>, HostError>>()?;
-    Ok(fingerprint(&authoring()?, digests))
+    {
+        read_bundle_fingerprint(&development_bundle())
+    }
+}
+#[cfg(any(test, not(maka_embedded_product)))]
+fn read_bundle_fingerprint(directory: &std::path::Path) -> Result<String, HostError> {
+    use std::io::Read;
+    let mut version = String::new();
+    std::fs::File::open(directory.join("product-version.txt"))
+        .and_then(|file| file.take(73).read_to_string(&mut version))
+        .map_err(|error| {
+            format!("product version unavailable; rebuild the product bundle: {error}")
+        })?;
+    parse_bundle_fingerprint(&version)
+}
+fn parse_bundle_fingerprint(version: &str) -> Result<String, HostError> {
+    let version = version.strip_suffix('\n').unwrap_or(version);
+    if version.len() != 71
+        || !version.starts_with("sha256-")
+        || !version.as_bytes()[7..]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    {
+        return Err("invalid product version; rebuild the product bundle".into());
+    }
+    Ok(version.to_owned())
+}
+fn verified_fingerprint(
+    source: &str,
+    packages: &BTreeMap<String, Package>,
+    expected: &str,
+) -> Result<String, HostError> {
+    let actual = fingerprint(
+        source,
+        packages
+            .iter()
+            .map(|(name, package)| (name.clone(), package.digest().to_owned())),
+    );
+    if actual != expected {
+        return Err(
+            "product bundle does not match its generated version; rebuild the product bundle"
+                .into(),
+        );
+    }
+    Ok(actual)
 }
 fn authoring() -> Result<String, HostError> {
     #[cfg(maka_embedded_product)]
@@ -190,7 +230,9 @@ async fn author(
     configuration: Value,
     packages: &BTreeMap<String, Package>,
 ) -> Result<(Sources, Value), HostError> {
-    author_with_source(product, configuration, packages, &authoring()?).await
+    let source = authoring()?;
+    verified_fingerprint(&source, packages, &bundle_fingerprint()?)?;
+    author_with_source(product, configuration, packages, &source).await
 }
 async fn author_with_source(
     product: Product,

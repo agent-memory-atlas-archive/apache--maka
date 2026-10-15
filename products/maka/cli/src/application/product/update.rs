@@ -87,6 +87,16 @@ pub(super) async fn begin(store: &EventLog) -> Result<bool, HostError> {
 }
 
 async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outcome, HostError> {
+    let version = tokio::task::spawn_blocking(super::bundle_fingerprint).await??;
+    synchronize_version(store, custom, apply, version).await
+}
+
+async fn synchronize_version(
+    store: &EventLog,
+    custom: bool,
+    apply: bool,
+    version: String,
+) -> Result<Outcome, HostError> {
     let record = store
         .application_launch()
         .await?
@@ -96,11 +106,10 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
     }
     let original = store.application_product().await?
         .ok_or("product storage predates automatic updates; remove this development root and initialize it again")?;
-    let mut baseline: Baseline = serde_json::from_value(original.clone())?;
-    let version = tokio::task::spawn_blocking(super::bundle_fingerprint).await??;
-    if !custom && baseline.version.as_ref() == Some(&version) {
+    if !custom && original.get("version").and_then(Value::as_str) == Some(version.as_str()) {
         return Ok(Outcome::default());
     }
+    let mut baseline: Baseline = serde_json::from_value(original.clone())?;
     let connections = serde_json::from_value(record.configuration.clone())?;
     let (path, domain, host_id, management) = launch::targets(&connections)?;
     let host = launch::open(path, false, Some(domain.clone())).await?;
@@ -140,12 +149,7 @@ async fn synchronize(store: &EventLog, custom: bool, apply: bool) -> Result<Outc
         }
         let packages = tokio::task::spawn_blocking(packages).await??;
         let authoring = super::authoring()?;
-        let version = super::fingerprint(
-            &authoring,
-            packages
-                .iter()
-                .map(|(name, package)| (name.clone(), package.digest().to_owned())),
-        );
+        let version = super::verified_fingerprint(&authoring, &packages, &version)?;
         let configuration = match &baseline.default_options {
             Some(options) => {
                 let mut configuration =
