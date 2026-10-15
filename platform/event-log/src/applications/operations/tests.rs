@@ -691,3 +691,80 @@ async fn compiled_operation_preserves_reference_capture_budget_and_original_disp
     drop(claim);
     store.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn contract_templates_keep_each_mutations_resources_and_request_identity() {
+    let (_directory, store) = store().await;
+    let mut original = request(&store).await;
+    let Interface::Service { methods } = &mut original.contract.interface else {
+        unreachable!()
+    };
+    let mut upload = methods["change"].clone();
+    upload.resources.insert(
+        "secret".into(),
+        maka_plugin_core::contract::ResourceType {
+            name: "example.Secret".into(),
+            version: 1,
+        }
+        .required(),
+    );
+    methods.insert("upload".into(), upload);
+    let mut query = methods["change"].clone();
+    query.mode = MethodMode::Query;
+    methods.insert("read".into(), query);
+    let templates = OperationTemplate::for_contract(&original.contract).unwrap();
+    assert_eq!(
+        templates.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["change", "upload"]
+    );
+    for (method, capture_required) in [("change", false), ("upload", true)] {
+        original.method = method.into();
+        for capture in [None, Some(Uuid::nil()), Some(Uuid::new_v4())] {
+            original.capture = capture;
+            let expected_valid = if capture_required {
+                capture.is_some_and(|id| !id.is_nil())
+            } else {
+                capture.is_none()
+            };
+            let legacy = original.reference();
+            let prepared = templates[method].prepare(dynamic_request(&original));
+            assert_eq!(legacy.is_ok(), expected_valid);
+            assert_eq!(prepared.is_ok(), expected_valid);
+            if expected_valid {
+                let prepared = prepared.unwrap();
+                assert_eq!(*prepared.reference(), legacy.unwrap());
+                assert_eq!(prepared.journal, original.journal().unwrap());
+                assert_eq!(
+                    &*prepared.contract_json,
+                    encode(&original.contract, MAX_REQUEST).unwrap()
+                );
+            }
+        }
+        for wrong in [
+            "read",
+            "missing",
+            if method == "change" {
+                "upload"
+            } else {
+                "change"
+            },
+        ] {
+            let mut request = dynamic_request(&original);
+            request.method = wrong.into();
+            assert!(templates[method].prepare(request).is_err());
+        }
+    }
+    original.method = "read".into();
+    original.capture = None;
+    assert!(original.reference().is_err());
+    let Interface::Service { methods } = &mut original.contract.interface else {
+        unreachable!()
+    };
+    methods.retain(|_, method| method.mode == MethodMode::Query);
+    assert!(
+        OperationTemplate::for_contract(&original.contract)
+            .unwrap()
+            .is_empty()
+    );
+    store.close().await.unwrap();
+}

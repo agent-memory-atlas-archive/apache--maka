@@ -76,13 +76,15 @@ impl OperationTemplate {
         let Interface::Service { methods } = &contract.interface else {
             return Err(invalid("operation requires a service contract"));
         };
-        if !methods
-            .values()
-            .any(|method| method.mode == maka_plugin_core::contract::MethodMode::Mutation)
-        {
+        let Some((mutation, _)) = methods
+            .iter()
+            .find(|(_, method)| method.mode == maka_plugin_core::contract::MethodMode::Mutation)
+        else {
             return Ok(Default::default());
-        }
+        };
         let contract_json: Arc<str> = encode(contract, MAX_REQUEST)?.into();
+        let recovery =
+            RecoveryContract::for_method(contract, mutation).map_err(|e| invalid(e.to_string()))?;
         methods
             .iter()
             .filter(|(_, method)| method.mode == maka_plugin_core::contract::MethodMode::Mutation)
@@ -91,8 +93,7 @@ impl OperationTemplate {
                     name.clone(),
                     Self {
                         method: name.clone(),
-                        contract: RecoveryContract::for_method(contract, name)
-                            .map_err(|e| invalid(e.to_string()))?,
+                        contract: recovery.clone(),
                         contract_json: contract_json.clone(),
                         resources: !declared.resources.is_empty(),
                         required_resources: declared.resources.values().any(|slot| !slot.optional),
