@@ -44,6 +44,16 @@ fn usage() -> (f64, u64) {
     (seconds(value.ru_utime) + seconds(value.ru_stime), peak)
 }
 
+// An opt-in profiler rendezvous, outside the performance measurement protocol.
+// The driver snapshots this process, then writes one byte to resume the phase.
+fn memory_checkpoint(phase: &str) {
+    if std::env::var_os("MAKA_SCALE_MEMORY_PROFILE").is_none() {
+        return;
+    }
+    eprintln!("MAKA_AGENT_MEMORY {phase}");
+    std::io::Read::read_exact(&mut std::io::stdin(), &mut [0]).unwrap();
+}
+
 // Product callers capture bindings once per activation. Rebinding and hashing
 // the full contract per probe would measure the load driver instead of agents.
 struct Load<'a> {
@@ -81,9 +91,12 @@ impl Load<'_> {
         }
     }
     async fn send(&self, session: &str) -> Value {
+        self.send_message(session, "Hello").await
+    }
+    async fn send_message(&self, session: &str, message: &str) -> Value {
         self.mutation(
             "send",
-            json!({"sessionId":session,"message":"Hello","model":self.model}),
+            json!({"sessionId":session,"message":message,"model":self.model}),
         )
         .await
     }
@@ -140,6 +153,7 @@ async fn cancellation_wave(load: &Load<'_>, listener: TcpListener, sessions: &[S
     for _ in 0..count {
         arrivals.recv().await.unwrap();
     }
+    memory_checkpoint("cancellation_active");
     let start = Instant::now();
     let stops = join_all(
         sessions
@@ -161,6 +175,7 @@ async fn cancellation_wave(load: &Load<'_>, listener: TcpListener, sessions: &[S
     fixture.drained().await;
     let cancel_ms = start.elapsed().as_secs_f64() * 1000.0;
     assert!(fixture.owner.runs.lock().await.controls.is_empty());
+    memory_checkpoint("cancellation_settled");
     for (session, sent) in stops {
         let state = load
             .query(
@@ -170,24 +185,54 @@ async fn cancellation_wave(load: &Load<'_>, listener: TcpListener, sessions: &[S
             .await;
         assert_eq!(state["execution"]["state"], "cancelled");
     }
+    // Recovery checks shared execution capacity with a fresh conversation.
+    // Long prior output can legitimately trigger a separate summary model,
+    // which this single-response HTTP fixture does not implement.
+    let input = fixture.create_input("Recovery").await;
+    let session = load.mutation("create", input).await["session"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let recovered = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         request(&mut socket).await;
         response_with_text(&mut socket, "Recovered after cancellation").await;
     });
     let start = Instant::now();
-    load.send(&sessions[0]).await;
+    let sent = load.send(&session).await;
     recovered.await.unwrap();
     fixture.drained().await;
     let recovery_ms = start.elapsed().as_secs_f64() * 1000.0;
-    let observed = load
-        .query("observe", json!({"sessionId":sessions[0]}))
-        .await;
+    let observed = load.query("observe", json!({"sessionId":session})).await;
     assert_eq!(observed["session"]["activity"], "idle");
+    let execution = load
+        .query(
+            "execution",
+            json!({"sessionId":session,"invocationId":sent["invocationId"]}),
+        )
+        .await;
+    assert_eq!(execution["execution"]["state"], "completed");
+    let history = load
+        .query(
+            "history",
+            json!({"sessionId":session,"position":{"kind":"start"}}),
+        )
+        .await;
+    let text: String = history["chunks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|chunk| chunk["role"] == "assistant")
+        .map(|chunk| chunk["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(text, "Recovered after cancellation");
     json!({"cancelled": count, "closed_http_connections": count, "cancel_and_settle_ms":cancel_ms, "recovery_ms":recovery_ms})
 }
 
-async fn run(count: usize, deltas: usize) -> Value {
+async fn run(count: usize, deltas: usize, prompt: String, delta: String) -> Value {
+    let prompt: Arc<str> = prompt.into();
+    let delta: Arc<str> = delta.into();
+    let expected = delta.repeat(deltas);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let fixture = Fixture::new(&base, None).await;
@@ -197,6 +242,7 @@ async fn run(count: usize, deltas: usize) -> Value {
         model: fixture.selection().await,
     };
     let create_input = fixture.create_input("Scale").await;
+    memory_checkpoint("host_ready");
     let creation = Instant::now();
     let sessions = join_all((0..count).map(|i| {
         let load = &load;
@@ -211,27 +257,33 @@ async fn run(count: usize, deltas: usize) -> Value {
     }))
     .await;
     let creation_ms = creation.elapsed().as_secs_f64() * 1000.0;
+    memory_checkpoint("sessions_ready");
     let release = CancellationToken::new();
     let (arrived, mut arrivals) = tokio::sync::mpsc::unbounded_channel();
     let start = Instant::now();
     let cpu_start = usage().0;
     let server_release = release.clone();
+    let server_prompt = prompt.clone();
+    let server_delta = delta.clone();
     let server = tokio::spawn(async move {
         let mut workers = tokio::task::JoinSet::new();
         for _ in 0..count {
             let (mut socket, _) = listener.accept().await.unwrap();
             let release = server_release.clone();
             let arrived = arrived.clone();
+            let prompt = server_prompt.clone();
+            let delta = server_delta.clone();
             workers.spawn(async move {
                 let body = request(&mut socket).await;
                 assert_eq!(body["model"], "fixture-model");
-                assert!(body["messages"].as_array().unwrap().iter().any(|m| m["content"] == "Hello"));
+                assert!(body["messages"].as_array().unwrap().iter().any(|m| m["content"].as_str() == Some(prompt.as_ref())));
+                drop(body);
                 arrived.send(start.elapsed().as_secs_f64() * 1000.0).unwrap();
                 // Every HTTP request must be live before any response begins.
                 release.cancelled().await;
                 socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").await.unwrap();
                 for _ in 0..deltas {
-                    let delta = json!({"id":"scale", "choices":[{"index":0,"delta":{"content":"token "},"finish_reason":null}]});
+                    let delta = json!({"id":"scale", "choices":[{"index":0,"delta":{"content":delta.as_ref()},"finish_reason":null}]});
                     socket.write_all(format!("data: {delta}\n\n").as_bytes()).await.unwrap();
                     // Pacing defines workload, not test synchronization.
                     tokio::time::sleep(Duration::from_millis(2)).await;
@@ -246,8 +298,9 @@ async fn run(count: usize, deltas: usize) -> Value {
     });
     let admissions = join_all(sessions.iter().map(|session| {
         let load = &load;
+        let prompt = &prompt;
         async move {
-            let reply = load.send(session).await;
+            let reply = load.send_message(session, prompt).await;
             assert_eq!(reply["kind"], "started");
             start.elapsed().as_secs_f64() * 1000.0
         }
@@ -269,6 +322,7 @@ async fn run(count: usize, deltas: usize) -> Value {
     }
     assert_eq!(fixture.owner.runs.lock().await.controls.len(), count);
     let all_active_ms = start.elapsed().as_secs_f64() * 1000.0;
+    memory_checkpoint("all_active");
     release.cancel();
     let streaming = Instant::now();
     let mut probes = Vec::new();
@@ -288,34 +342,54 @@ async fn run(count: usize, deltas: usize) -> Value {
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
     let cpu_end = usage().0;
     assert!(fixture.owner.runs.lock().await.controls.is_empty());
+    memory_checkpoint("output_settled");
     for session in &sessions {
         let observed = load.query("observe", json!({"sessionId":session})).await;
         assert_eq!(observed["session"]["activity"], "idle");
-        let history = load
-            .query(
-                "history",
-                json!({"sessionId":session,"position":{"kind":"start"}}),
-            )
-            .await;
-        let text: String = history["chunks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|chunk| chunk["role"] == "assistant")
-            .map(|chunk| chunk["text"].as_str().unwrap())
-            .collect();
+        let mut input = json!({"sessionId":session,"position":{"kind":"start"}});
+        let mut offset = 0;
+        loop {
+            let page = load.query("history", input.clone()).await;
+            if let Some(through) = input.get("through") {
+                assert_eq!(through, &page["through"]);
+            }
+            input["through"] = page["through"].clone();
+            if page["kind"] == "preparing" {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            for chunk in page["chunks"].as_array().unwrap() {
+                if chunk["role"] == "assistant" {
+                    let text = chunk["text"].as_str().unwrap();
+                    let end = offset + text.len();
+                    assert!(
+                        expected.get(offset..end) == Some(text),
+                        "durable output differs for {session} at byte {offset}"
+                    );
+                    offset = end;
+                }
+            }
+            if page["after"].is_null() {
+                break;
+            }
+            input["position"] = json!({"kind":"after","cursor":page["after"]});
+        }
         assert_eq!(
-            text,
-            "token ".repeat(deltas),
-            "all deltas durably visible for {session}"
+            offset,
+            expected.len(),
+            "complete durable output for {session}"
         );
     }
     let cancellation = cancellation_wave(&load, listener, &sessions).await;
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
+    memory_checkpoint("shutdown");
+    drop(load);
+    drop(fixture);
+    memory_checkpoint("dropped");
     let peak_rss_bytes = usage().1;
     json!({"agents":count,"overlapping_model_requests":requests.len(),"completed":count,"errors":0,
-        "cancellation":cancellation,"deltas_per_agent":deltas,"verified_output_bytes":count*deltas*6,
+        "cancellation":cancellation,"deltas_per_agent":deltas,"prompt_bytes_per_agent":prompt.len(),"output_bytes_per_agent":expected.len(),"verified_output_bytes":count*expected.len(),
         "create_sessions_ms":creation_ms,"all_active_ms":all_active_ms,
         "admission_ms":distribution(admissions),"model_arrival_ms":distribution(requests),
         "foreground_query_ms":distribution(probes),"stream_and_settle_ms":streaming_ms,
@@ -325,9 +399,12 @@ async fn run(count: usize, deltas: usize) -> Value {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn independent_agents_enter_model_together_and_preserve_output() {
-    tokio::time::timeout(Duration::from_secs(60), run(3, 4))
-        .await
-        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        run(3, 4, "Hello".into(), "token ".into()),
+    )
+    .await
+    .unwrap();
 }
 
 /// Run release builds, one case per process. See scripts/agent-scale.py.
@@ -343,7 +420,15 @@ async fn real_host_agent_scale() {
         .parse()
         .unwrap();
     assert!(count > 0 && deltas > 0);
-    let result = tokio::time::timeout(Duration::from_secs(600), run(count, deltas))
+    let sized = |name: &str, default: &str, character: &str| {
+        std::env::var(name).map_or_else(
+            |_| default.to_owned(),
+            |value| character.repeat(value.parse::<usize>().unwrap()),
+        )
+    };
+    let prompt = sized("MAKA_SCALE_PROMPT_BYTES", "Hello", "p");
+    let delta = sized("MAKA_SCALE_DELTA_BYTES", "token ", "t");
+    let result = tokio::time::timeout(Duration::from_secs(600), run(count, deltas, prompt, delta))
         .await
         .unwrap();
     println!("MAKA_AGENT_SCALE {result}");
