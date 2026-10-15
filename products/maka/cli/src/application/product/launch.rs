@@ -268,11 +268,14 @@ pub(super) async fn prepare(
         )
         .await;
     }
-    let public = super::public::Host::connect(root, domain, host).await?;
-    let loaded = store
-        .load_application(record.deployment)
-        .await?
-        .ok_or("UI source missing")?;
+    // These independent Roots can load together; wait for both so an error does
+    // not cancel the other owner's in-flight validation or connection cleanup.
+    let (public, loaded) = tokio::join!(
+        super::public::Host::connect(root, domain, host),
+        store.load_application(record.deployment),
+    );
+    let public = public?;
+    let loaded = loaded?.ok_or("UI source missing")?;
     Ok((loaded, connections, vec![public.into_client()]))
 }
 
@@ -305,15 +308,19 @@ async fn finish(
     let (root, domain, host, management) = targets(&connections)?;
     let host_input = host_source.input().clone();
     let host_packages = host_source.packages().to_vec();
-    if preparation.restore.is_empty() {
-        bootstrap_host(&root, &domain, host, &connections, host_source).await?;
-    }
+    let bootstrap_verified = if preparation.restore.is_empty() {
+        bootstrap_host(&root, &domain, host, &connections, host_source).await?
+    } else {
+        false
+    };
     let public = super::public::Host::connect(root.clone(), domain.clone(), host).await?;
     let result = async {
         if preparation.restore.is_empty() {
-            public
-                .ensure_initial(&host_input, &[], &host_packages)
-                .await?;
+            if !bootstrap_verified {
+                public
+                    .ensure_initial(&host_input, &[], &host_packages)
+                    .await?;
+            }
         } else {
             let previous = host_configuration(&connections)?;
             let desired = host_configuration(&serde_json::from_value(
@@ -395,13 +402,15 @@ fn host_configuration(
     Ok(configuration)
 }
 
+/// True only after the original source, package bytes and selection are confirmed.
+/// A busy Root has supplied no such proof; its live Host must still be checked.
 async fn bootstrap_host(
     root: &std::path::Path,
     domain: &str,
     deployment: Uuid,
     connections: &Configuration,
     prepared: PreparedApplication,
-) -> Result<(), HostError> {
+) -> Result<bool, HostError> {
     let host_store = match open(root.into(), false, Some(domain.into())).await {
         Ok(store) => store,
         Err(error)
@@ -409,7 +418,7 @@ async fn bootstrap_host(
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock) =>
         {
-            return Ok(());
+            return Ok(false);
         }
         Err(error) => return Err(error),
     };
@@ -429,7 +438,7 @@ async fn bootstrap_host(
     // Public startup can acquire Root only after bootstrap has actually drained.
     host_store.drain().await;
     drop(host_store);
-    result
+    result.map(|()| true)
 }
 
 async fn begin(
