@@ -18,6 +18,7 @@
  */
 
 mod provider;
+mod public_client;
 mod support;
 
 use agent_client_protocol::{
