@@ -52,8 +52,7 @@ test('first open binds one ordinary chat without import, indexing, model calls o
       { sessionId: 'owner', turnId: 'first-chat', cwd: f.root },
       undefined,
     );
-    assert.match(prompt.text, /正常回应用户/);
-    assert.match(prompt.text, /没有索引也正常交流/);
+    assert.doesNotMatch(prompt.text ?? '', /正常回应用户/); // Chat is a transport, not an executing Agent.
   } finally {
     await f.close();
   }

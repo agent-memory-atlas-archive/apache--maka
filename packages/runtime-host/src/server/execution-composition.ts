@@ -22,7 +22,7 @@ import { PersonalAssistantService, ASSISTANT_LEGACY_PACKAGES } from '../assistan
 import { createAssistantMessageReader } from './session-transcript-reader.js';
 import { createImageFileReader } from '@maka/runtime/image-file-reader';
 import { ChatImageDeliveryService } from './chat-image-delivery.js';
-import { downloadChatImage, ImageSourceError } from './chat-image-source.js';
+import { downloadChatImage, localImagePath, ImageSourceError } from './chat-image-source.js';
 import { createWorkHubResultRuntime } from './workhub-result-runtime.js';
 import { createWorkHubInspectionTool } from './workhub-inspection-tool.js';
 import { copyWorkHubAttachmentsToTarget } from './workhub-message-attachments.js';
@@ -466,6 +466,32 @@ export async function createExecutionRuntimeHostComposition(
           if (failures.length)
             throw new AggregateError(failures, 'Failed to stop assistant sessions');
         },
+        readAvatarImage: async (sessionId, source, signal) => {
+          const path = localImagePath(source);
+          return path === undefined ? downloadImage(source, signal) : readLocalImage(sessionId, path, signal);
+        },
+        appendConversation: async (sessionId, message) => {
+          await sessionAdmission.run(sessionId, async (lease) => {
+            if (!personalAssistant.isConversation(sessionId) || !personalAssistant.enabled)
+              throw Error('Assistant conversation is unavailable');
+            const header = await stores.sessionStore.readHeaderSnapshot(sessionId);
+            const existing = (await stores.sessionStore.readMessagesSnapshot(sessionId)).find(
+              (row) => row.id === message.id,
+            );
+            if (existing) {
+              if (JSON.stringify(existing) !== JSON.stringify(message))
+                throw Error('Assistant message identity conflict');
+            }
+            // The desktop reads the event ledger, not the legacy message table.
+            const { publishBotConversationMessage } = await import(
+              '../assistant/bot/conversation.js'
+            );
+            await requireSessionManager(manager).ensureTranscriptLedgerForRead(sessionId);
+            await publishBotConversationMessage(stores, header, message);
+            if (!existing) await stores.sessionStore.appendMessages(sessionId, [message]);
+            await continuityCoordinator.refreshCanonical(sessionId, lease);
+          });
+        },
         markBackgroundSessions: (ids) => markAssistantBackgroundSessions(stores.sessionStore, ids),
         agents: pluginAgents,
         llm: pluginLlm,
@@ -628,6 +654,34 @@ export async function createExecutionRuntimeHostComposition(
     const localImageReader = createImageFileReader({
       ...(filesystemWorker ? { filesystemWorker } : {}),
     });
+    const downloadImage = async (source: string, signal: AbortSignal) => {
+      const resolved = await runtimePolicyStores.operations.resolveHostOutboundExecution();
+      if (resolved.kind !== 'ready') throw new ImageSourceError('not_allowed');
+      const proxy = toRuntimePolicyProxy(
+        resolved.networkProxy,
+        resolved.secretMaterial.networkProxy?.secret,
+      );
+      const transport = createProxiedFetchTransport(proxy);
+      try {
+        return await downloadChatImage(source, signal, { fetch: transport.fetch });
+      } finally {
+        await transport.close();
+      }
+    };
+    const readLocalImage = async (sessionId: string, path: string, abortSignal: AbortSignal) => {
+      const [header, boundary] = await Promise.all([
+        stores.sessionStore.readHeaderSnapshot(sessionId),
+        stores.sessionStore.readExecutionBoundary(sessionId),
+      ]);
+      const result = await localImageReader({
+        path,
+        cwd: header.cwd,
+        permissionMode: header.permissionMode,
+        executionBoundary: boundary,
+        abortSignal,
+      });
+      return result;
+    };
     imageDelivery = new ChatImageDeliveryService({
       artifacts: openedArtifactStore,
       ...(options.imageArchiveLimits ? { limits: options.imageArchiveLimits } : {}),
@@ -650,34 +704,8 @@ export async function createExecutionRuntimeHostComposition(
         const resolved = await runtimePolicyStores.operations.resolveHostOutboundExecution();
         return resolved.kind === 'ready';
       },
-      download: async (source, signal) => {
-        const resolved = await runtimePolicyStores.operations.resolveHostOutboundExecution();
-        if (resolved.kind !== 'ready') throw new ImageSourceError('not_allowed');
-        const proxy = toRuntimePolicyProxy(
-          resolved.networkProxy,
-          resolved.secretMaterial.networkProxy?.secret,
-        );
-        const transport = createProxiedFetchTransport(proxy);
-        try {
-          return await downloadChatImage(source, signal, { fetch: transport.fetch });
-        } finally {
-          await transport.close();
-        }
-      },
-      readLocalImage: async (sessionId, path, abortSignal) => {
-        const [header, boundary] = await Promise.all([
-          stores.sessionStore.readHeaderSnapshot(sessionId),
-          stores.sessionStore.readExecutionBoundary(sessionId),
-        ]);
-        const result = await localImageReader({
-          path,
-          cwd: header.cwd,
-          permissionMode: header.permissionMode,
-          executionBoundary: boundary,
-          abortSignal,
-        });
-        return result;
-      },
+      download: downloadImage,
+      readLocalImage,
       readMessage: createAssistantMessageReader({
         events: stores.runtimeEventStore,
         ensureTranscriptLedger: (sessionId) =>
@@ -1296,6 +1324,7 @@ export async function createExecutionRuntimeHostComposition(
         goalTools: requireGoal(goal).tools,
         builtinTools,
         hostTools,
+        resolveToolCeiling: (sessionId) => personalAssistant.toolCeiling(sessionId),
         resolveRootTools: async (sessionId) => {
           await assertAssistantSessionEnabled(sessionId);
           return [
@@ -1977,7 +2006,9 @@ export async function createExecutionRuntimeHostComposition(
       (header) =>
         !personalAssistant.enabled && isAssistantSession(header)
           ? 'Personal assistant is disabled; enable it in Settings'
-          : undefined,
+          : personalAssistant.isConversation(header.id)
+            ? 'The assistant conversation accepts messages through its Inbox, not direct model Turns'
+            : undefined,
       (sessionId, event) => imageDelivery?.observe(sessionId, event),
     );
     const coordinator = rootCoordinator;
@@ -3382,7 +3413,84 @@ export async function createExecutionRuntimeHostComposition(
         id: 'execution',
         handlers: [
           executionInspect.handlers,
-          messages.handlers,
+          {
+            ...messages.handlers,
+            'turn.message.execution.query': async (input, connection) => {
+              const result = await messages.handlers['turn.message.execution.query'](
+                input,
+                connection,
+              );
+              if (!result.ok) return result;
+              const header = await stores.sessionStore.readHeaderSnapshot(input.sessionId);
+              if (!header.labels?.includes('personal-assistant')) return result;
+              // Canonical receipts remain queryable even while the feature is disabled.
+              const visible = new Set(
+                (await stores.sessionStore.readMessagesSnapshot(input.sessionId))
+                  .filter(
+                    (row) => row.type === 'user' && row.turnId === `assistant-input:${row.id}`,
+                  )
+                  .map((row) => row.id),
+              );
+              return {
+                ok: true,
+                result: {
+                  resolutions: result.result.resolutions.map((row) =>
+                    personalAssistant.hasInboxMessage(input.sessionId, row.messageId) ||
+                    visible.has(row.messageId)
+                      ? { messageId: row.messageId, state: 'inbox' as const }
+                      : row,
+                  ),
+                },
+              };
+            },
+            'turn.message.submit': async (input, connection) => {
+              if (!personalAssistant.isConversation(input.sessionId))
+                return messages.handlers['turn.message.submit'](input, connection);
+              if (input.originHostEpoch !== context.hostEpoch)
+                return {
+                  ok: false,
+                  error: {
+                    code: 'operation_conflict',
+                    message: 'Host changed; reconnect before sending',
+                  },
+                };
+              if (input.skillIds?.length || input.turnOrchestration)
+                return {
+                  ok: false,
+                  error: {
+                    code: 'operation_unavailable',
+                    message:
+                      'Describe the work to the assistant; execution modes and skills belong to delegated tasks',
+                  },
+                };
+              try {
+                const header = await stores.sessionStore.readHeaderSnapshot(input.sessionId);
+                if (header.isArchived) throw Error('Assistant conversation is archived');
+                const invalidAttachment = await artifacts.validateTurnAttachments(
+                  input.sessionId,
+                  input.content.attachments ?? [],
+                );
+                if (invalidAttachment) throw Error(invalidAttachment);
+                if (
+                  !(await personalAssistant.receiveUser(
+                    input.sessionId,
+                    input.messageId,
+                    input.content,
+                  ))
+                )
+                  throw Error('Assistant is stopping; message was not admitted');
+                return {
+                  ok: true,
+                  result: {
+                    disposition: 'inbox',
+                    skillInvocation: { loaded: [], failed: [], receipts: [] },
+                  },
+                };
+              } catch (error) {
+                return { ok: false, error: { code: 'internal_failure', message: String(error) } };
+              }
+            },
+          },
           interactions.handlers,
           sessionEffectCoordinator.handlers,
           promptSuggestionCoordinator.handlers,

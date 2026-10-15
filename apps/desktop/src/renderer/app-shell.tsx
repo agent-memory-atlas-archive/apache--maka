@@ -1305,6 +1305,7 @@ function AppShellContent({
                 onOpenWorkHub={openWorkHub} onOpenSession={(sessionId) => { closeSettings(); openSession(sessionId); }} />
               <WorkHubDock workbar={selectors} workbarTogglePosition={workbarTogglePosition} visible={workHubActive && sessionsSelected && !shellObscured} />
               <ChatSurfaceLayout
+                className={activeSessionForView?.labels?.includes('personal-assistant') ? 'personal-assistant-chat' : undefined}
                 data-session-history-surface="true"
                 // ChatView positions this transcript: switching conversations,
                 // following the tail and the moves the reader asks for are one
@@ -1364,6 +1365,9 @@ function AppShellContent({
                   contextPickEnabled={canStageComposerContext}
                   executorComposer={{ selection: executor, taskSubmissionHardBlocked, connectionCount: connections.length, onSetup: () => openSettingsSection('external-agents'), onNewTask: openNewTaskSurface }}
                   activeSession={activeSessionForView}
+                  compactControls={activeSessionForView?.labels?.includes('personal-assistant')}
+                  placeholder={activeSessionForView?.labels?.includes('personal-assistant')
+                    ? (uiLocale === 'zh-CN' ? '聊点什么…' : 'Send a message…') : undefined}
                   {...{ executorTarget, onExecutorTargetChange }}
                   usageModel={activeModel}
                   usageRoute={activeSessionForModelControls}

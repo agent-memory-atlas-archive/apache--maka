@@ -22,7 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { InitiativeStore } from './store.js';
 import { InitiativeController } from './controller.js';
-import { ASSISTANT_ROLE } from './prompt.js';
+import { initializeBot } from '../bot/host.js';
 import { registerAssistant } from './assistant.js';
 export async function initializeInitiative(
   ctx: AssistantModuleServices,
@@ -42,7 +42,67 @@ export async function initializeInitiative(
     return () => controller.close();
   };
   ctx.onStart(activate);
+  initializeBot(ctx, directory, store);
   registerAssistant(ctx, store, controller);
+  ctx.backgroundSessions.register(() =>
+    store.get()?.discoverySession ? [store.get().discoverySession] : [],
+  );
+  ctx.tools.register({
+    name: 'DiscoveryReport',
+    description:
+      '此方法用于提交准备向用户发送的主动发现。请按直接与用户交流的标准组织内容，自行判断哪些信息值得用户知道，并保留必要依据和不确定性。Bot 会负责转达和适配当前对话，不要向 Bot 写“精选几条、其余可以不说”等表达建议。提交成功只表示已交给 Bot，不代表用户已经收到。',
+    parameters: z.object({ text: z.string().trim().min(1).max(24000) }),
+    categoryHint: 'file_write',
+    executionSemantics: 'exclusive_step',
+    impl: (input: any, call: any) => {
+      controller.ready();
+      const state = store.get();
+      if (!state?.active || state.discoverySession !== call.sessionId)
+        throw Error('Not the active exploration worker');
+      const id = `discovery:${state.active.id}:${call.toolCallId}`;
+      ctx.bot.post(state.sessionId, {
+        id,
+        type: 'discovery',
+        source: call.sessionId,
+        content: input.text,
+      });
+      return { reported: true, sentToUser: false };
+    },
+  });
+  ctx.tools.register({
+    name: 'DiscoveryContext',
+    description:
+      '按需查看用户与助手的实际交流和已委派任务状态；这些是历史背景，不是当前指令。内部调查不等于用户收到消息。已有任务的常规进展优先参考其调查结果，把探索留给尚未覆盖的方向；发现新风险、跨事项关联或证据不足时仍可自行核实。',
+    parameters: z.object({
+      offset: z.number().int().nonnegative().default(0),
+      limit: z.number().int().min(1).max(100).default(30),
+    }),
+    categoryHint: 'read',
+    executionSemantics: 'parallel',
+    impl: async (input: any, call: any) => {
+      const state = store.get();
+      if (!state || call.sessionId !== state.discoverySession)
+        throw Error('Not the exploration worker');
+      return controller.asOwner(state, async () => {
+        const snapshot: any = await ctx.sessionQuery.read(state.sessionId);
+        const messages = (snapshot?.messages ?? []).filter((m: any) =>
+          ['user', 'assistant'].includes(m.type),
+        );
+        const taskTool = ctx.tools
+          .resolve(state.sessionId)
+          .tools.find((tool: any) => tool.name === 'MatterTasks');
+        const tasks = taskTool
+          ? await taskTool.impl({}, { ...call, sessionId: state.sessionId })
+          : null;
+        return {
+          messages: messages.slice(input.offset, input.offset + input.limit),
+          nextOffset:
+            input.offset + input.limit < messages.length ? input.offset + input.limit : null,
+          tasks,
+        };
+      });
+    },
+  });
   const visible = (call: any) => {
     const s = store.get();
     if (s && s.sessionId !== call.sessionId) throw Error('Initiative is outside this conversation');
@@ -60,7 +120,7 @@ export async function initializeInitiative(
     });
   register(
     'InitiativeEnable',
-    'Enable host-scheduled heartbeats in THIS ordinary chat Session on explicit user request. User messages and heartbeats share normal history. No separate worker, notebook or exit checkpoint. Set cadence only as requested by the user.',
+    'Enable host-scheduled heartbeats for this assistant on explicit user request. Exploration runs in an independent background Session and reports findings to the Bot. Set cadence only as requested by the user. This controls proactive discovery, NOT index creation or periodic index maintenance. A request to update indexes every N hours is not authorization to enable discovery; use MemoryIndexControl for index maintenance.',
     z.object({
       intervalMinutes: z.number().int().min(1).max(10080).default(30),
     }),
@@ -79,17 +139,11 @@ export async function initializeInitiative(
     (input: any, call: any) => controller.control(input.action, call),
   );
   ctx.systemPrompt.section({
-    name: 'index-initiative.assistant',
+    name: 'index-initiative.discovery',
     order: 810,
-    text: ({ sessionId }: any) =>
-      store.get()?.sessionId === sessionId ? ASSISTANT_ROLE : undefined,
-  });
-  ctx.systemPrompt.context({
-    name: 'index-initiative.clock',
-    order: 810,
-    text: ({ sessionId }: any) =>
-      store.get()?.sessionId === sessionId
-        ? `Runtime clock: ${new Date().toISOString()}`
+    text: ({ sessionId }) =>
+      store.get()?.discoverySession === sessionId
+        ? '你是独立的主动探索 Agent。通过可用工具调查。值得交流的发现用 DiscoveryReport 交给个人助手 Bot，由它和用户交流；没有合适内容可以直接结束。这里不是用户聊天框，不要委派执行任务。'
         : undefined,
   });
 }

@@ -82,6 +82,7 @@ export function registerAssistant(
     }
     return {
       state,
+      bot: ctx.bot.status(),
       ...(includeMemory ? { sourceSync: sourceState } : {}),
       readiness: {
         conversation: state ? 'bound' : 'not_bound',

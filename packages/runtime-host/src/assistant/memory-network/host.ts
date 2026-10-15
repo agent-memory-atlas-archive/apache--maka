@@ -36,7 +36,6 @@ export async function initializeMemory(
     tickMs: 30000,
     intervalMs: 43200000,
     retryMs: 60000,
-    runTimeoutMs: 600000,
   })) {
     const value = config[key] ?? fallback;
     if (!Number.isSafeInteger(value) || value < 1 || value > 2147483647)
@@ -243,7 +242,7 @@ export async function initializeMemory(
   );
   register(
     'MemoryIndexCreate',
-    'Standardize a request to organize an index: natural-language criterion plus an exact history cursor from MemoryRange. Runs an ordinary independent Maka Agent with its normal tools. It chooses searches, types and organization; no batch queue or content schema. Returns background progress immediately by default; use MemoryIndexRead to inspect completion. Set background=false only when explicitly waiting for the full result. New source arrivals remain incremental.',
+    'Standardize a request to organize an index: natural-language criterion plus an exact history cursor from MemoryRange. Runs an ordinary independent Maka Agent with its normal tools. It chooses searches, types and organization; no batch queue or content schema. Returns background progress immediately by default; use MemoryIndexRead to inspect completion. Set background=false only when explicitly waiting for the full result. New source arrivals remain incremental. New indexes automatically enable periodic maintenance (12 hours by default); change it with MemoryIndexControl. This does not enable proactive discovery.',
     z.object({
       name: z.string().min(1).max(160),
       instructions: z.string().min(1).max(8000),
@@ -280,7 +279,7 @@ export async function initializeMemory(
   );
   register(
     'MemoryIndexCreateGroup',
-    'Organize numbered index definitions in ONE independent Agent Session. The Agent chooses order and reuses reads; criteria, ranges and checkpoints remain independent. Existing members accept number/indexId. A group occupies one job; capacity returns unstarted IDs for explicit retry. Background by default.',
+    'Organize numbered index definitions in ONE independent Agent Session. The Agent chooses order and reuses reads; criteria, ranges and checkpoints remain independent. Existing members accept number/indexId. A group occupies one job; capacity returns unstarted IDs for explicit retry. Background by default. New indexes automatically enable periodic maintenance (12 hours by default); change it with MemoryIndexControl, not InitiativeEnable.',
     z.object({
       cursor: id,
       indexes: z
@@ -399,17 +398,17 @@ export async function initializeMemory(
   );
   register(
     'MemoryIndexControl',
-    'Configure periodic index maintenance. Default interval is 12 hours. Each due round reevaluates the criterion against current UTC, even without source changes, so rolling windows can expire old entries. pause stops future scheduled checks (an active round may finish); resume schedules the next check after intervalMs. configure changes the interval without enabling a paused index. MemoryIndexMaintain runs one round now without changing this schedule setting.',
+    'Configure periodic index maintenance, not proactive discovery or user notifications. New indexes already default to maintenance every 12 hours; use this tool to change that schedule, never InitiativeEnable. Each due round reevaluates the criterion against current UTC, even without source changes, so rolling windows can expire old entries. pause stops future scheduled checks (an active round may finish); stop cancels the active organizing job and disables maintenance for ALL members sharing that job, preserving contents and checkpoints; resume schedules the next check after intervalMs. configure changes the interval without enabling a paused index. MemoryIndexMaintain runs one round now without changing this schedule setting.',
     z.object({
       indexId: id,
-      action: z.enum(['pause', 'resume', 'configure']),
+      action: z.enum(['pause', 'resume', 'configure', 'stop']),
       intervalMs: z.number().int().min(1).max(2147483647).optional(),
     }),
     async (input: any, call: any) => {
       const allowed = await visible(input.indexId);
       store.assertIndexVisible(input.indexId, allowed);
       await controller.attach(input.indexId, call);
-      controller.control(input.indexId, input.action, input.intervalMs);
+      await controller.control(input.indexId, input.action, input.intervalMs);
       return controller.summary(input.indexId, allowed);
     },
     true,

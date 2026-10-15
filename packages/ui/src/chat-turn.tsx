@@ -417,6 +417,7 @@ export const TurnView = memo(function TurnView(props: {
   turn: TurnViewModel;
   /** Optional identity shown once above the turn's root prompt. */
   messageHeader?: ReactNode;
+  assistantAvatar?: ReactNode;
   /** Durable clarification and handoff context after the root prompt. */
   turnContext?: ReactNode;
   /** Optional accessible action on each message edge. */
@@ -535,7 +536,9 @@ export const TurnView = memo(function TurnView(props: {
   const showAssistantMessage =
     turn.timeline.length > 0 ||
     !!props.liveStreaming ||
-    (turn.user !== undefined && turn.statusSource === 'recorded' && turn.status !== 'running');
+    (turn.user !== undefined &&
+      !turn.turnId.startsWith('assistant-input:') &&
+      turn.statusSource === 'recorded' && turn.status !== 'running');
   const runningToolLabel = computerRunningLabel(turn.tools, locale);
   const conversationSegments = useMemo(
     () => splitTimelineAtUserMessages(foldedTimeline, showAssistantMessage),
@@ -751,6 +754,7 @@ export const TurnView = memo(function TurnView(props: {
             <LocalizedChatMessage
               accessibleLabel={`${copy.assistantAriaLabel} · ${answerContext}`}
               sender="assistant"
+              avatar={props.assistantAvatar}
               className="maka-chat-message maka-assistant-answer"
             >
             <VStack gap={2} width="100%" className="maka-assistant-answer-content">

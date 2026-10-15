@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { ASSISTANT_BACKGROUND_SESSION_LABEL } from '@maka/core/session';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { InitiativeStore } from './store.js';
@@ -91,7 +92,29 @@ export class InitiativeController {
   async dispatch() {
     const s = this.store.get();
     if ((!s?.enabled && !s?.checkRequested) || s.active || s.nextAt > Date.now()) return;
-    const agent = await this.asOwner(s, () => this.ctx.agents.resume({ sessionId: s.sessionId }));
+    const agent = await this.asOwner(s, async () => {
+      let sessionId = s.discoverySession;
+      if (!sessionId) {
+        const label = `assistant-discovery:${s.sessionId}`;
+        const matches = (await this.ctx.sessionQuery.list()).filter((item: any) =>
+          item.labels?.includes(label),
+        );
+        if (matches.length > 1) throw Error('Multiple exploration workers found');
+        sessionId =
+          matches[0]?.id ??
+          (
+            await this.ctx.agents.create({
+              background: true,
+              name: '个人助手 · 主动发现',
+              labels: [label, ASSISTANT_BACKGROUND_SESSION_LABEL],
+            })
+          ).sessionId;
+        this.store.update((current) => {
+          current.discoverySession = sessionId;
+        });
+      }
+      return this.ctx.agents.resume({ sessionId });
+    });
     const snapshot = await agent.snapshot();
     if (snapshot?.agent?.status === 'running' || awaitingUser(snapshot)) return;
     this.ready();
@@ -128,7 +151,6 @@ export class InitiativeController {
         if (this.store.get()?.active?.id === id) {
           const message = String(e);
           this.store.finish(id, message);
-          // Shared foreground Session: do not cancel a user's concurrent turn.
         }
       } catch {
         /* A newer owner fences writes and cancellation. */

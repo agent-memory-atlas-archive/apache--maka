@@ -100,6 +100,7 @@ export class InitiativeStore {
       const s = {
         version: 2,
         ...binding,
+        discoverySession: old?.discoverySession,
         intervalMs,
         enabled: true,
         revision: (old?.revision ?? 0) + 1,

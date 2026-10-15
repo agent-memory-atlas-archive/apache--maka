@@ -175,6 +175,8 @@ export function ChatView(props: {
   /** Imperative handle for host-driven transcript gestures. */
   handleRef?: Ref<ChatViewHandle>;
   messages: StoredMessage[];
+  /** Optional visual identity for assistant messages. */
+  assistantAvatar?: ReactNode;
   transientMessages?: readonly TransientUserMessageProjection[];
   messageLoading?: boolean;
   liveTurns?: readonly LiveTurnProjection[];
@@ -990,8 +992,8 @@ export function ChatView(props: {
                           paddingBlockEnd: index < turns.length - 1
                             ? turns[index + 1]?.user?.hostOrigin?.kind === 'workhub_result'
                               ? 0
-                              : 'var(--space-10)'
-                            : tailTransientMessages.length > 0 ? 'calc(var(--space-10) - var(--spacing-4))' : undefined,
+                              : 'var(--maka-turn-gap, var(--space-10))'
+                            : tailTransientMessages.length > 0 ? 'max(0px, calc(var(--maka-turn-gap, var(--space-10)) - var(--spacing-4)))' : undefined,
                           ...(decoration?.accentColor
                             ? { '--maka-turn-accent': decoration.accentColor } as CSSProperties : undefined),
                         }}
@@ -999,6 +1001,7 @@ export function ChatView(props: {
                         <TurnView
                           turn={turn}
                           activityObserved={turn.turnId === props.activeTurn?.turnId}
+                          assistantAvatar={props.assistantAvatar}
                           messageHeader={decoration?.header}
                           turnContext={decoration?.context}
                           messageRail={decoration?.messageRail}

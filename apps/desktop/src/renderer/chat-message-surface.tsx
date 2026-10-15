@@ -27,6 +27,7 @@ import {
   useUiLocale,
   type LiveTurnProjection,
 } from '@maka/ui';
+import { PersonalAssistantAvatar, useAssistantAvatar } from './features/personal-assistant/index.js';
 import { OnboardingHero } from './onboarding-hero';
 import type { SessionHealthNoticeView, SessionUiReads } from './features/conversation/index.js';
 import type { WorkspaceReadinessRecovery } from './workspace-readiness-recovery';
@@ -124,6 +125,9 @@ export function ChatMessageSurface({
   onSkip,
   ...chatViewRest
 }: ChatMessageSurfaceProps) {
+  const isAssistant = chatViewRest.activeSession?.labels?.includes('personal-assistant') === true;
+  const avatar = useAssistantAvatar(isAssistant, activeSessionId);
+  const assistantAvatar = useMemo(() => isAssistant ? <PersonalAssistantAvatar avatar={avatar} /> : undefined, [isAssistant, avatar]);
   const locale = useUiLocale();
   const copy = getShellCopy(locale).app;
   // Configuration notices share the Settings label; identity recovery supplies
@@ -204,6 +208,7 @@ export function ChatMessageSurface({
         {(goalProjection) => (
           <StagedQuoteChatView
             {...chatViewRest}
+            assistantAvatar={assistantAvatar}
             liveTurns={seededLiveTurns}
               // Every branch above reseeds `sessionId` to `activeSessionId`, and a
             // render-phase setState re-runs this body before anything commits, so

@@ -25,12 +25,12 @@ import { join } from 'node:path';
 import { PROACTIVE_TASK } from '../../../../src/assistant/index-initiative/prompt.js';
 import { fixture, until } from './fixture.js';
 
-test('heartbeat uses the human Session and exits normally without checkpoint or notebook', async () => {
+test('heartbeat uses an independent exploration Session and exits normally without checkpoint or notebook', async () => {
   const f = await fixture();
   let checks = 0;
   try {
     f.setRunner(async ({ id, prompt, finish }: any) => {
-      assert.equal(id, 'owner');
+      assert.notEqual(id, 'owner');
       assert.match(prompt, /Runtime heartbeat/);
       assert.ok(prompt.includes(PROACTIVE_TASK), 'default instructions reach the actual heartbeat');
       assert.equal((await finish()).allow, true);
@@ -43,7 +43,7 @@ test('heartbeat uses the human Session and exits normally without checkpoint or 
     assert.ok(!names.includes('InitiativeRead'));
     await f.invoke('InitiativeControl', { action: 'check' });
     await until(async () => checks === 1 && !(await f.invoke('InitiativeStatus')).active);
-    assert.equal(f.workers.size, 1);
+    assert.equal(f.workers.size, 2);
     assert.equal((await f.invoke('InitiativeStatus')).lastError, null);
     assert.ok((await f.invoke('InitiativeStatus')).nextAt > Date.now());
     await assert.rejects(
@@ -54,7 +54,7 @@ test('heartbeat uses the human Session and exits normally without checkpoint or 
     await f.close();
   }
 });
-test('busy conversation defers heartbeat; pause never cancels the user turn', async () => {
+test('busy conversation does not block independent exploration; pause never cancels the user turn', async () => {
   const f = await fixture();
   let checks = 0;
   try {
@@ -65,12 +65,12 @@ test('busy conversation defers heartbeat; pause never cancels the user turn', as
     f.workers.get('owner').status = 'running';
     await f.invoke('InitiativeControl', { action: 'check' });
     await new Promise((r) => setTimeout(r, 50));
-    assert.equal(checks, 0);
+    assert.equal(checks, 1);
     await f.invoke('InitiativeControl', { action: 'pause' });
     assert.equal(f.cancels(), 0);
     f.workers.get('owner').status = 'idle';
     await new Promise((r) => setTimeout(r, 30));
-    assert.equal(checks, 0);
+    assert.equal(checks, 1);
   } finally {
     await f.close();
   }
@@ -117,8 +117,9 @@ test('native heartbeat uses ordinary finish; failures retain cadence without can
 test('aborted runtime completion retains cadence without cancelling a concurrent user turn', async () => {
   const f = await fixture();
   try {
-    f.workers.get('owner').endStatus = 'aborted';
-    f.setRunner(async () => {});
+    f.setRunner(async ({ id }: any) => {
+      f.workers.get(id).endStatus = 'aborted';
+    });
     await f.invoke('InitiativeEnable', {});
     await f.invoke('InitiativeControl', { action: 'check' });
     await until(async () => (await f.invoke('InitiativeStatus')).lastError);
@@ -142,7 +143,7 @@ test('heartbeat carries UTC time and instructions without copying native convers
     }));
     f.workers.get('owner').transcript = [...history];
     f.setRunner(async (call: any) => {
-      assert.equal(call.id, 'owner');
+      assert.notEqual(call.id, 'owner');
       prompt = call.prompt;
     });
     await f.invoke('InitiativeEnable', {});
@@ -159,7 +160,9 @@ test('heartbeat carries UTC time and instructions without copying native convers
       assert.doesNotMatch(prompt, /最近的历史交流|previous-message-|visible-message-/);
       const transcript = f.workers.get('owner').transcript;
       assert.deepEqual(transcript.slice(0, history.length), history);
-      assert.equal(transcript.length, history.length + round + 1);
+      assert.equal(transcript.length, history.length);
+      const discovery = (await f.invoke('InitiativeStatus')).discoverySession;
+      assert.equal(f.workers.get(discovery).transcript.length, round + 1);
     }
   } finally {
     await f.close();
@@ -213,7 +216,10 @@ test('failed blocked Session can check again, but actual pending user input defe
       checks++;
     });
     await f.invoke('InitiativeEnable', {});
-    const worker = f.workers.get('owner');
+    await f.invoke('InitiativeControl', { action: 'check' });
+    await until(async () => checks === 1 && !(await f.invoke('InitiativeStatus')).active);
+    checks = 0;
+    const worker = f.workers.get((await f.invoke('InitiativeStatus')).discoverySession);
     worker.status = 'blocked';
     worker.pendingInteractions = 1;
     await f.invoke('InitiativeControl', { action: 'check' });
@@ -264,7 +270,10 @@ test('master disable stops an active heartbeat and removes tools until explicitl
     await f.remote('assistant.bind', { sessionId: 'owner' });
     f.setRunner(async () => hold);
     await f.remote('assistant.control', { action: 'enable', intervalMinutes: 30 });
-    await until(() => f.workers.get('owner')?.status === 'running');
+    await until(
+      async () =>
+        f.workers.get((await f.invoke('InitiativeStatus')).discoverySession)?.status === 'running',
+    );
     await f.remote('assistant.set-enabled', { enabled: false });
     assert.ok(f.cancels() >= 1, 'the runtime heartbeat is cancelled, not merely its observer');
     assert.equal(f.workers.get('owner').status, 'idle');
