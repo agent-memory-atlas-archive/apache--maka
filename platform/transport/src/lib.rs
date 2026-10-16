@@ -19,17 +19,24 @@
 
 //! Trusted local connections between separate UI and Host deployment owners.
 mod connections;
+pub mod startup;
 pub mod stdio;
 pub mod transport;
 mod updates;
-pub use connections::{
-    Configuration, Connections, Grant, Host, HostEndpoint, HostExecutable, HostLocation,
-};
+pub use connections::{Configuration, Connections, Grant, Host, HostEndpoint, HostLocation};
 pub use maka_host_runtime::application::transport::{GATEWAY, with_gateway};
 pub use updates::{ApprovedUpdate, Updates};
 /// Compiled fixed-UI-target management availability for explicit cohost entries.
 pub const UI_DEPLOYMENT_MANAGER: &str = "maka.application.ui-management";
 pub type Result<T> = std::result::Result<T, String>;
+
+/// The user's choice when closing a UI, after its physical calls have drained.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExitMode {
+    #[default]
+    Quit,
+    KeepHost,
+}
 
 /// Product startup must not exit after losing confirmation of an acquired SQL
 /// owner's close. That original worker retains the Root and writer authority.

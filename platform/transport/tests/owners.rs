@@ -188,7 +188,7 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
         composition::PresentationTarget,
         package::{EntryTarget, Implementation},
     };
-    use maka_transport::{Connections, HostExecutable};
+    use maka_transport::Connections;
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("cohost");
     let namespaces = RootNamespaces {
@@ -207,7 +207,13 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
             packages.push(old);
             continue;
         }
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Host)
@@ -284,7 +290,7 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
         PresentationTarget::Desktop,
         configuration,
         namespaces.clone(),
-        HostExecutable::new("absent-cohost-executable".into(), vec![]).unwrap(),
+        std::path::PathBuf::from("unused-cohost-startup-helper"),
         native,
         Some(maka_host_js::factory(Default::default())),
     )
@@ -348,7 +354,7 @@ async fn cancelled_cohost_start_keeps_original_initializer_native_file_and_sql_u
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cohost_retains_independent_receipts_when_selected_business_cannot_start() {
     use maka_plugin_core::composition::PresentationTarget;
-    use maka_transport::{Connections, HostExecutable};
+    use maka_transport::Connections;
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("cohost");
@@ -366,7 +372,7 @@ async fn cohost_retains_independent_receipts_when_selected_business_cannot_start
             "name":"local", "location":{"kind":"cohost"}, "deployment":host, "endpoints":{"business":{"consumer":support::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},"receipts":{"consumer":support::identity(14),"import":"receipts","grant":{"methods":["read"],"recovery":true}}}
         }]})).unwrap();
         let mut connections = Connections::prepare(store.clone(), ui.deployment, PresentationTarget::Tui,
-            configuration, namespaces.clone(), HostExecutable::new("unused-cohost-program".into(), vec![]).unwrap(), NativeRegistry::default(),
+            configuration, namespaces.clone(), std::path::PathBuf::from("unused-cohost-startup-helper"), NativeRegistry::default(),
 Some(maka_host_js::factory(Default::default())),).await.unwrap();
         connections.start().await.unwrap();
         assert_eq!(connections.registrations().len(), 1);
@@ -380,4 +386,98 @@ Some(maka_host_js::factory(Default::default())),).await.unwrap();
         drop((connections, store));
         drop(RootOwner::open(&root, &namespaces).unwrap());
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn loaded_ui_requires_its_live_original_root_owner() {
+    use maka_plugin_core::composition::PresentationTarget;
+    use maka_transport::Connections;
+    let directory = tempfile::tempdir().unwrap();
+    let namespaces = RootNamespaces {
+        ownership: directory.path().join("owners"),
+        control: directory.path().join("control"),
+    };
+    let path = directory.path().join("ui");
+    let original = Arc::new(
+        EventLog::for_root(Arc::new(RootOwner::create(&path, &namespaces).unwrap()))
+            .await
+            .unwrap(),
+    );
+    let other = Arc::new(
+        EventLog::for_root(Arc::new(
+            RootOwner::create(&directory.path().join("other"), &namespaces).unwrap(),
+        ))
+        .await
+        .unwrap(),
+    );
+    let input = serde_json::from_value(json!({
+        "environment":{"location":"ui","presentation":"tui"},"instances":{}
+    }))
+    .unwrap();
+    let id = uuid::Uuid::new_v4();
+    let reference = original
+        .commit_application(id, 0, input, vec![], vec![])
+        .await
+        .unwrap();
+    let foreign = original.load_application(id).await.unwrap().unwrap();
+    let error = Connections::prepare_loaded(
+        other.clone(),
+        foreign,
+        PresentationTarget::Tui,
+        Configuration::default(),
+        namespaces.clone(),
+        "unused-startup-helper".into(),
+        NativeRegistry::default(),
+        None,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.contains("foreign original source Root"), "{error}");
+    let expired = original.load_application(id).await.unwrap().unwrap();
+    original.drain().await;
+    drop(original);
+    let reopened = Arc::new(
+        EventLog::for_root(Arc::new(RootOwner::open(&path, &namespaces).unwrap()))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        reopened.owned_root().unwrap().root_id(),
+        reference.state_domain
+    );
+    let error = Connections::prepare_loaded(
+        reopened.clone(),
+        expired,
+        PresentationTarget::Tui,
+        Configuration::default(),
+        namespaces.clone(),
+        "unused-startup-helper".into(),
+        NativeRegistry::default(),
+        None,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.contains("original source Root has closed"), "{error}");
+    let current = reopened.load_application(id).await.unwrap().unwrap();
+    let mut connections = Connections::prepare_loaded(
+        reopened.clone(),
+        current,
+        PresentationTarget::Tui,
+        Configuration::default(),
+        namespaces,
+        "unused-startup-helper".into(),
+        NativeRegistry::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        connections.take_initial().unwrap().source().reference,
+        reference
+    );
+    connections.drain().await;
+    reopened.drain().await;
+    other.drain().await;
 }

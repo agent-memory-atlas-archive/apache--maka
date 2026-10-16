@@ -28,6 +28,7 @@ import type {
   SettingsConnectionDetail,
   SettingsConnectionsPage,
   SettingsProvidersPage,
+  SettingsProvider,
   TextChunk,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type ConnectionFormProps } from '../../shared/contracts.js';
@@ -126,7 +127,11 @@ export function handleEvent<N extends Node>(
       else {
         const page = outcome.value as SettingsProvidersPage;
         state.providers = r.offset === 0 ? page.providers : [...state.providers, ...page.providers];
-        if (page.next !== null && !state.provider)
+        if (
+          page.next !== null &&
+          !state.provider &&
+          !Object.values(state.pending).some((r) => r.kind === 'provider')
+        )
           request(
             state,
             actions,
@@ -136,6 +141,30 @@ export function handleEvent<N extends Node>(
             { offset: page.next },
           );
       }
+    } else if (r.kind === 'provider') {
+      const provider = outcome.status === 'succeeded' ? (outcome.value as SettingsProvider) : null;
+      if (!fresh(state, props) || state.baseline) return frame(presentation, state, props);
+      if (provider && sameValue(provider.identity, r.identity)) {
+        state.provider = provider;
+        const base =
+          provider.identity.name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .slice(0, 48)
+            .replace(/^-|-$/g, '') || 'connection';
+        let slug = base;
+        for (let suffix = 2; props.existingSlugs?.includes(slug); suffix++)
+          slug = base + '-' + suffix;
+        state.defaultSlug = slug;
+        state.search.pending = null;
+        for (const name of ['name', 'slug', 'endpoint'] as FieldName[]) {
+          state.fields[name].enabled =
+            name !== 'endpoint' ||
+            !!provider.descriptor.customEndpoint ||
+            !!provider.descriptor.anonymous;
+          prefill(state, name);
+        }
+      } else state.providersFailed = true;
     } else if (r.kind === 'read') {
       const current = state.current;
       if (current?.attempt === r.attempt && current.remaining.includes(r.field)) {
@@ -384,7 +413,7 @@ export function handleEvent<N extends Node>(
         key === 'provider-refresh' &&
         !state.provider &&
         !state.baseline &&
-        !Object.values(state.pending).some((r) => r.kind === 'providers')
+        !Object.values(state.pending).some((r) => r.kind === 'providers' || r.kind === 'provider')
       )
         request(state, actions, { kind: 'providers', offset: 0 }, 'settings', 'providers', {
           offset: 0,
@@ -395,25 +424,16 @@ export function handleEvent<N extends Node>(
           state.providerActive = Number(key.slice(9));
           if (target === 'tui' && (input.event as { kind?: string }).kind !== 'submit')
             return frame(presentation, state, props, actions, events);
-          state.provider = provider;
-          const base =
-            provider.identity.name
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, '-')
-              .slice(0, 48)
-              .replace(/^-|-$/g, '') || 'connection';
-          let slug = base;
-          for (let suffix = 2; props.existingSlugs?.includes(slug); suffix++)
-            slug = base + '-' + suffix;
-          state.defaultSlug = slug;
-          state.search.pending = null;
-          for (const name of ['name', 'slug', 'endpoint'] as FieldName[]) {
-            state.fields[name].enabled =
-              name !== 'endpoint' ||
-              !!provider.descriptor.customEndpoint ||
-              !!provider.descriptor.anonymous;
-            prefill(state, name);
-          }
+          for (const [key, pending] of Object.entries(state.pending))
+            if (pending.kind === 'provider') delete state.pending[key];
+          request(
+            state,
+            actions,
+            { kind: 'provider', identity: provider.identity },
+            'authentication',
+            'provider',
+            provider.identity,
+          );
         }
       } else if (key.startsWith('edit-')) {
         const name = key.slice(5) as FieldName,

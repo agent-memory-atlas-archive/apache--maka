@@ -130,6 +130,38 @@ pub(crate) async fn verify_replay(
 }
 
 impl EventLog {
+    /// Resolve the frozen request behind a previously validated Main completion.
+    pub async fn completed_request_composition(
+        &self,
+        session: &str,
+        sequence: u64,
+    ) -> Result<Option<RequestComposition>, StoreError> {
+        self.validate_root()?;
+        crate::sessions::validate_id(session)?;
+        let owned_session = session.to_owned();
+        let event_id: Option<String> = self
+            .connection
+            .run(move |connection| {
+                Box::pin(async move {
+                    Ok(sqlx::query_scalar(
+                        "SELECT r.event_id FROM runtime_events c JOIN runtime_events r
+                 ON r.invocation_id=c.invocation_id AND r.operation_id=c.operation_id
+                 WHERE c.sequence=?1 AND c.kind='model_completed' AND r.kind='model_requested'
+                 AND json_extract(c.event_json,'$.invocation.session_id')=?2",
+                    )
+                    .bind(sequence as i64)
+                    .bind(owned_session)
+                    .fetch_optional(connection)
+                    .await?)
+                })
+            })
+            .await?;
+        match event_id {
+            Some(id) => self.request_composition(session, &id).await,
+            None => Ok(None),
+        }
+    }
+
     pub async fn request_composition(
         &self,
         session: &str,

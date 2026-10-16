@@ -27,11 +27,11 @@ fn fixture() -> (
 ) {
     let (mut input, packages) = support::resource_fixture();
     let packages = packages.into_iter().map(|original| {
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let entry = declaration.entries.values().next().unwrap();
         let Implementation::JavaScript {module,..} = &entry.implementation else { return original; };
         let source = std::str::from_utf8(original.file(module).unwrap()).unwrap()
-            .replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
+            .replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted',navigated:'navigated'}")
             .replace("softWrap:true,", "softWrap:true,submit:'primary_enter',")
             .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
             .replace("else if(event.kind==='component')next.observation=event.event;", "else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}");
@@ -64,6 +64,90 @@ fn submissions(scene: &Scene) -> u64 {
 }
 
 #[gpui::test]
+fn textarea_navigation_keeps_focus_and_rejects_stale_or_marked_native_state(
+    cx: &mut TestAppContext,
+) {
+    let timer = timer();
+    let (mut input, packages) = fixture();
+    let packages = packages.into_iter().map(|original| {
+        if original.manifest().id != "dynamic.app" { return original; }
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
+        let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap()
+            .replace("softWrap:true,", "softWrap:true,navigation:state.observation?{owner:state.observation.snapshot.text.owner,basedOn:state.observation.revision}:null,")
+            .replace("next.observation=event.event;", "if(event.name==='navigated'){next.navigations=(state.navigations??0)+1;}else next.observation=event.event;");
+        let package = support::package("dynamic.app", declaration, Some(source));
+        input.instances.get_mut("app").unwrap().package = package.application_ref().into();
+        package
+    }).collect();
+    let scene = Scene::from_packages(cx, &timer, false, (input, packages));
+    scene.draw(cx);
+    let owner = scene.owner();
+    cx.update_window(scene.window, |_, window, cx| {
+        owner.read(cx).state.clone().update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.set_value("/co", window, cx);
+        });
+    })
+    .unwrap();
+    scene.settle(cx);
+    let original = scene.app.borrow().frame(&scene.root).unwrap().state["observation"].clone();
+    for (index, key) in ["up", "down", "tab", "enter", "escape"]
+        .into_iter()
+        .enumerate()
+    {
+        press(&scene, cx, key);
+        assert_eq!(
+            scene.app.borrow().frame(&scene.root).unwrap().state["navigations"],
+            index + 1
+        );
+        assert_eq!(
+            scene.app.borrow().frame(&scene.root).unwrap().state["observation"],
+            original
+        );
+        cx.update_window(scene.window, |_, window, cx| {
+            assert!(
+                owner
+                    .read(cx)
+                    .state
+                    .read(cx)
+                    .presentation()
+                    .focus_handle()
+                    .is_focused(window)
+            );
+        })
+        .unwrap();
+    }
+    // A native edit can get ahead of the candidate menu's published revision.
+    cx.update_window(scene.window, |_, window, cx| {
+        owner
+            .read(cx)
+            .state
+            .clone()
+            .update(cx, |state, cx| state.set_value("changed", window, cx));
+        window.dispatch_event(
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: Keystroke::parse("enter").unwrap(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            cx,
+        );
+        assert!(owner.read(cx).state.read(cx).value().contains('\n'));
+        owner.update(cx, |owner, cx| {
+            owner.replace_and_mark_text_in_range(Some(0..7), "中文", Some(0..2), window, cx)
+        });
+    })
+    .unwrap();
+    scene.settle(cx);
+    press(&scene, cx, "down");
+    assert_eq!(
+        scene.app.borrow().frame(&scene.root).unwrap().state["navigations"],
+        5
+    );
+    scene.close(cx);
+}
+
+#[gpui::test]
 fn original_desktop_paste_and_submit_stay_immediate_during_a_slow_js_transaction(
     cx: &mut TestAppContext,
 ) {
@@ -71,7 +155,7 @@ fn original_desktop_paste_and_submit_stay_immediate_during_a_slow_js_transaction
     let (mut input, packages) = fixture();
     let packages = packages.into_iter().map(|original| {
         if original.manifest().id != "dynamic.app" { return original; }
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap().replace(
             "const next={...state,revision:state.revision+1};",
             "if(event.kind==='raw'&&event.key==='slow'){const until=Date.now()+100;while(Date.now()<until){}}const next={...state,revision:state.revision+1};",

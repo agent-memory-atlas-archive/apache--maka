@@ -27,10 +27,7 @@ use maka_agent_facts::model::ModelPart;
 use maka_agent_facts::model::ModelStep;
 use maka_agent_facts::model::ModelUsage;
 use maka_agent_facts::model::TextKind;
-use std::{
-    num::NonZeroU16,
-    time::{Duration, UNIX_EPOCH},
-};
+use std::time::{Duration, UNIX_EPOCH};
 
 #[tokio::test]
 async fn handoff_reserves_successor_and_cancellation_before_sealing_a_near_capacity_context() {
@@ -85,7 +82,6 @@ async fn handoff_reserves_successor_and_cancellation_before_sealing_a_near_capac
                 successor_invocation_id: "successor-invocation".into(),
                 claim_id: "claim".into(),
             },
-            remaining_steps: NonZeroU16::new(2),
             execution: super::handoff::execution(),
         };
         let mut seal = RuntimeEvent::new(

@@ -126,11 +126,18 @@ const messages = {
 export const copy = /* @__PURE__ */ createCopy(messages);
 export type Copy = ReturnType<typeof copy>;
 
+import type { Catalog } from '../locale.js';
+
 const terminalMessages = {
+  'context-compacted': [
+    'Context compressed ({ $seconds }s)',
+    '上下文已压缩（{ $seconds }秒）',
+    '上下文已壓縮（{ $seconds }秒）',
+  ],
   'chat-prompt-jump': tui_chat_prompt_jump,
   'insights-this-session': tui_insights_this_session,
   'session-name-too-large': tui_session_name_too_large,
-};
+} satisfies Catalog;
 export function tuiText(
   locale: string,
   key: string,

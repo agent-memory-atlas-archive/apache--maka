@@ -25,7 +25,7 @@ import { sameValue } from './value.js';
  */
 export function toolCards(
   messages: readonly Message[],
-): { message: Message; result: Message | null }[] {
+): { message: Message; result: Message | null; depth: number }[] {
   const bySequence = new Map<number, Message[]>();
   for (const message of messages) {
     if (message.source !== null && message.tool) {
@@ -73,7 +73,7 @@ export function toolCards(
     paired.set(call, result);
     consumed.add(result);
   }
-  return messages
+  const rows = messages
     .filter((message) => !consumed.has(message))
     .map((message) => ({
       message:
@@ -85,5 +85,19 @@ export function toolCards(
           ? { ...message, id: message.tool.toolUseId }
           : message,
       result: paired.get(message) ?? null,
+      depth: 0,
     }));
+  // Only visible, unambiguous earlier calls establish indentation. A parent
+  // outside this bounded window does not invent an empty ancestor row.
+  const parents = new Map<string, { sequence: number; depth: number }>();
+  for (const row of rows) {
+    const tool = row.message.tool;
+    if (!tool?.call || row.message.id !== tool.toolUseId) continue;
+    const parent = tool.call.ancestorToolUseIds
+      .map((id) => parents.get(id))
+      .find((parent) => parent && parent.sequence < tool.call!.sequence);
+    row.depth = parent ? parent.depth + 1 : 0;
+    parents.set(tool.toolUseId, { sequence: tool.call.sequence, depth: row.depth });
+  }
+  return rows;
 }

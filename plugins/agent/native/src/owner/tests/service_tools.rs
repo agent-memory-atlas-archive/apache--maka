@@ -411,7 +411,11 @@ impl Setup {
             methods
                 .into_iter()
                 .map(|(method, name)| contract::ServiceTool {
-                    input: contract::ToolInput::Json,
+                    input: if method == "execute" {
+                        contract::ToolInput::Shell
+                    } else {
+                        contract::ToolInput::Json
+                    },
                     title: None,
                     name: name.into(),
                     method: method.into(),
@@ -562,10 +566,8 @@ impl Setup {
         let project_roots =
             input.instances["provider"].configuration.values["workspaceRoots"].clone();
         let mut manifest = packages[0].manifest().clone();
-        manifest
-            .application
-            .as_mut()
-            .unwrap()
+        let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+        manifest_application
             .entries
             .get_mut(&EntryTarget::Host)
             .unwrap()
@@ -577,10 +579,12 @@ impl Setup {
                     cardinality: Cardinality::One,
                 },
             );
-        let provider = Package::new(BTreeMap::from([(
-            MANIFEST_FILE.into(),
-            serde_json::to_vec(&manifest).unwrap(),
-        )]))
+        let provider = Package::new(BTreeMap::from([(MANIFEST_FILE.into(), {
+            manifest.application = Some(
+                maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap(),
+            );
+            serde_json::to_vec(&manifest).unwrap()
+        })]))
         .unwrap();
         input.instances.get_mut("provider").unwrap().package = provider.application_ref().into();
         input
@@ -678,10 +682,9 @@ impl Setup {
             let consumer = &packages[1];
             let mut files = consumer.files().clone();
             let mut manifest = consumer.manifest().clone();
-            manifest
-                .application
-                .as_mut()
-                .unwrap()
+            let mut manifest_application =
+                manifest.application.as_ref().unwrap().declaration().clone();
+            manifest_application
                 .entries
                 .get_mut(&EntryTarget::Host)
                 .unwrap()
@@ -702,7 +705,13 @@ impl Setup {
                         cardinality: Cardinality::One,
                     },
                 );
-            files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+            files.insert(MANIFEST_FILE.into(), {
+                manifest.application = Some(
+                    maka_plugin_core::package::CheckedDeclaration::new(manifest_application)
+                        .unwrap(),
+                );
+                serde_json::to_vec(&manifest).unwrap()
+            });
             let consumer = Package::new(files).unwrap();
             for name in ["a", "b"] {
                 let node = input.instances.get_mut(name).unwrap();
@@ -815,7 +824,12 @@ impl Setup {
                         .selections()
                         .into_iter()
                         .map(|tool| tool.method)
-                        .chain(self.prepare_skills.then(|| "prepare".into()))
+                        .chain(
+                            self.prepare_skills
+                                .then_some(["prepare".into(), "search".into()])
+                                .into_iter()
+                                .flatten(),
+                        )
                         .chain(self.web.then(|| "capture".into()))
                         .chain(self.computer.then(|| "state".into()))
                         .chain(
@@ -1687,7 +1701,6 @@ async fn admitted_message_keeps_original_model_workspace_and_dispatcher_when_ope
     assert!(!basis.fingerprint.is_empty());
     assert_eq!(basis.tools.len(), 1);
     assert!(basis.tools == fixture.owner.tool_basis);
-    assert_eq!(basis.max_steps, fixture.owner.settings.max_steps);
     assert_eq!(
         fixture
             .store
@@ -2306,7 +2319,7 @@ async fn code_mode_wait_observes_original_native_process_and_its_workspace_effec
         setup.nestable = true;
         let fixture = Fixture::configured(
             &format!("http://{}/v1", listener.local_addr().unwrap()), None, None,
-            Some(setup), |settings| { settings.tool_discovery = true; settings.max_steps = Some(3); },
+            Some(setup), |settings| { settings.tool_discovery = true; },
         ).await;
         selection::edit(&fixture, |changes| {
             changes.model_overrides = Patch::Set(BTreeMap::from([("fixture-model".into(), ModelOverride {
@@ -2317,7 +2330,7 @@ async fn code_mode_wait_observes_original_native_process_and_its_workspace_effec
         fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
         request(&mut socket).await;
-        code_response(&mut socket, "// @exec: {\"yield_time_ms\":0}\nconst result = await tools.Execute({command:'printf started > process-started; while [ ! -f process-release ]; do sleep 0.02; done; printf native-code-mode > process-result; cat process-result',login:false,timeout_ms:30000}); if (result.kind !== 'completed' || result.value.status !== 'completed') throw Error(JSON.stringify(result)); text(result.value.output.stdout);").await;
+        code_response(&mut socket, "// @exec: {\"yield_time_ms\":0}\nconst result = await tools.Execute({title:'验证后台进程',command:'printf started > process-started; while [ ! -f process-release ]; do sleep 0.02; done; printf native-code-mode > process-result; cat process-result',login:false,timeout_ms:30000}); if (result.kind !== 'completed' || result.value.status !== 'completed') throw Error(JSON.stringify(result)); text(result.value.output.stdout);").await;
         let (mut socket, _) = listener.accept().await.unwrap();
         let prompt = request(&mut socket).await;
         let message = prompt["messages"].as_array().unwrap().iter().rev().find(|message| message["role"] == "tool").unwrap();

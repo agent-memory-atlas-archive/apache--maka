@@ -219,11 +219,13 @@ impl EventLog {
                     let ending = (Cursor { field, sequence, offset: end }, row.total);
                     let candidate_left = if reverse { Some(beginning) } else { left.or(Some(beginning)) };
                     let candidate_right = if reverse { right.or(Some(ending)) } else { Some(ending) };
-                    let emit = row.total != 0 || matches!(row.role.as_str(), "tool_call" | "tool_result");
+                    let emit = row.total != 0 || matches!(row.role.as_str(), "tool_call" | "tool_result")
+                        || (view == HistoryView::Conversation && row.role == "context_compacted");
                     if emit {
                     let role = match row.role.as_str() {
                         "user" => Role::User, "assistant" => Role::Assistant,
                         "tool_call" => Role::ToolCall, "tool_result" => Role::ToolResult,
+                        "context_compacted" => Role::Compaction,
                         _ => return Err(invalid("invalid history text role")),
                     };
                     let attachments = if start == 0 && role == Role::User {
@@ -240,7 +242,13 @@ impl EventLog {
                         Some(tool)
                     } else { None };
                     let timing = super::timing::read(&mut tx, &session, &row.turn, through_sql).await?;
-                    chunks.push(Chunk { field, timing,
+                    let compaction = if role == Role::Compaction {
+                        let duration: i64 = sqlx::query_scalar(
+                            "SELECT json_extract(payload, '$.durationMs') FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2"
+                        ).bind(&session).bind(sql_number(sequence)?).fetch_one(&mut *tx).await?;
+                        Some(maka_agent_ports::session::history::Compaction { duration_ms: sequence_number(duration)? })
+                    } else { None };
+                    chunks.push(Chunk { field, timing, compaction,
                         message_id: row.message, turn_id: row.turn, timestamp: row.timestamp, role,
                         sequence, offset: start, total_bytes: row.total, text: text.to_owned(), attachments, tool,
                     });
@@ -360,17 +368,12 @@ async fn conversation_tool(
         "SELECT row.message_id, row.turn_id, json_extract(row.payload, '$.ts'),
             json_extract(row.payload, '$.type'), json_extract(row.payload, '$.origin'),
             COALESCE(json_extract(row.payload, '$.toolName'), json_extract(call.payload, '$.toolName')),
-            COALESCE(json_extract(row.payload, '$.isError'), 0),
-            CASE WHEN COALESCE(json_extract(row.payload, '$.toolName'), json_extract(call.payload, '$.toolName')) = 'cua_repl'
-                THEN EXISTS(SELECT 1 FROM transcript_rows child WHERE child.session_id = row.session_id
-                AND child.turn_id = row.turn_id AND child.sequence <= ?3
-                AND json_extract(child.payload, '$.parentToolCallId') = COALESCE(call.message_id, row.message_id)
-                AND json_extract(child.payload, '$.type') = 'tool_call') ELSE 0 END
+            COALESCE(json_extract(row.payload, '$.isError'), 0)
         FROM transcript_rows row LEFT JOIN transcript_rows call
             ON call.session_id = row.session_id AND call.turn_id = row.turn_id
             AND call.message_id = json_extract(row.payload, '$.toolUseId')
             AND json_extract(call.payload, '$.type') = 'tool_call'
-        WHERE row.session_id = ?1 AND row.sequence = ?2
+        WHERE row.session_id = ?1 AND row.sequence = ?2 AND row.sequence <= ?3
             AND json_extract(row.payload, '$.type') IN ('tool_call', 'tool_result')"
     ).bind(session).bind(sql_number(sequence)?).bind(through).fetch_optional(tx).await?;
     let Some(row) = row else {
@@ -379,15 +382,12 @@ async fn conversation_tool(
     let origin: Option<String> = row.try_get(4)?;
     let name: Option<String> = row.try_get(5)?;
     let error: bool = row.try_get(6)?;
-    let children: bool = row.try_get(7)?;
     let internal = !error
         && (matches!(
             (origin.as_deref(), name.as_deref()),
-            (Some("provider"), Some("exec" | "wait" | "tool_search"))
+            (Some("provider"), Some("wait" | "tool_search"))
                 | (Some("code_mode"), Some("code_cell" | "tool_search"))
-        ) || (origin.as_deref() == Some("provider")
-            && name.as_deref() == Some("cua_repl")
-            && children));
+        ));
     Ok(Some(Header {
         message: row.try_get(0)?,
         turn: row.try_get(1)?,
@@ -494,7 +494,7 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
-    async fn conversation_hides_orchestration_but_preserves_errors_and_imported_tools() {
+    async fn conversation_retains_trace_parents_and_hides_transport_helpers() {
         let mut db = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::query("CREATE TABLE transcript_rows (session_id TEXT, sequence INTEGER, message_id TEXT, turn_id TEXT, payload BLOB)").execute(&mut db).await.unwrap();
         let rows = [
@@ -517,12 +517,12 @@ mod tests {
                 .unwrap();
         }
         for (sequence, visible) in [
-            (1, false),
+            (1, true),
             (2, false),
             (3, true),
-            (4, false),
+            (4, true),
             (5, true),
-            (6, false),
+            (6, true),
             (7, true),
         ] {
             let row = conversation_tool(&mut db, "a", sequence, 7)

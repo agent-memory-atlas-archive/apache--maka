@@ -50,17 +50,22 @@ import {
 import { tuiText, copy } from './locale.js';
 import { output, fill, pixels, type Presentation, type Node } from '../../shared/view.js';
 import { sameValue } from '../../shared/value.js';
+import { editorMenu } from '../../shared/editor-menu.js';
 
+type CapturedDraft = Pick<EditorObservation, 'revision'> & {
+  snapshot: Pick<EditorObservation['snapshot'], 'text'>;
+};
 interface Submission {
   preview?: { key: string; text: string };
   context: string;
   dataSource: AgentDataSource;
-  backend: ComposerBackend;
-  draft: EditorObservation;
+  backend: ComposerBackend | null;
+  command?: string;
+  draft: CapturedDraft;
   attachments: string[];
 }
 type Delivery =
-  | { kind: 'read' | 'send'; key: string; submission: Submission }
+  | { kind: 'capture' | 'read' | 'send'; key: string; submission: Submission }
   | {
       kind: 'unknown';
       submission: Submission;
@@ -69,7 +74,16 @@ type Delivery =
       checking: string | null;
     }
   | { kind: 'clear'; command: EditorCommand; caller: CallerConfirmation | null };
+interface Prefix {
+  read: { key: string; observation: EditorObservation } | null;
+  attempted: EditorObservation['snapshot']['text'] | null;
+  cached: { metadata: EditorObservation['snapshot']['text']; text: string } | null;
+  selected: number;
+  dismissed: number | null;
+}
 interface DraftEntry {
+  prefix: Prefix;
+  knownSkillLiterals: string[];
   dataSource: AgentDataSource;
   checkpoint: EditorCheckpointObservation | null;
   retry: number;
@@ -79,9 +93,23 @@ interface DraftEntry {
   files: FilePasteObservation | null;
   history: { after: number; scope: string | null };
   delivery: Delivery | null;
-  notice: 'draftKept' | 'empty' | 'skillInputUnavailable' | null;
+  notice: 'draftKept' | 'empty' | 'skillInputUnavailable' | 'unknownCommand' | null;
+}
+interface SkillCandidate {
+  reference: string;
+  name: string;
+  description: string;
+  invocation: string;
+}
+interface SkillSearch {
+  scope: string;
+  query: string;
+  key: string;
+  observation: EditorObservation;
+  items: SkillCandidate[];
 }
 interface Draft {
+  skills: SkillSearch | null;
   revision: number;
   active: string | null;
   serial: number;
@@ -89,6 +117,114 @@ interface Draft {
   records: DraftRecord[];
   recovery: { key: string; step: DraftStep } | null;
   reported: ComposerReadiness[];
+}
+// Only a single slash token is command input. Paths and multiline drafts stay prose.
+function slashQuery(text: string): string | null {
+  if (/^\/skill:[A-Za-z0-9._-]+$/u.test(text)) return null;
+  return /^\/[^\s/\\]*$/u.test(text) ? text.slice(1).toLocaleLowerCase() : null;
+}
+function rememberSkills(entry: DraftEntry, literals: Iterable<string>) {
+  for (const literal of literals) {
+    if (entry.knownSkillLiterals.length === 4096) break;
+    if (
+      literal.length <= 512 &&
+      /^\/skill:[A-Za-z0-9._-]+$/u.test(literal) &&
+      !entry.knownSkillLiterals.includes(literal)
+    )
+      entry.knownSkillLiterals.push(literal);
+  }
+}
+function rememberSkillReferences(entry: DraftEntry, text: string) {
+  rememberSkills(
+    entry,
+    [...text.matchAll(/(?:^|\s)(\/skill:[A-Za-z0-9._-]+)(?=\s|$)/gu)].map((match) => match[1]),
+  );
+}
+interface SlashCompletion {
+  query: string;
+  start: number;
+  end: number;
+  root: boolean;
+}
+function slashCompletion(text: string, observation: EditorObservation): SlashCompletion | null {
+  const { start, end } = observation.snapshot.selection;
+  if (start !== end || start > text.length) return null;
+  const before = text.slice(0, start);
+  const match = /(?:^|\s)(\/[^\s/\\]*)$/u.exec(before);
+  if (!match) return null;
+  const tokenStart = start - match[1].length;
+  const suffix = /^[^\s]*/u.exec(text.slice(start))![0];
+  const tokenEnd = start + suffix.length;
+  if (slashQuery(text.slice(tokenStart, tokenEnd)) === null) return null;
+  return {
+    query: match[1].slice(1).toLocaleLowerCase(),
+    start: tokenStart,
+    end: tokenEnd,
+    root: tokenStart === 0 && tokenEnd === text.length,
+  };
+}
+function completionEdit(
+  completion: SlashCompletion,
+  text: string,
+  invocation: string,
+): EditorCommand['edit'] {
+  const insert = `${invocation}${/^[ \t]/u.test(text.slice(completion.end)) ? '' : ' '}`;
+  return completion.root
+    ? { kind: 'replace', text: insert }
+    : {
+        kind: 'replace_range',
+        range: { start: completion.start, end: completion.end },
+        text: insert,
+      };
+}
+function candidates(
+  props: ComposerProps,
+  text: string,
+  skills: SkillCandidate[] = [],
+  completion?: SlashCompletion | null,
+) {
+  const query = completion ? completion.query : slashQuery(text);
+  return query === null
+    ? []
+    : [
+        ...(completion && !completion.root ? [] : (props.commands ?? [])).map((item) => ({
+          ...item,
+          invocation: null as string | null,
+        })),
+        ...skills.map((item) => ({
+          id: `skill:${item.reference}`,
+          command: item.name,
+          label: item.description,
+          disabled: false,
+          invocation: item.invocation,
+        })),
+      ].filter(
+        (item) =>
+          !item.disabled &&
+          (item.command.toLocaleLowerCase().includes(query) ||
+            item.label.toLocaleLowerCase().includes(query)),
+      );
+}
+function prefixText(entry: DraftEntry) {
+  return sameValue(entry.prefix.cached?.metadata, entry.observation?.snapshot.text)
+    ? (entry.prefix.cached?.text ?? null)
+    : null;
+}
+function snapshotRead(key: string, entry: DraftEntry, observation: CapturedDraft): Action {
+  return {
+    ...action(key, 'reader', 'read', { start: 0, end: observation.snapshot.text.bytes }),
+    resources: {
+      text: {
+        child: entry.key,
+        method: 'snapshot',
+        input: {
+          kind: 'at_revision',
+          owner: observation.snapshot.text.owner,
+          revision: observation.snapshot.text.revision,
+        },
+      },
+    },
+  };
 }
 function action(key: string, binding: string, method: string, input: unknown): Action {
   return { key, binding, member: 0, method, input, resources: {}, continuations: [] };
@@ -211,6 +347,8 @@ export function composer<N extends Node>(
       }
       if (state.entries.length < 32)
         state.entries.push({
+          prefix: { read: null, attempted: null, cached: null, selected: 0, dismissed: null },
+          knownSkillLiterals: [],
           context: props.context,
           dataSource: props.dataSource,
           checkpoint: null,
@@ -232,6 +370,73 @@ export function composer<N extends Node>(
       if (current?.checkpoint?.state.kind === 'restore') current.retry++;
     }
     const pending = !!current?.delivery;
+    if (
+      current &&
+      observation &&
+      !pending &&
+      !current.prefix.read &&
+      observation.snapshot.text.bytes > 0 &&
+      observation.snapshot.text.bytes <= 65536 &&
+      !observation.snapshot.marked &&
+      !sameValue(current.prefix.attempted, observation.snapshot.text)
+    ) {
+      const key = `prefix-${++state.serial}`;
+      current.prefix.read = { key, observation };
+      current.prefix.attempted = observation.snapshot.text;
+      actions.push(snapshotRead(key, current, observation));
+    }
+    const shortText = current ? prefixText(current) : null;
+    const completion =
+      shortText !== null && observation ? slashCompletion(shortText, observation) : null;
+    const menuOpen =
+      !!current &&
+      !!observation &&
+      !pending &&
+      props.enabled &&
+      !props.busy &&
+      !observation.snapshot.marked &&
+      current.prefix.dismissed !== observation.revision &&
+      shortText !== null &&
+      completion !== null;
+    const skillScope = JSON.stringify([
+      props.context,
+      props.dataSource,
+      props.backend,
+      props.skillContext,
+    ]);
+    const skillQuery = completion?.query ?? null;
+    if (
+      !props.enabled ||
+      !props.backend ||
+      skillQuery === null ||
+      current?.prefix.dismissed === observation?.revision ||
+      state.skills?.scope !== skillScope ||
+      state.skills.query !== skillQuery ||
+      !sameValue(state.skills.observation, observation)
+    )
+      state.skills = null;
+    if (menuOpen && props.backend && !state.skills) {
+      const key = `skills-${++state.serial}`;
+      state.skills = {
+        scope: skillScope,
+        query: skillQuery!,
+        key,
+        observation: observation!,
+        items: [],
+      };
+      actions.push(
+        action(key, 'agent', 'skillCandidates', {
+          sessionId: props.context,
+          backend: props.backend,
+          query: skillQuery,
+        }),
+      );
+    }
+    const choices = menuOpen ? candidates(props, shortText!, state.skills?.items, completion) : [];
+    if (current)
+      current.prefix.selected = Math.min(current.prefix.selected, Math.max(0, choices.length - 1));
+    const selected = current?.prefix.selected ?? 0;
+    const first = Math.max(0, selected - 5);
     const attached = props.attachments.filter(
       (file) => file.sessionId === props.context && sameValue(file.dataSource, props.dataSource),
     );
@@ -277,22 +482,11 @@ export function composer<N extends Node>(
       !pending &&
       !!observation &&
       !observation.snapshot.marked &&
-      (!!observation.snapshot.text.bytes || attached.length > 0);
+      (target === 'tui' || !!observation.snapshot.text.bytes || attached.length > 0);
     const textarea: TextareaProps = {
       appearance:
         target === 'tui' ? { ...props.theme.textarea, borderWidth: 0 } : props.theme.textarea,
-      menu: {
-        appearance: props.theme.menu,
-        labels: {
-          title: text.edit,
-          undo: text.undo,
-          redo: text.redo,
-          cut: text.cut,
-          copy: text.copy,
-          paste: text.paste,
-          selectAll: text.selectAll,
-        },
-      },
+      menu: editorMenu(props.theme, props.locale),
       accessibilityLabel: text.draft,
       readOnly: false,
       disabled: false,
@@ -310,6 +504,7 @@ export function composer<N extends Node>(
       placeholder:
         target === 'tui' ? tuiText(props.locale, 'composer-placeholder') : text.placeholder,
       command: null,
+      inlineTokens: [],
       filePaste: null,
       fileCommand: null,
       persistence: null,
@@ -325,6 +520,7 @@ export function composer<N extends Node>(
               'editor',
               {
                 ...textarea,
+                inlineTokens: entry.knownSkillLiterals,
                 persistence: {
                   key: entry.context,
                   format: 'maka.agent.draft@2',
@@ -347,6 +543,10 @@ export function composer<N extends Node>(
                   retry: entry.retry,
                 },
                 autoFocus: entry === current && props.autoFocus,
+                navigation:
+                  entry === current && menuOpen && observation
+                    ? { owner: observation.snapshot.text.owner, basedOn: observation.revision }
+                    : null,
                 command: entry.delivery?.kind === 'clear' ? entry.delivery.command : null,
                 filePaste:
                   entry === current
@@ -361,6 +561,7 @@ export function composer<N extends Node>(
               },
               {
                 changed: 'changed',
+                navigated: 'navigated',
                 submitted: 'submitted',
                 files: 'files',
                 checkpoint: 'checkpoint',
@@ -478,7 +679,8 @@ export function composer<N extends Node>(
       {
         row: target === 'tui',
         border: target === 'tui',
-        busy: props.running,
+        borderColor: props.approvalPending ? props.theme.warning : undefined,
+        busy: props.running && !props.approvalPending,
         gap: target === 'tui' ? 0 : 12,
         terminal: { shrink: true },
         style: { width: fill },
@@ -510,6 +712,31 @@ export function composer<N extends Node>(
                 ),
               ]
             : []),
+          ...(menuOpen
+            ? [
+                ui.box(
+                  'slash-menu',
+                  [
+                    ...choices
+                      .slice(first, first + 6)
+                      .map((item, index) =>
+                        ui.button(
+                          `slash:${item.id}`,
+                          `${first + index === selected ? '› ' : '  '}/${item.command}  ${item.label}`,
+                          false,
+                          first + index === selected,
+                          { width: fill, align: 'start' },
+                        ),
+                      ),
+                    ...(!choices.length
+                      ? [ui.text('slash-empty', text.unknownCommand, 13, props.theme.muted)]
+                      : []),
+                    ui.text('slash-hint', text.commandHint, 12, props.theme.muted),
+                  ],
+                  { gap: 0, style: { width: fill }, terminal: { shrink: false } },
+                ),
+              ]
+            : []),
           body,
         ],
         { style: { width: fill }, terminal: { shrink: true } },
@@ -523,6 +750,7 @@ export function composer<N extends Node>(
     mount: (props) =>
       composerFrame(
         {
+          skills: null,
           revision: 0,
           serial: 0,
           active: null,
@@ -543,6 +771,53 @@ export function composer<N extends Node>(
         actions: Action[] = [];
       if (input.kind === 'action') {
         const outcome = input.event as ActionOutcome;
+        if (state.skills?.key === input.key) {
+          const scope = JSON.stringify([
+            props.context,
+            props.dataSource,
+            props.backend,
+            props.skillContext,
+          ]);
+          if (state.skills.scope === scope && outcome.status === 'succeeded') {
+            const result = outcome.value as { skills: SkillCandidate[] };
+            state.skills.items = result.skills.filter((item) =>
+              /^\/skill:[A-Za-z0-9._-]+$/u.test(item.invocation),
+            );
+            const entry = state.entries.find(
+              (entry) =>
+                entry.observation?.snapshot.text.owner ===
+                state.skills!.observation.snapshot.text.owner,
+            );
+            if (entry)
+              rememberSkills(
+                entry,
+                state.skills.items.map((item) => item.invocation),
+              );
+          }
+          return composerFrame(state, props, events, actions);
+        }
+        const prefixEntry = state.entries.find((entry) => entry.prefix.read?.key === input.key);
+        if (prefixEntry?.prefix.read) {
+          const read = prefixEntry.prefix.read;
+          prefixEntry.prefix.read = null;
+          if (outcome.status === 'succeeded') {
+            const chunk = outcome.value as TextChunk;
+            if (
+              sameValue(chunk.metadata, read.observation.snapshot.text) &&
+              sameValue(chunk.metadata, prefixEntry.observation?.snapshot.text) &&
+              new TextEncoder().encode(chunk.text).length ===
+                read.observation.snapshot.text.bytes &&
+              read.observation.snapshot.text.bytes <= 65536
+            ) {
+              prefixEntry.prefix.cached = {
+                metadata: read.observation.snapshot.text,
+                text: chunk.text,
+              };
+              rememberSkillReferences(prefixEntry, chunk.text);
+            }
+          }
+          return composerFrame(state, props, events, actions);
+        }
         if (state.recovery?.key === input.key) {
           const step = state.recovery.step;
           state.recovery = null;
@@ -562,7 +837,32 @@ export function composer<N extends Node>(
             );
           });
           const delivery = entry?.delivery;
-          if (entry && delivery?.kind === 'read') {
+          if (entry && delivery?.kind === 'capture') {
+            entry.delivery = null;
+            if (outcome.status === 'succeeded') {
+              const chunk = outcome.value as TextChunk;
+              const metadata = chunk.metadata as EditorObservation['snapshot']['text'] | null;
+              if (
+                metadata !== null &&
+                typeof metadata === 'object' &&
+                metadata.owner === delivery.submission.draft.snapshot.text.owner &&
+                Number.isSafeInteger(metadata.revision) &&
+                metadata.revision >= 0 &&
+                Number.isSafeInteger(metadata.bytes) &&
+                metadata.bytes >= 0 &&
+                metadata.bytes <= 65536
+              ) {
+                const submission = delivery.submission;
+                submission.draft = { revision: metadata.revision, snapshot: { text: metadata } };
+                if (!metadata.bytes && !submission.attachments.length) entry.notice = 'empty';
+                else {
+                  const key = `read-${++state.serial}`;
+                  entry.delivery = { kind: 'read', key, submission };
+                  actions.push(snapshotRead(key, entry, submission.draft));
+                }
+              } else entry.notice = 'draftKept';
+            } else entry.notice = 'draftKept';
+          } else if (entry && delivery?.kind === 'read') {
             entry.delivery = null;
             if (outcome.status === 'succeeded') {
               const chunk = outcome.value as TextChunk;
@@ -571,8 +871,45 @@ export function composer<N extends Node>(
                 sameValue(chunk.metadata, submission.draft.snapshot.text) &&
                 new TextEncoder().encode(chunk.text).length === submission.draft.snapshot.text.bytes
               ) {
+                rememberSkillReferences(entry, chunk.text);
                 if (!chunk.text.trim() && !submission.attachments.length) entry.notice = 'empty';
-                else {
+                else if (slashQuery(chunk.text) !== null) {
+                  const command = submission.command
+                    ? candidates(props, chunk.text).find((item) => item.id === submission.command)
+                    : (props.commands ?? []).find(
+                        (item) => !item.disabled && `/${item.command}` === chunk.text,
+                      );
+                  if (
+                    command &&
+                    submission.context === props.context &&
+                    sameValue(submission.dataSource, props.dataSource) &&
+                    props.enabled &&
+                    !props.busy &&
+                    !submission.attachments.length &&
+                    sameValue(entry.observation?.snapshot.text, submission.draft.snapshot.text)
+                  ) {
+                    events.push({
+                      name: 'command',
+                      value: {
+                        context: submission.context,
+                        dataSource: submission.dataSource,
+                        id: command.id,
+                      },
+                    });
+                    entry.delivery = {
+                      kind: 'clear',
+                      caller: null,
+                      command: {
+                        owner: submission.draft.snapshot.text.owner,
+                        sequence: ++state.serial,
+                        basedOn: submission.draft.revision,
+                        edit: { kind: 'reset', text: '' },
+                      },
+                    };
+                  } else entry.notice = command ? 'draftKept' : 'unknownCommand';
+                } else if (!submission.backend) {
+                  events.push({ name: 'setup', value: { context: submission.context } });
+                } else {
                   const key = `send-${++state.serial}`,
                     backend = submission.backend;
                   submission.preview = {
@@ -666,7 +1003,20 @@ export function composer<N extends Node>(
         source &&
         (input.name === 'changed' || input.name === 'submitted')
       ) {
-        source.observation = input.event as EditorObservation;
+        const next = input.event as EditorObservation;
+        if (
+          source.observation &&
+          next.snapshot.text.owner === source.observation.snapshot.text.owner &&
+          next.revision < source.observation.revision
+        )
+          return composerFrame(state, props);
+        if (!sameValue(source.observation?.snapshot.selection, next.snapshot.selection))
+          source.prefix.selected = 0;
+        if (!sameValue(source.observation?.snapshot.text, next.snapshot.text)) {
+          source.prefix.selected = 0;
+          source.prefix.cached = null;
+        }
+        source.observation = next;
         const delivery = source.delivery,
           receipt = source.observation.receipt;
         if (
@@ -684,6 +1034,87 @@ export function composer<N extends Node>(
         (entry) => entry.context === props.context && sameValue(entry.dataSource, props.dataSource),
       );
       const observation = current?.observation;
+      let command: string | undefined;
+      const shortText = current ? prefixText(current) : null;
+      const completion =
+        shortText !== null && observation ? slashCompletion(shortText, observation) : null;
+      const skillScope = JSON.stringify([
+        props.context,
+        props.dataSource,
+        props.backend,
+        props.skillContext,
+      ]);
+      const choices =
+        shortText === null
+          ? []
+          : candidates(
+              props,
+              shortText,
+              state.skills?.scope === skillScope && state.skills.query === completion?.query
+                ? state.skills.items
+                : [],
+              completion,
+            );
+      const menuOpen =
+        current &&
+        observation &&
+        shortText !== null &&
+        completion !== null &&
+        current.prefix.dismissed !== observation.revision &&
+        !observation.snapshot.marked &&
+        props.enabled &&
+        !props.busy &&
+        !current.delivery;
+      if (input.kind === 'component' && source === current && input.name === 'navigated') {
+        const navigation = input.event as {
+          key: 'up' | 'down' | 'enter' | 'tab' | 'escape';
+          observation: EditorObservation;
+        };
+        if (!menuOpen || !sameValue(navigation.observation, observation))
+          return composerFrame(state, props);
+        const selected = Math.min(current.prefix.selected, Math.max(0, choices.length - 1));
+        if (navigation.key === 'escape') current.prefix.dismissed = observation.revision;
+        else if (navigation.key === 'up' || navigation.key === 'down')
+          current.prefix.selected = choices.length
+            ? (selected + (navigation.key === 'up' ? -1 : 1) + choices.length) % choices.length
+            : 0;
+        else if (choices[selected] && (navigation.key === 'tab' || choices[selected].invocation)) {
+          if (choices[selected].invocation) rememberSkills(current, [choices[selected].invocation]);
+          current.delivery = {
+            kind: 'clear',
+            caller: null,
+            command: {
+              owner: observation.snapshot.text.owner,
+              sequence: ++state.serial,
+              basedOn: observation.revision,
+              edit: choices[selected].invocation
+                ? completionEdit(completion!, shortText!, choices[selected].invocation)
+                : { kind: 'replace', text: `/${choices[selected].command}` },
+            },
+          };
+        } else if (choices[selected] && navigation.key === 'enter') command = choices[selected].id;
+        if (!command) return composerFrame(state, props);
+      }
+      if (input.kind === 'raw' && input.key.startsWith('slash:')) {
+        if (!menuOpen) return composerFrame(state, props);
+        const choice = choices.find((item) => `slash:${item.id}` === input.key);
+        if (choice?.invocation) {
+          rememberSkills(current, [choice.invocation]);
+          current.delivery = {
+            kind: 'clear',
+            caller: null,
+            command: {
+              owner: observation.snapshot.text.owner,
+              sequence: ++state.serial,
+              basedOn: observation.revision,
+              edit: completionEdit(completion!, shortText!, choice.invocation),
+            },
+          };
+          return composerFrame(state, props);
+        }
+        command = choice?.id;
+        if (!command) return composerFrame(state, props);
+      }
       if (input.kind === 'raw' && input.key === 'draft-retry' && current?.checkpoint) {
         if (current.delivery?.kind === 'unknown') {
           if (!current.delivery.checking) {
@@ -696,14 +1127,15 @@ export function composer<N extends Node>(
         return composerFrame(state, props, [], actions);
       }
       if (
-        ((input.kind === 'raw' && input.key === 'send') ||
+        (command !== undefined ||
+          (input.kind === 'raw' && input.key === 'send') ||
           (input.kind === 'component' && source === current && input.name === 'submitted')) &&
         current?.checkpoint?.state.kind === 'ready' &&
         current.checkpoint.state.initialized &&
         props.enabled &&
         !props.busy &&
         !current.delivery &&
-        (target === 'tui' || !props.running) &&
+        (command !== undefined || target === 'tui' || !props.running) &&
         observation &&
         !observation.snapshot.marked
       ) {
@@ -713,39 +1145,32 @@ export function composer<N extends Node>(
               file.sessionId === current.context && sameValue(file.dataSource, current.dataSource),
           )
           .map((file) => file.id);
-        if (!observation.snapshot.text.bytes && !attachments.length)
+        // Native text can paint before its changed observation reaches this component.
+        const captureCurrent = target === 'tui' && input.kind === 'raw' && input.key === 'send';
+        if (!captureCurrent && !observation.snapshot.text.bytes && !attachments.length)
           return composerFrame(state, props);
-        if (!props.backend)
-          return composerFrame(state, props, [
-            { name: 'setup', value: { context: current.context } },
-          ]);
-        const key = `read-${++state.serial}`;
+        const key = `${captureCurrent ? 'capture' : 'read'}-${++state.serial}`;
         current.notice = null;
         current.delivery = {
-          kind: 'read',
+          kind: captureCurrent ? 'capture' : 'read',
           key,
           submission: {
             context: current.context,
             dataSource: current.dataSource,
             backend: props.backend,
+            ...(command ? { command } : {}),
             draft: observation,
             attachments,
           },
         };
-        actions.push({
-          ...action(key, 'reader', 'read', { start: 0, end: observation.snapshot.text.bytes }),
-          resources: {
-            text: {
-              child: current.key,
-              method: 'snapshot',
-              input: {
-                kind: 'at_revision',
-                owner: observation.snapshot.text.owner,
-                revision: observation.snapshot.text.revision,
-              },
+        if (captureCurrent)
+          actions.push({
+            ...action(key, 'reader', 'read', { start: 0, end: 0 }),
+            resources: {
+              text: { child: current.key, method: 'snapshot', input: { kind: 'current' } },
             },
-          },
-        });
+          });
+        else actions.push(snapshotRead(key, current, observation));
         return composerFrame(state, props, [], actions);
       }
       if (input.kind === 'raw' && input.key === 'attach' && props.context && !props.busy)

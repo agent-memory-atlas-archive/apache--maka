@@ -116,7 +116,7 @@ impl Plan {
             let mut bindings = BTreeMap::new();
             let mut exports = BTreeMap::new();
             if !pending.instance.disabled {
-                for name in pending.node.bindings.keys() {
+                for name in pending.bindings.keys() {
                     if !pending.imports.contains_key(name) {
                         return Err(Error::Composition(format!(
                             "undeclared import at {:?}: {name}",
@@ -193,21 +193,21 @@ enum PendingExport {
     Forward(Target),
 }
 
-struct Pending {
+struct Pending<'a> {
     instance: Instance,
-    node: Node,
-    imports: BTreeMap<String, Import>,
+    bindings: BTreeMap<String, Vec<Target>>,
+    imports: &'a BTreeMap<String, Import>,
     exports: BTreeMap<String, PendingExport>,
 }
 
 struct Builder<'a> {
     packages: &'a Packages,
     target: EntryTarget,
-    nodes: BTreeMap<InstanceId, Pending>,
+    nodes: BTreeMap<InstanceId, Pending<'a>>,
     aliases: BTreeMap<Vec<String>, InstanceId>,
 }
 
-impl Builder<'_> {
+impl<'a> Builder<'a> {
     fn expand(
         &mut self,
         nodes: &BTreeMap<String, Node>,
@@ -342,11 +342,7 @@ impl Builder<'_> {
                             )
                         })
                         .collect();
-                    (
-                        Some(Arc::new(entry.clone())),
-                        entry.imports.clone(),
-                        exports,
-                    )
+                    (Some(Arc::new(entry.clone())), &entry.imports, exports)
                 }
                 PackageUse::Composition => {
                     if configuration != serde_json::json!({}) {
@@ -357,7 +353,7 @@ impl Builder<'_> {
                     })?;
                     (
                         None,
-                        template.imports.clone(),
+                        &template.imports,
                         template
                             .exports
                             .iter()
@@ -383,7 +379,7 @@ impl Builder<'_> {
                         bindings: BTreeMap::new(),
                         exports: BTreeMap::new(),
                     },
-                    node: node.clone(),
+                    bindings: node.bindings,
                     imports,
                     exports,
                 },
@@ -430,7 +426,7 @@ enum Resolving {
 }
 
 struct Resolver<'a> {
-    nodes: &'a BTreeMap<InstanceId, Pending>,
+    nodes: &'a BTreeMap<InstanceId, Pending<'a>>,
     aliases: &'a BTreeMap<Vec<String>, InstanceId>,
     remote: &'a BTreeMap<RemoteCapability, Arc<Export>>,
 }
@@ -458,7 +454,7 @@ impl Resolver<'_> {
             .ok_or_else(|| Error::Composition(format!("undeclared imported binding: {name}")))?;
         let namespace = &pending.instance.path[..pending.instance.path.len() - 1];
         let mut bindings = Vec::new();
-        for target in pending.node.bindings.get(name).into_iter().flatten() {
+        for target in pending.bindings.get(name).into_iter().flatten() {
             bindings.extend(self.target(
                 target,
                 namespace,

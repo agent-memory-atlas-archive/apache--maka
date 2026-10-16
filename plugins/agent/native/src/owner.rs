@@ -26,6 +26,7 @@ use maka_agent_engine::{Engine, RunError, RunInput, RunWork};
 mod assistant;
 mod attachments;
 mod auxiliary;
+mod compaction;
 mod execution;
 mod goal;
 mod graph;
@@ -37,6 +38,7 @@ mod plan;
 mod preferences;
 mod projects;
 pub(crate) use notifications::ReturnRoute;
+mod global_instructions;
 mod patches;
 mod queue;
 mod recall;
@@ -75,6 +77,8 @@ use maka_agent_api::session::SessionConfiguration;
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    compaction_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     graph: Option<maka_graph::Epoch>,
     #[serde(default, skip_serializing_if = "is_agent_collaboration")]
     collaboration_mode: CollaborationMode,
@@ -99,8 +103,6 @@ struct MessageBasis {
     workspace: Workspace,
     fingerprint: String,
     tools: Vec<crate::tools::SelectedTool>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    max_steps: Option<usize>,
 }
 fn is_agent_collaboration(mode: &CollaborationMode) -> bool {
     *mode == CollaborationMode::Agent
@@ -133,6 +135,7 @@ enum PreparedBackend {
     Executor(Box<crate::executor::Backend>),
 }
 struct Control {
+    compacting: bool,
     invocation: Invocation,
     basis: MessageBasis,
     cancellation: CancellationToken,
@@ -326,6 +329,7 @@ impl Owner {
         let prepared_tools = crate::tools::catalog(
             context.services(),
             persistence.store().clone(),
+            configuration.clone(),
             &settings.tools,
             additional,
             workers.clone(),
@@ -899,6 +903,7 @@ impl Owner {
             return Err("agent_planning_unavailable".into());
         }
         let mut basis = MessageBasis {
+            compaction_prompt: Some(self.effective_compaction_prompt().await?),
             graph: None,
             collaboration_mode: session.configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,
@@ -927,7 +932,6 @@ impl Owner {
             } else {
                 self.tool_basis.clone()
             },
-            max_steps: self.settings.max_steps,
         };
         self.prepare_plan_behavior(&id, &mut basis).await?;
         self.prepare_graph_behavior(&id, &mut basis, queued.is_none())

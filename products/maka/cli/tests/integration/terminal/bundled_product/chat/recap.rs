@@ -46,6 +46,7 @@ fn default_product_recap_reads_original_result_without_charging_on_refresh_or_re
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
     let host = ui.join("host");
+    let host_guard = HostRootGuard::new(&host);
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -118,6 +119,7 @@ fn default_product_recap_reads_original_result_without_charging_on_refresh_or_re
     tui.wait_for("Keep this unfinished draft.");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     server.join().unwrap();
     let mut restored = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     restored.wait_until_with_timeout(
@@ -131,6 +133,7 @@ fn default_product_recap_reads_original_result_without_charging_on_refresh_or_re
     evidence(&restored, "recap-restarted");
     restored.send(b"\x11");
     restored.finish();
+    host_guard.stop();
     runtime.block_on(async {
         let store = EventLog::for_root(Arc::new(RootOwner::open(&host, &namespaces).unwrap()))
             .await

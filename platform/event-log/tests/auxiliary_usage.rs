@@ -217,6 +217,7 @@ async fn title_accounting_uses_first_opening_after_stop_and_never_replays_after_
             .is_err()
     );
     let configuration = InvocationConfiguration {
+        compaction_prompt: None,
         workspace_origin: WorkspaceOrigin::Selected,
         approval_policy: ApprovalPolicy::OnRequest,
         boundary_revision: 0,

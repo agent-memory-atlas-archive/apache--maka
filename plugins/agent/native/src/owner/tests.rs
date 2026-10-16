@@ -68,6 +68,12 @@ mod catalog;
 #[path = "tests/history_search.rs"]
 mod history_search;
 
+#[path = "tests/compaction.rs"]
+mod compaction;
+
+#[path = "tests/metrics.rs"]
+mod metrics;
+
 #[path = "tests/execution.rs"]
 mod execution;
 #[path = "tests/executor.rs"]
@@ -138,31 +144,6 @@ use std::sync::Mutex as StdMutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
-
-#[test]
-fn accepted_message_preserves_explicit_and_unlimited_step_limits() {
-    let mut encoded = json!({
-        "workspace": {
-            "path": "/workspace",
-            "directoryIdentity": format!("sha256:{}", "a".repeat(64)),
-            "identity": "workspace:v1:ef751105-55b5-4d65-a364-646281586a17"
-        },
-        "fingerprint": "accepted",
-        "tools": [],
-        "max_steps": 16
-    });
-    for limit in [json!(16), json!(null)] {
-        encoded["max_steps"] = limit.clone();
-        let basis: MessageBasis = serde_json::from_value(encoded.clone()).unwrap();
-        assert_eq!(basis.max_steps, limit.as_u64().map(|steps| steps as usize));
-        assert_eq!(serde_json::to_value(basis).unwrap()["max_steps"], limit);
-    }
-    encoded.as_object_mut().unwrap().remove("max_steps");
-    assert!(
-        serde_json::from_value::<MessageBasis>(encoded).is_err(),
-        "missing accepted budget must not become unlimited"
-    );
-}
 
 struct CallerGrant(maka_host_runtime::application::Caller);
 struct Grant(Issuer, Option<Arc<maka_transport::transport::PeerPolicy>>);
@@ -364,10 +345,8 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
     // Both consumers declare recovery independently of their execution import.
     let mut files = consumer.files().clone();
     let mut manifest = consumer.manifest().clone();
-    manifest
-        .application
-        .as_mut()
-        .unwrap()
+    let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+    manifest_application
         .entries
         .get_mut(&EntryTarget::Host)
         .unwrap()
@@ -379,18 +358,20 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
                 cardinality: Cardinality::One,
             },
         );
-    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    files.insert(MANIFEST_FILE.into(), {
+        manifest.application =
+            Some(maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap());
+        serde_json::to_vec(&manifest).unwrap()
+    });
     let consumer = Package::new(files).unwrap();
     for name in ["a", "b"] {
         input.instances.get_mut(name).unwrap().package = consumer.application_ref().into();
     }
     let settings = {
         let mut manifest = provider.manifest().clone();
+        let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
         manifest.id = "settings".into();
-        let entry = manifest
-            .application
-            .as_mut()
-            .unwrap()
+        let entry = manifest_application
             .entries
             .get_mut(&EntryTarget::Host)
             .unwrap();
@@ -405,18 +386,18 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
                 availability: Availability::Required,
             },
         )]);
-        Package::new(BTreeMap::from([(
-            MANIFEST_FILE.into(),
-            serde_json::to_vec(&manifest).unwrap(),
-        )]))
+        Package::new(BTreeMap::from([(MANIFEST_FILE.into(), {
+            manifest.application = Some(
+                maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap(),
+            );
+            serde_json::to_vec(&manifest).unwrap()
+        })]))
         .unwrap()
     };
     let mut files = consumer.files().clone();
     let mut manifest = consumer.manifest().clone();
-    manifest
-        .application
-        .as_mut()
-        .unwrap()
+    let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+    manifest_application
         .entries
         .get_mut(&EntryTarget::Host)
         .unwrap()
@@ -428,7 +409,11 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
                 cardinality: Cardinality::One,
             },
         );
-    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    files.insert(MANIFEST_FILE.into(), {
+        manifest.application =
+            Some(maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap());
+        serde_json::to_vec(&manifest).unwrap()
+    });
     let consumer = Package::new(files).unwrap();
     input.instances.insert(
         "settings".into(),
@@ -590,29 +575,11 @@ impl Fixture {
                     path: other_workspace,
                 },
             ],
-            max_steps: Some(1),
             tools: vec![],
         };
         configure(&mut settings);
-        let selected_max_steps = settings.max_steps;
-        if settings.recall || settings.scheduled_tasks {
-            settings.max_steps = Some(6);
-        }
         if let Some(tooling) = &tooling {
             settings.tools = tooling.selections();
-            settings.max_steps = selected_max_steps.map(|max_steps| {
-                max_steps.max(
-                    if settings
-                        .tools
-                        .iter()
-                        .any(|tool| tool.input == contract::ToolInput::Skill)
-                    {
-                        8
-                    } else {
-                        2
-                    },
-                )
-            });
         }
         let (mut input, mut packages) = input(&settings);
         if let Some(tooling) = &tooling {
@@ -1041,6 +1008,7 @@ async fn actual_http_runs_overlap_and_observer_loss_does_not_cancel_execution() 
         let metrics = &completed["metrics"];
         assert_eq!(metrics["modelId"], "fixture-model");
         assert_eq!(metrics["contextTokens"], 3);
+        assert_eq!(metrics["contextLastKnown"], false);
         let (basis, _) = fixture.store.context_usage(&first).await.unwrap();
         let maka_event_log::context::LatestMainContext::Selected(basis) = basis else { panic!("missing accepted main request") };
         let seconds = basis.recorded_at.duration_since(basis.requested_at.unwrap()).unwrap().as_secs_f64();

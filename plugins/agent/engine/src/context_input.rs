@@ -67,7 +67,7 @@ fn output_tokens(output: &ToolOutput) -> u64 {
         ToolOutput::Content(parts) => parts.iter().map(content_tokens).sum(),
     }
 }
-fn json_tokens(value: &(impl serde::Serialize + ?Sized)) -> u64 {
+pub(super) fn json_tokens(value: &(impl serde::Serialize + ?Sized)) -> u64 {
     struct Count(u64);
     impl std::io::Write for Count {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -83,18 +83,29 @@ fn json_tokens(value: &(impl serde::Serialize + ?Sized)) -> u64 {
     count.0.div_ceil(3)
 }
 
+/// Reserve at least 4% of total context capacity (200k if unknown), retaining
+/// any larger configured output budget. This is not a minimum summary length.
+pub(super) fn summary_output_budget<W>(input: &RunInput<W>) -> u64 {
+    input
+        .context
+        .as_ref()
+        .and_then(|context| context.model_context_window)
+        .unwrap_or(200_000)
+        .saturating_mul(4)
+        .div_ceil(100)
+        .max(input.main_output_limit.unwrap_or(8000))
+        .max(1)
+}
+
 pub(super) fn summary_budget<W>(input: &RunInput<W>) -> u64 {
     let context = input.context.as_ref();
-    let window = context
-        .and_then(|context| context.context_window)
-        .unwrap_or(64_000);
-    let requested = input.main_output_limit.unwrap_or(8000).min(8000);
     let total = context
         .and_then(|context| context.model_context_window)
-        .unwrap_or(window);
-    let output = requested.min(total / 4);
-    // Input-only limits and total context capacity are different model facts.
-    window.min(total.saturating_sub(output)).saturating_mul(3) / 4
+        .unwrap_or(200_000);
+    let window = context
+        .and_then(|context| context.context_window)
+        .unwrap_or(total);
+    window.min(total.saturating_sub(summary_output_budget(input)))
 }
 
 pub(super) fn needs_compaction<W>(input: &RunInput<W>, prompt: &[Message]) -> bool {
@@ -108,6 +119,15 @@ pub(super) fn fit_summary(prompt: &[Message], tokens: u64) -> Vec<Message> {
     if estimate(prompt) <= tokens {
         return prompt.to_vec();
     }
+    // Preserve instruction roles and keep the conversational anchor independent
+    // of the System prefix. If the System alone cannot fit, provider overflow
+    // will fail safely rather than silently truncating its instructions.
+    let system_end = prompt
+        .iter()
+        .take_while(|message| matches!(message, Message::System { .. }))
+        .count();
+    let (system, prompt) = prompt.split_at(system_end);
+    let tokens = tokens.saturating_sub(estimate(system));
     let bytes = usize::try_from(tokens.saturating_mul(3)).unwrap_or(usize::MAX);
     const NOTICE: &str = "Conversation excerpts for summarization: some older text is omitted to fit this model. The complete original history remains stored locally. Preserve known goals and recent progress; do not infer facts from omitted text.\n\n";
     let available = bytes.saturating_sub(NOTICE.len() + 100);
@@ -143,7 +163,9 @@ pub(super) fn fit_summary(prompt: &[Message], tokens: u64) -> Vec<Message> {
         "{NOTICE}Earlier task or summary:\n{head}\n\nRecent conversation:\n{}",
         excerpt(&tail, remaining)
     );
-    vec![Message::user(text)]
+    let mut fitted = system.to_vec();
+    fitted.push(Message::user(text));
+    fitted
 }
 
 fn excerpt(text: &str, bytes: usize) -> String {

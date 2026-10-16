@@ -37,7 +37,12 @@ fn fixture() -> (
         .replace(support::EDITOR_RECEIVE, &format!("if(event.kind==='component'&&event.name==='checkpoint')return frame({{...state,revision:state.revision+1,checkpoint:event.event}});{}", support::EDITOR_RECEIVE));
     let root = support::package(
         "dynamic.app",
-        old.manifest().application.clone().unwrap(),
+        old.manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     input.instances.get_mut("app").unwrap().package = root.application_ref().into();

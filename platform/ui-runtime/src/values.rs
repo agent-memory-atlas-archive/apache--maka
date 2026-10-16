@@ -28,7 +28,7 @@ pub(super) fn export<V: ?Sized>(value: Value, contract: &Contract) -> Result<Exp
     let Interface::Value { schema } = &contract.interface else {
         return Err(Error::Invalid("value contract required".into()));
     };
-    jsonschema::validator_for(schema)
+    maka_plugin_core::validator(schema)
         .map_err(|e| Error::Invalid(e.to_string()))?
         .validate(&value)
         .map_err(|e| Error::Invalid(e.to_string()))?;

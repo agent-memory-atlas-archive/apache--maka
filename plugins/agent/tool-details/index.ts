@@ -31,7 +31,8 @@ import type {
 import {
   toolDetailsContract,
   type ToolDetailsProps,
-  type ToolFileContext,
+  type ToolDetailsContext,
+  type ToolDisplayStatus,
 } from '../../shared/contracts.js';
 import { copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
@@ -93,8 +94,8 @@ function compactPart(id: string) {
 }
 type Part = {
   field: 'arguments' | 'result';
-  path: string[];
-  format: 'text' | 'json';
+  path: string[] | null;
+  format: 'text' | 'json' | null;
   page: HistorySource | null;
   filePath: string | null;
   failed: boolean;
@@ -109,7 +110,7 @@ type State = {
   context: ToolDetailsProps['context'];
   tool: ToolDetailsProps['tool'];
   parts: Record<string, Part>;
-  published: ToolFileContext | null;
+  published: ToolDetailsContext | null;
 };
 function bytes(text: string) {
   let size = 0;
@@ -138,7 +139,7 @@ function add(
   state: State,
   id: string,
   field: Part['field'],
-  path: string[],
+  path: Part['path'],
   format: Part['format'] = 'text',
 ) {
   state.parts[id] ??= {
@@ -213,8 +214,8 @@ function accept(state: State, part: Part, value: AgentHistorySourcePage, positio
   if (
     page.sequence !== sequence ||
     page.field !== part.field ||
-    !sameValue(page.path, part.path) ||
-    page.format !== part.format ||
+    !sameValue(page.path ?? null, part.path) ||
+    (part.format !== null && page.format !== part.format) ||
     page.tool?.toolUseId !== state.tool.toolUseId ||
     page.tool.call?.sequence !== state.tool.call?.sequence ||
     page.tool.call?.presentation !== state.tool.call?.presentation ||
@@ -251,6 +252,10 @@ export function toolDetails<N extends Node>(
     const file = filePresentation(state.tool.call?.presentation);
     const search = kind === 'glob' || kind === 'grep';
     const process = !!kind && !file && !search;
+    if (!kind && props.expanded) {
+      if (state.tool.call) add(state, 'arguments', 'arguments', null, 'json');
+      if (state.tool.result) add(state, 'result', 'result', null, null);
+    }
     if (search && state.tool.call) {
       add(state, 'pattern', 'arguments', ['pattern']);
       if (props.expanded) add(state, 'searchArguments', 'arguments', [], 'json');
@@ -358,6 +363,8 @@ export function toolDetails<N extends Node>(
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     const labels: Record<string, string> = {
+      arguments: text.toolArguments,
+      result: text.toolResult,
       path: text.toolFilePath,
       command: text.terminalCommandLabel,
       reference: text.toolProcessRef,
@@ -456,9 +463,15 @@ export function toolDetails<N extends Node>(
                 'source',
                 {
                   source,
-                  appearance: props.theme.markdown.code,
+                  appearance:
+                    presentation.target === 'tui'
+                      ? { ...props.theme.markdown.code, foreground: props.theme.muted }
+                      : props.theme.markdown.code,
                   selection: props.theme.markdown.selection,
-                  terminal: props.theme.terminal,
+                  terminal:
+                    presentation.target === 'tui' && props.theme.terminal
+                      ? { ...props.theme.terminal, foreground: props.theme.terminal.muted }
+                      : props.theme.terminal,
                   disabled: false,
                   focusOnPointer: props.focusOnPointer,
                 },
@@ -629,12 +642,13 @@ export function toolDetails<N extends Node>(
       }
     }
     if (process) {
+      const titled = presentation.target === 'tui' && !!props.tool.call?.title;
       const commandPart = state.parts.command;
       const command =
         commandPart?.page?.offset === 0 && !commandPart.failed
           ? commandPart.page.text + (complete(commandPart) ? '' : '…')
           : scalar(state, 'reference');
-      if (typeof command === 'string')
+      if (!titled && typeof command === 'string')
         summary.push(
           ui.text(
             'process-summary',
@@ -643,7 +657,11 @@ export function toolDetails<N extends Node>(
             props.theme.muted,
           ),
         );
-      if (command == null && (state.parts.command?.pending || state.parts.reference?.pending))
+      if (
+        !titled &&
+        command == null &&
+        (state.parts.command?.pending || state.parts.reference?.pending)
+      )
         summary.push(ui.text('process-summary-loading', text.loading, 13, props.theme.muted));
       const status = scalar(state, 'processStatus');
       const statusLabels: Record<string, string> = {
@@ -658,13 +676,19 @@ export function toolDetails<N extends Node>(
       const exit = scalar(state, 'exitCode');
       const statusText =
         typeof status === 'string' && Object.hasOwn(statusLabels, status)
-          ? `${text.toolProcessRecorded}: ${statusLabels[status]}${typeof exit === 'number' ? ` · ${text.toolExitCode}: ${exit}` : ''}`
+          ? `${statusLabels[status]}${typeof exit === 'number' ? ` · ${text.toolExitCode}: ${exit}` : ''}`
           : scalar(state, 'status') === 'failed'
             ? text.toolBusinessFailure
             : null;
       if (statusText) {
-        summary.push(ui.text('process-summary-status', statusText, 13, props.theme.muted));
-        sections.unshift(ui.text('process-status', statusText, 13, props.theme.muted));
+        const failed =
+          ['failed', 'timed_out', 'orphaned'].includes(String(status)) ||
+          (typeof exit === 'number' && exit !== 0) ||
+          scalar(state, 'status') === 'failed';
+        const color = failed ? props.theme.error : props.theme.muted;
+        if (!titled || status !== 'completed' || exit !== 0)
+          summary.push(ui.text('process-summary-status', statusText, 13, color));
+        sections.unshift(ui.text('process-status', statusText, 13, color));
       }
       for (const id of ['stdoutTruncated', 'stderrTruncated', 'truncated', 'redacted']) {
         const part = state.parts[id];
@@ -715,17 +739,41 @@ export function toolDetails<N extends Node>(
       ),
     );
     out.actions = actions;
-    const context: ToolFileContext = {
+    let status: ToolDisplayStatus | null = null;
+    if (scalar(state, 'status') === 'failed') status = 'failed';
+    else if (scalar(state, 'status') === 'completed') {
+      if (!process) status = 'succeeded';
+      else {
+        const processStatus = scalar(state, 'processStatus');
+        const exit = scalar(state, 'exitCode');
+        if (processStatus === 'cancelled') status = 'cancelled';
+        else if (
+          processStatus === 'failed' ||
+          processStatus === 'timed_out' ||
+          (typeof exit === 'number' && exit !== 0)
+        )
+          status = 'failed';
+        else if (processStatus === 'completed' && exit === 0) status = 'succeeded';
+        else if (processStatus === 'starting' || processStatus === 'running') status = 'running';
+        else if (processStatus === 'orphaned') status = 'unknown';
+      }
+    }
+    const context: ToolDetailsContext = {
       ...props.context,
       toolUseId: props.tool.toolUseId,
       presentation: props.tool.call?.presentation ?? null,
       call: props.tool.call?.sequence ?? null,
       result: props.tool.result?.sequence ?? null,
       path: filePath || null,
+      status,
+      expandable:
+        !!kind ||
+        Object.keys(state.parts).length === 0 ||
+        Object.values(state.parts).some((part) => !complete(part) || !!part.page!.text.trim()),
     };
     if (!sameValue(state.published, context)) {
       state.published = context;
-      out.events.push({ name: 'fileContext', value: context });
+      out.events.push({ name: 'context', value: context });
     }
     return out;
   }

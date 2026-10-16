@@ -24,7 +24,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use clap::Args;
 use maka_event_log::{
     EventLog,
-    applications::launch::Launch as Record,
+    applications::{LoadedDeployment, PreparedApplication, launch::Launch as Record},
     root::{RootNamespaces, RootOwner},
 };
 use maka_packages::Package;
@@ -81,6 +81,13 @@ pub(super) struct Preparation {
     pub(super) packages: Vec<BTreeMap<String, String>>,
 }
 
+struct PreparedLaunch {
+    deployment: Uuid,
+    configuration: Value,
+    preparation: Preparation,
+    applications: [PreparedApplication; 3],
+}
+
 impl Launch {
     pub(crate) async fn run(self) -> Result<(), HostError> {
         if self.configuration.is_none()
@@ -117,7 +124,7 @@ impl Launch {
                 Ok(Some(selected))
             }
         }.await;
-        let (deployment, configuration) = match result {
+        let (loaded, configuration, anchors) = match result {
             Ok(Some(value)) => value,
             Ok(None) => {
                 store.drain().await;
@@ -128,7 +135,7 @@ impl Launch {
                 return Err(error);
             }
         };
-        run_tui(store, deployment, configuration, startup).await
+        run_tui(store, loaded, configuration, startup, anchors).await
     }
 }
 async fn standard_configuration(
@@ -195,12 +202,12 @@ pub(super) fn targets(
     configuration: &Configuration,
 ) -> Result<(PathBuf, String, Uuid, Uuid), HostError> {
     configuration.validate().map_err(HostError::from)?;
-    let mut process = None;
+    let mut public = None;
     let mut management = None;
     for host in &configuration.hosts {
         match &host.location {
-            HostLocation::Process { root, state_domain } if process.is_none() => {
-                process = Some((
+            HostLocation::Public { root, state_domain } if public.is_none() => {
+                public = Some((
                     root.clone(),
                     state_domain
                         .clone()
@@ -209,10 +216,10 @@ pub(super) fn targets(
                 ))
             }
             HostLocation::Cohost {} if management.is_none() => management = Some(host.deployment),
-            _ => return Err("product launch requires one process Host and one cohost".into()),
+            _ => return Err("product launch requires one public Host and one cohost".into()),
         }
     }
-    let (path, domain, host) = process.ok_or("product Host is missing")?;
+    let (path, domain, host) = public.ok_or("product Host is missing")?;
     Ok((
         path,
         domain,
@@ -224,7 +231,14 @@ pub(super) async fn prepare(
     store: &EventLog,
     configuration: Option<Installation>,
     product: Product,
-) -> Result<(Uuid, Configuration), HostError> {
+) -> Result<
+    (
+        LoadedDeployment,
+        Configuration,
+        Vec<maka_host_runtime::application::host::Client>,
+    ),
+    HostError,
+> {
     let record = match store.application_launch().await? {
         Some(record) => {
             if configuration.is_some() {
@@ -234,99 +248,204 @@ pub(super) async fn prepare(
         }
         None => {
             let configuration = configuration.ok_or("first launch requires --configuration")?;
-            begin(store, configuration, product).await?;
-            store
-                .application_launch()
-                .await?
-                .ok_or("launcher record missing after commit")?
+            return finish(store, begin(store, configuration, product).await?).await;
         }
     };
-    let mut connections: Configuration = serde_json::from_value(record.configuration.clone())?;
-    let (root, domain, host, management) = targets(&connections)?;
+    let connections: Configuration = serde_json::from_value(record.configuration.clone())?;
+    let (root, domain, host, _) = targets(&connections)?;
     if let Some(bytes) = record.pending {
-        let preparation: Preparation = serde_json::from_slice(&bytes)?;
-        if preparation
-            .previous_connections
-            .as_ref()
-            .unwrap_or(&preparation.sources.connections)
-            != &record.configuration
-        {
-            return Err("original launcher connection input changed".into());
-        }
-        let packages = decode_packages(preparation.packages)?;
-        let host_packages = super::selected(&preparation.sources.host, &[], &packages)?;
-        let management_packages =
-            super::selected(&preparation.sources.management_host, &[], &packages)?;
-        let ui_packages = super::selected(
-            &preparation.sources.ui,
-            &preparation.sources.remote_exports,
-            &packages,
-        )?;
-        let host_store = open(root, false, Some(domain)).await?;
-        let result = async {
-            for (target, deployment, input, observations, packages) in [
-                (
-                    &host_store,
-                    host,
-                    &preparation.sources.host,
-                    &[][..],
-                    host_packages.as_slice(),
-                ),
-                (
-                    store,
-                    management,
-                    &preparation.sources.management_host,
-                    &[][..],
-                    management_packages.as_slice(),
-                ),
-                (
-                    store,
-                    record.deployment,
-                    &preparation.sources.ui,
-                    preparation.sources.remote_exports.as_slice(),
-                    ui_packages.as_slice(),
-                ),
-            ] {
-                if preparation.restore.is_empty() {
-                    ensure(target, deployment, input, observations, packages).await?;
-                } else {
-                    super::restore::ensure(
-                        target,
-                        deployment,
-                        *preparation
-                            .restore
-                            .get(&deployment)
-                            .ok_or("restore revision missing")?,
-                        input,
-                        observations,
-                        packages,
-                    )
-                    .await?;
-                }
-            }
-            if let Some(baseline) = preparation.product {
-                store
-                    .complete_application_product(
-                        record.deployment,
-                        preparation.sources.connections.clone(),
-                        serde_json::to_value(baseline)?,
-                    )
-                    .await?;
-                connections = serde_json::from_value(preparation.sources.connections.clone())?;
-            } else {
-                store.complete_application_launch(record.deployment).await?;
-            }
-            Ok::<_, HostError>(())
-        }
+        let mut preparation: Preparation = serde_json::from_slice(&bytes)?;
+        let packages = decode_packages(std::mem::take(&mut preparation.packages))?;
+        let applications = super::prepare_sources(&preparation.sources, &packages)?;
+        return finish(
+            store,
+            PreparedLaunch {
+                deployment: record.deployment,
+                configuration: record.configuration,
+                preparation,
+                applications,
+            },
+        )
         .await;
-        host_store.drain().await;
-        result?;
-    } else if maka_event_log::root::resolve(&root)?.root_id() != domain {
-        return Err("original product Host Root changed".into());
     }
-    Ok((record.deployment, connections))
+    // These independent Roots can load together; wait for both so an error does
+    // not cancel the other owner's in-flight validation or connection cleanup.
+    let (public, loaded) = tokio::join!(
+        super::public::Host::connect(root, domain, host),
+        store.load_application(record.deployment),
+    );
+    let public = public?;
+    let loaded = loaded?.ok_or("UI source missing")?;
+    Ok((loaded, connections, vec![public.into_client()]))
 }
-async fn begin(store: &EventLog, input: Installation, product: Product) -> Result<(), HostError> {
+
+async fn finish(
+    store: &EventLog,
+    prepared: PreparedLaunch,
+) -> Result<
+    (
+        LoadedDeployment,
+        Configuration,
+        Vec<maka_host_runtime::application::host::Client>,
+    ),
+    HostError,
+> {
+    let PreparedLaunch {
+        deployment,
+        configuration,
+        preparation,
+        applications: [host_source, management_source, ui_source],
+    } = prepared;
+    if preparation
+        .previous_connections
+        .as_ref()
+        .unwrap_or(&preparation.sources.connections)
+        != &configuration
+    {
+        return Err("original launcher connection input changed".into());
+    }
+    let mut connections: Configuration = serde_json::from_value(configuration)?;
+    let (root, domain, host, management) = targets(&connections)?;
+    let host_input = host_source.input().clone();
+    let host_packages = host_source.packages().to_vec();
+    let bootstrap_verified = if preparation.restore.is_empty() {
+        bootstrap_host(&root, &domain, host, &connections, host_source).await?
+    } else {
+        false
+    };
+    let public = super::public::Host::connect(root.clone(), domain.clone(), host).await?;
+    let result = async {
+        if preparation.restore.is_empty() {
+            if !bootstrap_verified {
+                public
+                    .ensure_initial(&host_input, &[], &host_packages)
+                    .await?;
+            }
+        } else {
+            let previous = host_configuration(&connections)?;
+            let desired = host_configuration(&serde_json::from_value(
+                preparation.sources.connections.clone(),
+            )?)?;
+            let configuration =
+                if serde_json::to_value(&previous)? == serde_json::to_value(&desired)? {
+                    None
+                } else {
+                    Some((previous, desired))
+                };
+            public
+                .ensure_restore(
+                    *preparation
+                        .restore
+                        .get(&host)
+                        .ok_or("restore revision missing")?,
+                    &host_input,
+                    &[],
+                    &host_packages,
+                    configuration,
+                )
+                .await?;
+        }
+        let loaded = if preparation.restore.is_empty() {
+            ensure_prepared(store, management, management_source).await?;
+            ensure_prepared(store, deployment, ui_source).await?
+        } else {
+            for (deployment, source) in [(management, management_source), (deployment, ui_source)] {
+                super::restore::ensure(
+                    store,
+                    deployment,
+                    *preparation
+                        .restore
+                        .get(&deployment)
+                        .ok_or("restore revision missing")?,
+                    source.input(),
+                    source.remote_exports(),
+                    source.packages(),
+                )
+                .await?;
+            }
+            store
+                .load_application(deployment)
+                .await?
+                .ok_or("UI source missing")?
+        };
+        if let Some(baseline) = preparation.product {
+            store
+                .complete_application_product(
+                    deployment,
+                    preparation.sources.connections.clone(),
+                    serde_json::to_value(baseline)?,
+                )
+                .await?;
+            connections = serde_json::from_value(preparation.sources.connections.clone())?;
+        } else {
+            store.complete_application_launch(deployment).await?;
+        }
+        Ok::<_, HostError>(loaded)
+    }
+    .await;
+    let loaded = result?;
+    Ok((loaded, connections, vec![public.into_client()]))
+}
+fn host_configuration(
+    configuration: &Configuration,
+) -> Result<maka_host_runtime::application::host::Configuration, HostError> {
+    let connection = configuration
+        .hosts
+        .iter()
+        .find(|connection| matches!(&connection.location, HostLocation::Public { .. }))
+        .ok_or("product public Host missing")?;
+    let configuration = maka_host_runtime::application::host::Configuration::PublicHost {
+        endpoints: connection.endpoints.clone(),
+        native: connection.native.clone(),
+    };
+    configuration.validate()?;
+    Ok(configuration)
+}
+
+/// True only after the original source, package bytes and selection are confirmed.
+/// A busy Root has supplied no such proof; its live Host must still be checked.
+async fn bootstrap_host(
+    root: &std::path::Path,
+    domain: &str,
+    deployment: Uuid,
+    connections: &Configuration,
+    prepared: PreparedApplication,
+) -> Result<bool, HostError> {
+    let host_store = match open(root.into(), false, Some(domain.into())).await {
+        Ok(store) => store,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock) =>
+        {
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    let connection = connections
+        .hosts
+        .iter()
+        .find(|connection| matches!(&connection.location, HostLocation::Public { .. }))
+        .ok_or("product public Host missing")?;
+    let result = super::headless::save_product(
+        &host_store,
+        deployment,
+        prepared,
+        connection.endpoints.clone(),
+        connection.native.clone(),
+    )
+    .await;
+    // Public startup can acquire Root only after bootstrap has actually drained.
+    host_store.drain().await;
+    drop(host_store);
+    result.map(|()| true)
+}
+
+async fn begin(
+    store: &EventLog,
+    input: Installation,
+    product: Product,
+) -> Result<PreparedLaunch, HostError> {
     let version = super::bundle_fingerprint()?;
     let authoring = super::authoring()?;
     let (mut configuration, mut default_options) = match input {
@@ -363,9 +482,9 @@ async fn begin(store: &EventLog, input: Installation, product: Product) -> Resul
         }
         let packages = tokio::task::spawn_blocking(packages).await??;
         let version = super::verified_fingerprint(&authoring, &packages, &version)?;
-        let (mut sources, installation) = super::author_with_source(product, configuration, &packages, &authoring).await?;
+        let (mut sources, installation, applications) = super::author_with_source(product, configuration, &packages, &authoring).await?;
         for host in sources.connections["hosts"].as_array_mut().ok_or("product connections missing")? {
-            if host["location"]["kind"] == "process" {
+            if host["location"]["kind"] == "public" {
                 host["location"]["stateDomain"] = Value::String(owner.root_id().into());
             }
         }
@@ -377,18 +496,23 @@ async fn begin(store: &EventLog, input: Installation, product: Product) -> Resul
             return Err("installation deployment already exists; use its original launcher or application run".into());
         }
         let selection = sources.connections.clone();
-        let preparation = Preparation {
+        let mut preparation = Preparation {
             product: Some(super::update::Baseline { product, installation, default_options, sources: sources.clone(), version: Some(version) }),
             previous_connections: None,
             restore: BTreeMap::new(),
             sources,
             packages: packages.values().map(|package| package.files().iter().map(|(path, bytes)| (path.clone(), STANDARD.encode(bytes))).collect()).collect(),
         };
+        let deployment = Uuid::new_v4();
         store.begin_application_launch(Record {
-            deployment: Uuid::new_v4(), configuration: selection,
+            deployment, configuration: selection.clone(),
             pending: Some(serde_json::to_vec(&preparation)?),
         }).await?;
-        Ok::<_, HostError>(())
+        preparation.packages.clear();
+        Ok::<_, HostError>(PreparedLaunch {
+            deployment, configuration: selection, preparation,
+            applications,
+        })
     }.await;
     host_store.drain().await;
     result
@@ -417,6 +541,23 @@ pub(super) async fn ensure(
     observations: &[RemoteObservation],
     packages: &[Package],
 ) -> Result<(), HostError> {
+    ensure_prepared(
+        store,
+        deployment,
+        PreparedApplication::new(input.clone(), observations.to_vec(), packages.to_vec())?,
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(super) async fn ensure_prepared(
+    store: &EventLog,
+    deployment: Uuid,
+    prepared: PreparedApplication,
+) -> Result<LoadedDeployment, HostError> {
+    let input = prepared.input();
+    let observations = prepared.remote_exports();
+    let packages = prepared.packages();
     let reference = DeploymentRef {
         state_domain: store.owned_root()?.root_id().into(),
         deployment,
@@ -440,20 +581,24 @@ pub(super) async fn ensure(
                 "original product initialization source conflicts with stored revision 1".into(),
             );
         }
-        // Reading validated every original byte against its immutable revision.
-        // A newer user-authored head is deliberately preserved.
-    } else {
+        // Initialization compares revision one, but execution selects the current
+        // head. Reuse the original only while it remains the observed head.
+        let head = store
+            .read_application_metadata(deployment)
+            .await?
+            .ok_or("UI source missing")?;
+        if head.source.reference == original.source().reference {
+            return Ok(original);
+        }
         store
-            .commit_application(
-                deployment,
-                0,
-                input.clone(),
-                observations.to_vec(),
-                packages.to_vec(),
-            )
-            .await?;
+            .load_application_at(&head.source.reference)
+            .await?
+            .ok_or_else(|| "UI source missing".into())
+    } else {
+        Ok(store
+            .commit_prepared_application(deployment, 0, prepared)
+            .await?)
     }
-    Ok(())
 }
 
 #[cfg(test)]

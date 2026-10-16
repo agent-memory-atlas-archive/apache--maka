@@ -67,6 +67,11 @@ export const copy = /* @__PURE__ */ createCopy(messages);
 export type Copy = ReturnType<typeof copy>;
 
 const terminalMessages = {
+  'network-auth-help': [
+    'Authenticate to the proxy with the configured username and password.',
+    '使用配置的用户名和密码进行代理认证。',
+    '使用設定的使用者名稱和密碼進行代理驗證。',
+  ] as const,
   'network-delete': tui_network_delete,
   'network-replace': tui_network_replace,
   'network-keep': tui_network_keep,

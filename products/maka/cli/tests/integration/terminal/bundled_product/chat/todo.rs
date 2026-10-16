@@ -31,6 +31,7 @@ fn default_product_checklist_tracks_model_progress_and_survives_restart() {
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
     let host = ui.join("host");
+    let host_guard = HostRootGuard::new(&host);
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -92,6 +93,7 @@ fn default_product_checklist_tracks_model_progress_and_survives_restart() {
     tui.wait_for("Message…");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     let mut restored = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     restored.wait_until_with_timeout(|s| s.contains("Checklist 1/25"), Duration::from_secs(60));
     click(&mut restored, "Checklist 1/25");
@@ -128,5 +130,6 @@ fn default_product_checklist_tracks_model_progress_and_survives_restart() {
     restored.wait_for("This conversation has no checklist.");
     restored.send(b"\x11");
     restored.finish();
+    host_guard.stop();
     server.join().unwrap();
 }

@@ -45,10 +45,8 @@ pub(super) async fn read(
          json_extract(d.event_json, '$.invocation') AS di, json_extract(d.event_json, '$.fact.call') AS call,
          json_extract(d.event_json, '$.fact.name') AS name,
          json_extract(t.event_json, '$.fact.outcome.kind') AS outcome,
-         CASE WHEN length(CAST(json_extract(t.event_json, '$.fact.outcome.model_projection') AS BLOB)) <= 2097152
-           THEN json_extract(t.event_json, '$.fact.outcome.model_projection') END AS projection,
-         CASE WHEN length(CAST(json_extract(t.event_json, '$.fact.outcome.message') AS BLOB)) <= 262144
-           THEN json_extract(t.event_json, '$.fact.outcome.message') END AS message,
+         json_extract(t.event_json, '$.fact.outcome.model_projection') AS projection,
+         json_extract(t.event_json, '$.fact.outcome.message') AS message,
          c.sequence AS completed,
          (json_extract(t.event_json,'$.id')=t.event_id
            AND json_extract(t.event_json,'$.invocation.invocation_id')=t.invocation_id

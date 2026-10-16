@@ -22,10 +22,8 @@ use super::*;
 pub(super) fn install(input: &mut Input, packages: &mut Vec<Package>) {
     let package = packages.last_mut().unwrap();
     let mut manifest = package.manifest().clone();
-    manifest
-        .application
-        .as_mut()
-        .unwrap()
+    let mut manifest_application = manifest.application.as_ref().unwrap().declaration().clone();
+    manifest_application
         .entries
         .get_mut(&EntryTarget::Host)
         .unwrap()
@@ -38,7 +36,11 @@ pub(super) fn install(input: &mut Input, packages: &mut Vec<Package>) {
             },
         );
     let mut files = package.files().clone();
-    files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+    files.insert(MANIFEST_FILE.into(), {
+        manifest.application =
+            Some(maka_plugin_core::package::CheckedDeclaration::new(manifest_application).unwrap());
+        serde_json::to_vec(&manifest).unwrap()
+    });
     *package = Package::new(files).unwrap();
     let node = input.instances.get_mut("service").unwrap();
     node.package = package.application_ref().into();

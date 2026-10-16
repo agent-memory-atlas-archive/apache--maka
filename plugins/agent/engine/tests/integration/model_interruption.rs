@@ -75,7 +75,6 @@ fn input(base: &str, suffix: &str) -> RunInput {
             source_messages: Vec::new(),
             message: format!("question {suffix}").into(),
             tools: Default::default(),
-            max_steps: Some(1),
         },
     }
 }
@@ -241,7 +240,7 @@ async fn continuation_claim_replays_only_its_lineage_and_retries_with_frozen_inp
             let mut child = input(&base, id);
             child.configuration = source.configuration.clone();
             child.request_fingerprint = Some(maka_agent_facts::artifact::content_digest(id.as_bytes()));
-            child.work = maka_agent_engine::RunWork::Continuation { source: boundary.clone(),tools: Default::default(), max_steps: Some(2) };
+            child.work = maka_agent_engine::RunWork::Continuation { source: boundary.clone(),tools: Default::default() };
             child
         };
         let server = tokio::spawn(async move {

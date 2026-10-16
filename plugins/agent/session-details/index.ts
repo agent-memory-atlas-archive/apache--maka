@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -335,8 +336,13 @@ function frame<N extends Node>(
                       `details-${name}`,
                       name === 'title' ? 'input' : 'editor',
                       name === 'title'
-                        ? ({ ...fieldProps, appearance: props.theme.input } satisfies InputProps)
+                        ? ({
+                            menu: editorMenu(props.theme, props.locale),
+                            ...fieldProps,
+                            appearance: props.theme.input,
+                          } satisfies InputProps)
                         : ({
+                            menu: editorMenu(props.theme, props.locale),
                             ...fieldProps,
                             appearance: props.theme.textarea,
                             softWrap: true,

@@ -46,7 +46,6 @@ fn input(
         source_messages: vec![],
         message: "continue".into(),
         tools,
-        max_steps: Some(2),
     };
     input
 }
@@ -130,10 +129,10 @@ async fn session_loading_preserves_wire_prefixes_until_committed_compaction_and_
                     let (mut socket,other)=next(&listener).await;
                     empty(&other,mode);
                     fixture::respond(&mut socket,"isolated","stop").await;
-                    for _ in 0..if success {1} else {2} {
+                    for _ in 0..1 {
                         let (mut socket,summary)=next(&listener).await;
-                        assert!(summary.get("tools").is_none());
-                        fixture::respond(&mut socket,if success {fixture::SUMMARY} else {"invalid summary"},"stop").await;
+                        assert_eq!(summary["tools"],warm["tools"]);
+                        fixture::respond(&mut socket,if success {fixture::SUMMARY} else {"incomplete summary"},if success {"stop"} else {"length"}).await;
                     }
                     let (mut socket,compacted)=next(&listener).await;
                     if success {empty(&compacted,mode);} else {assert_eq!(compacted["tools"],warm["tools"],"a failed summary cannot unload anything");}
@@ -167,9 +166,9 @@ use maka_agent_facts::event::RuntimeEvent;
                 let mut resumed=input(&base,"resumed",ToolMode::Direct,catalog(false,effects.clone()));
                 resumed.configuration=source.configuration.clone();
                 resumed.request_fingerprint=Some(maka_agent_facts::artifact::content_digest(b"resume-fixture"));
-                resumed.work=RunWork::Continuation {source:boundary.clone(),tools:catalog(true,effects.clone()),max_steps:Some(1)};
+                resumed.work=RunWork::Continuation {source:boundary.clone(),tools:catalog(true,effects.clone())};
                 let mut preview=resumed.clone();
-                preview.work=RunWork::Continuation {source:boundary,tools:ToolCatalog::default().with_discovery(),max_steps:Some(1)};
+                preview.work=RunWork::Continuation {source:boundary,tools:ToolCatalog::default().with_discovery()};
                 assert!(matches!(engine.check_continuation(&preview,&CancellationToken::new()).await,
                     Err(maka_agent_engine::RunError::ReconciliationRequired(message)) if message.contains("unavailable tool")));
                 engine.run(resumed,CancellationToken::new()).await.unwrap();
@@ -234,7 +233,7 @@ async fn continuation_admission_rejects_changed_loading_before_claiming_the_sour
                 loaded(&request, ToolMode::Direct);
                 fixture::respond(&mut socket, "loaded", "stop").await;
                 let (mut socket, summary) = next(&listener).await;
-                assert!(summary.get("tools").is_none());
+                assert_eq!(summary["tools"], request["tools"]);
                 fixture::respond(&mut socket, fixture::SUMMARY, "stop").await;
                 let (mut socket, resumed) = next(&listener).await;
                 empty(&resumed, mode);
@@ -287,7 +286,6 @@ async fn continuation_admission_rejects_changed_loading_before_claiming_the_sour
                     digest: prefix.digest,
                 },
                 tools: catalog(false, effects.clone()),
-                max_steps: Some(1),
             };
             let cold = engine
                 .prepare_continuation(resumed.clone(), &CancellationToken::new())

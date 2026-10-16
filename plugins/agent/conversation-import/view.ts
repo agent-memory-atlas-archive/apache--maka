@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   AgentImportSource,
@@ -51,6 +52,7 @@ export function frame<N extends Node>(
           `import-${name}`,
           'input',
           {
+            menu: editorMenu(props.theme, props.locale),
             appearance: props.theme.input,
             accessibilityLabel: label,
             placeholder: label,

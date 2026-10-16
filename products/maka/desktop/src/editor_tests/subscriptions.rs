@@ -135,7 +135,13 @@ fn original_stream(cx: &mut TestAppContext, inexact: bool, capture: bool) {
             .position(|p| p.manifest().id == "native.reader")
             .unwrap(),
     );
-    let mut decl = original.manifest().application.clone().unwrap();
+    let mut decl = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = decl.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.implementation = Implementation::Native {
         implementation: "test.stream".into(),
@@ -150,7 +156,13 @@ fn original_stream(cx: &mut TestAppContext, inexact: bool, capture: bool) {
             .position(|p| p.manifest().id == "dynamic.app")
             .unwrap(),
     );
-    let mut decl = original.manifest().application.clone().unwrap();
+    let mut decl = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     decl.entries
         .get_mut(&EntryTarget::Desktop)
         .unwrap()

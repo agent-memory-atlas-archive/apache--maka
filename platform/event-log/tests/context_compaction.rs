@@ -221,7 +221,7 @@ async fn forged_summary_source_and_hidden_old_unknowns_never_become_a_baseline()
         };
         match mutation {
             0 => checkpoint.source_digest = format!("sha256:{}", "0".repeat(64)),
-            1 => checkpoint.summary.text = SUMMARY.replace("first", "second"),
+            1 => checkpoint.summary.text = "forged summary text".into(),
             _ => checkpoint.previous_checkpoint_id = Some(forged.id.clone()),
         }
         assert!(

@@ -717,30 +717,7 @@ impl Render for Surface {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::set_logger(&NativeLog)?;
     log::set_max_level(log::LevelFilter::Warn);
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("application-host")) {
-        if std::env::args_os().nth(2).is_some() {
-            return Err("unexpected application-host arguments".into());
-        }
-        let native = compiled_host()?;
-        let timer = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()?;
-        timer.block_on(maka_transport::transport::process::serve(
-            native,
-            Some(maka_host_js::factory(Default::default())),
-        ))?;
-        return Ok(());
-    }
-    Launcher::start(
-        Args::parse(),
-        maka_transport::HostExecutable::new(
-            std::env::current_exe()?,
-            vec!["application-host".into()],
-        )?,
-        widgets::registry(),
-    )?
-    .run()
+    Launcher::start(Args::parse(), widgets::registry())?.run()
 }
 
 fn compiled_host() -> Result<maka_host_runtime::application::NativeRegistry, String> {
@@ -761,7 +738,6 @@ pub(crate) struct Launcher {
 impl Launcher {
     pub(crate) fn start(
         args: Args,
-        executable: maka_transport::HostExecutable,
         components: maka_ui_runtime::NativeRegistry<dyn widgets::Widget>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let timer = tokio::runtime::Builder::new_multi_thread()
@@ -776,6 +752,11 @@ impl Launcher {
             .transpose()?
             .unwrap_or_default();
         let cohost_native = compiled_host()?;
+        let helper = std::env::current_exe()?.with_file_name(if cfg!(windows) {
+            "maka.exe"
+        } else {
+            "maka"
+        });
         let owner = Arc::new(maka_event_log::root::RootOwner::open(
             &args.root,
             &namespaces,
@@ -787,7 +768,7 @@ impl Launcher {
             PresentationTarget::Desktop,
             configuration,
             namespaces,
-            executable,
+            helper,
             cohost_native,
             Some(maka_host_js::factory(Default::default())),
         )) {
@@ -854,7 +835,12 @@ impl Launcher {
             mut application,
             mount,
         } = self;
-        let frame = match application.frame(&mount) {
+        // Startup may inspect the prepared window declaration; native resource
+        // publication still commits the frame after the actual window exists.
+        let frame = match application
+            .frame(&mount)
+            .or_else(|_| application.prepared_frame(&mount))
+        {
             Ok(frame) => frame,
             Err(error) => {
                 drain_ui(&mut application, &timer, true);
@@ -926,11 +912,16 @@ impl Launcher {
             .borrow()
             .as_ref()
             .and_then(actions::Owner::take_updates);
+        let exit_mode = execution_owner
+            .borrow()
+            .as_ref()
+            .map(actions::Owner::exit_mode)
+            .unwrap_or(maka_transport::ExitMode::KeepHost);
         timer.block_on(async {
             if let Some(updates) = updates {
                 updates.drain().await;
             }
-            connections.lock().await.drain().await;
+            connections.lock().await.drain_with(exit_mode).await;
             store.drain().await;
         });
         if let Some(error) = execution_owner

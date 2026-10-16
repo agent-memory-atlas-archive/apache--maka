@@ -33,6 +33,7 @@ test('history fragments keep distinct controls and navigate the original tool ev
       title: null,
       presentation: null,
       pending: false,
+      ancestorToolUseIds: [],
       dispatched: true,
     },
     result: null,
@@ -159,7 +160,7 @@ test('history fragments keep distinct controls and navigate the original tool ev
     out = component.update(out.frame.state, props, {});
     assert.equal(
       find(out.frame.view, 'toggle-call').label,
-      title.translations[locale] ?? title.fallback,
+      '⌄ ' + (title.translations[locale] ?? title.fallback),
     );
   }
 });
@@ -481,6 +482,311 @@ for (const target of ['tui', 'desktop']) {
   });
 }
 
+test('trace keeps visible ancestry and keyboard disclosure across bounded history windows', () => {
+  const message = (id, sequence, ancestors = []) => ({
+    id,
+    contentKey: id,
+    role: 'tool_call',
+    text: '{}',
+    timestamp: null,
+    source: sequence,
+    image: false,
+    continued: false,
+    tool: {
+      toolUseId: id,
+      call: {
+        sequence,
+        name: id,
+        title: { fallback: id },
+        presentation: null,
+        pending: false,
+        dispatched: true,
+        ancestorToolUseIds: ancestors,
+      },
+      result: { sequence: sequence + 10, isError: false, settlement: 'returned', image: false },
+    },
+  });
+  const props = {
+    theme,
+    locale: 'en',
+    copyRequest: null,
+    browse: 1,
+    timings: [],
+    markReadEnabled: false,
+    toolContext: { sessionId: 'session', through: 20 },
+    waitingTools: [],
+    liveTools: [],
+    source: null,
+    search: null,
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
+    live: false,
+    messages: [
+      message('run', 1),
+      message('shell', 3, ['hidden-cell', 'run']),
+      message('nested', 4, ['shell', 'hidden-cell', 'run']),
+    ],
+  };
+  let out = component.mount(props, {});
+  const nodes = (node) =>
+    node && typeof node === 'object'
+      ? [
+          node,
+          ...Object.values(node).flatMap((value) =>
+            Array.isArray(value) ? value.flatMap(nodes) : nodes(value),
+          ),
+        ]
+      : [];
+  const find = (key) => nodes(out.frame.view).find((node) => node.key === key);
+  const raw = (key, kind = 'activate') => {
+    out = component.event(out.frame.state, { kind: 'raw', key, event: { kind } }, props, {});
+  };
+  assert.equal(find('marker-run').text, '·');
+  assert.equal(find('indent-run').layout.basis, 2);
+  assert.equal(find('marker-shell').text, '·');
+  assert.equal(find('indent-shell').layout.basis, 4);
+  assert.equal(find('marker-nested').text, '·');
+  assert.equal(find('indent-nested').layout.basis, 6);
+  raw('browse-next');
+  assert.deepEqual(out.frame.state.command.target, { kind: 'focus_item', key: 'browse-shell' });
+  assert.equal(find('toggle-shell').label, '› shell');
+  raw('browse-shell', 'submit');
+  assert.equal(find('toggle-shell').label, '⌄ shell');
+  raw('browse-collapse');
+  assert.equal(find('toggle-shell').label, '› shell');
+  raw('browse-expand');
+  assert.equal(find('toggle-shell').label, '⌄ shell');
+  raw('browse-next');
+  raw('browse-previous');
+  assert.deepEqual(out.frame.state.command.target, { kind: 'focus_item', key: 'browse-shell' });
+  raw('browse-close');
+  assert.ok(out.events.some((event) => event.name === 'browseClosed' && event.value.request === 1));
+  props.messages = props.messages.slice(1);
+  out = component.update(out.frame.state, props, {});
+  assert.equal(find('marker-shell').text, '·');
+  assert.equal(find('indent-shell').layout.basis, 2);
+  assert.equal(find('marker-nested').text, '·');
+  assert.equal(find('indent-nested').layout.basis, 4);
+  assert.equal(find('toggle-shell').label, '⌄ shell');
+});
+
+test('user-to-response spacing is one plain row above the response, not part of the user band', () => {
+  const message = (role, index) => ({
+    id: `${role}-${index}`,
+    contentKey: `${role}-${index}`,
+    role,
+    text: 'Message',
+    timestamp: null,
+    source: index + 1,
+    image: false,
+    continued: false,
+    tool:
+      role === 'tool_call'
+        ? {
+            toolUseId: `${role}-${index}`,
+            call: {
+              sequence: index + 1,
+              name: 'Read',
+              title: null,
+              presentation: null,
+              pending: false,
+              dispatched: true,
+              ancestorToolUseIds: [],
+            },
+            result: null,
+          }
+        : null,
+  });
+  for (const roles of [
+    ['user', 'assistant'],
+    ['user', 'thinking', 'assistant'],
+    ['user', 'tool_call', 'tool_call', 'assistant'],
+    ['user', 'user', 'assistant'],
+  ]) {
+    const props = {
+      theme,
+      locale: 'en',
+      copyRequest: null,
+      browse: null,
+      timings: [],
+      markReadEnabled: false,
+      toolContext: { sessionId: 'session', through: 20 },
+      waitingTools: [],
+      liveTools: [],
+      source: null,
+      search: null,
+      loading: false,
+      older: false,
+      newer: false,
+      latest: false,
+      landing: { sequence: 0, edge: 'end' },
+      live: false,
+      messages: roles.map(message),
+    };
+    const out = component.mount(props, {});
+    const paths = [];
+    const visit = (node, ancestors = []) => {
+      if (!node || typeof node !== 'object') return;
+      const path = [...ancestors, node];
+      if (node.key) paths.push(path);
+      for (const child of Object.values(node)) {
+        if (Array.isArray(child)) child.forEach((value) => visit(value, path));
+        else visit(child, path);
+      }
+    };
+    visit(out.frame.view);
+    const find = (key) => paths.find((path) => path.at(-1).key === key);
+    const responseIndex = roles.findIndex((role) => role !== 'user');
+    const responseId = props.messages[responseIndex].id;
+    const userId = props.messages[responseIndex - 1].id;
+    const userCard = find('message-card-' + userId).at(-1);
+    const responseCard = (find('message-card-' + responseId) ?? find('message-' + responseId)).at(
+      -1,
+    );
+    const gap = find('message-space-before-' + responseId);
+    assert.ok(gap, `missing response gap: ${roles}`);
+    const response = find('message-' + responseId).at(-1);
+    assert.equal(response.children[0], gap.at(-1));
+    const content = response.children[1];
+    assert.equal(content.kind, 'context_menu');
+    assert.equal(content.background, responseCard);
+    assert.ok(!gap.includes(content), 'the gap must stay outside the menu trigger rectangle');
+    assert.ok(
+      !responseCard.children[0].key.startsWith('message-space-'),
+      'the menu trigger must align with the first content row',
+    );
+    const keys = paths.map((path) => path.at(-1).key);
+    assert.equal(new Set(keys).size, keys.length, 'wrapping must retain unique scene keys');
+    assert.equal(gap.at(-1).layout.basis, 1);
+    assert.ok(!find('message-space-' + userId), 'the previous user must not retain another gap');
+    assert.notEqual(userCard.background, undefined, 'the user body retains its colored band');
+    assert.ok(
+      gap.every((node) => node.background === undefined || node.background !== userCard.background),
+      'the response gap must not inherit the user background',
+    );
+    assert.equal(
+      find('band-bottom-' + userId).at(-1).layout.basis,
+      1,
+      'intrinsic user padding remains unchanged',
+    );
+    const separators = paths.filter((path) => path.at(-1).key.startsWith('message-space-'));
+    const expected = roles
+      .slice(1)
+      .filter((role, index) => !(role === 'tool_call' && roles[index] === 'tool_call')).length;
+    assert.equal(
+      separators.reduce((rows, path) => rows + path.at(-1).layout.basis, 0),
+      expected,
+      'moving the gap must not add rows or spread adjacent tool calls apart',
+    );
+  }
+});
+
+test('only an observed latest tail acknowledges the displayed message', () => {
+  const props = {
+    theme,
+    locale: 'en',
+    copyRequest: null,
+    browse: null,
+    timings: [],
+    markReadEnabled: true,
+    toolContext: { sessionId: 'session', through: 8 },
+    waitingTools: [],
+    liveTools: [],
+    source: null,
+    search: null,
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
+    live: false,
+    messages: [
+      {
+        id: 'answer',
+        contentKey: 'answer',
+        role: 'assistant',
+        text: 'Answer',
+        timestamp: null,
+        source: 8,
+        image: false,
+        continued: false,
+        tool: null,
+      },
+    ],
+  };
+  const observation = {
+    readingRevision: 1,
+    pendingCommand: null,
+    viewport: {
+      readingRevision: 1,
+      atStart: false,
+      atEnd: true,
+      visibleChildKeys: ['message-answer'],
+    },
+  };
+  const read = (changes = {}, observed = observation) => {
+    const current = { ...props, ...changes };
+    const mounted = component.mount(current, {});
+    assert.equal(
+      mounted.events.some((event) => event.name === 'markRead'),
+      false,
+    );
+    const out = component.event(
+      mounted.frame.state,
+      {
+        kind: 'component',
+        child: 'reading',
+        name: 'observed',
+        event: observed,
+      },
+      current,
+      {},
+    );
+    return out.events.find((event) => event.name === 'markRead');
+  };
+  assert.deepEqual(read(), {
+    name: 'markRead',
+    value: { sessionId: 'session', sequence: 8, field: 'body' },
+  });
+  assert.ok(
+    read({ messages: [{ ...props.messages[0], continued: true }] }),
+    'the visible final fragment of a long message still acknowledges its original identity',
+  );
+  for (const changes of [
+    { markReadEnabled: false },
+    { loading: true },
+    { latest: true },
+    { newer: true },
+    { browse: 1 },
+    { toolContext: null },
+    { messages: [{ ...props.messages[0], source: null }] },
+    { messages: [{ ...props.messages[0], role: 'thinking' }] },
+  ])
+    assert.equal(read(changes), undefined, JSON.stringify(changes));
+  assert.equal(read({}, { ...observation, pendingCommand: 1 }), undefined);
+  assert.equal(
+    read({ messages: [...props.messages, { ...props.messages[0], id: 'new-answer', source: 9 }] }),
+    undefined,
+    'a queued observation of the previous tail cannot acknowledge a newly appended message',
+  );
+  assert.equal(
+    read({}, { ...observation, viewport: { ...observation.viewport, visibleChildKeys: [] } }),
+    undefined,
+    'being at the end is insufficient without the actual tail in the visible children',
+  );
+  assert.equal(
+    read({}, { ...observation, viewport: { ...observation.viewport, atEnd: false } }),
+    undefined,
+  );
+  assert.equal(
+    read({}, { ...observation, viewport: { ...observation.viewport, readingRevision: 0 } }),
+    undefined,
+  );
+});
+
 test('tool details follow the visible viewport and suspend in a cached reader', () => {
   const props = {
     theme,
@@ -517,6 +823,7 @@ test('tool details follow the visible viewport and suspend in a cached reader', 
           name: 'Read',
           title: null,
           presentation: 'maka.workspace.Files@1/readText',
+          ancestorToolUseIds: [],
           pending: false,
           dispatched: true,
         },

@@ -19,16 +19,14 @@
 
 use crate::{
     Result,
-    transport::{
-        ipc, native,
-        process::{Bootstrap, Control},
-    },
+    transport::{ipc, native},
 };
 use futures_util::{
     FutureExt,
     future::{BoxFuture, join_all},
 };
 use maka_event_log::{EventLog, root::RootNamespaces};
+use maka_host_runtime::application::host::{Client, discovery};
 use maka_plugin_core::{
     composition::{ExecutionLocation, InstanceId, PresentationTarget},
     deployment::{DeploymentRef, RemoteObservation},
@@ -38,17 +36,14 @@ use maka_ui_runtime::actions::RemoteService;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    ffi::OsString,
     io::Read,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
 };
-use tokio::process::Command;
 use uuid::Uuid;
 
 mod host;
-use host::{Address, CohostConnector, HostOwner, OwnedHost};
+use host::{CohostConnector, ConnectedHost, HostLink};
 
 /// Trusted launcher input, never a guest-created credential or deployment edit.
 #[derive(Default, Deserialize)]
@@ -67,14 +62,14 @@ pub struct Host {
     pub native: Vec<crate::transport::NativeGrant>,
 }
 pub use maka_host_runtime::application::transport::HostEndpoint;
-/// Explicit executor location chosen by the trusted launcher. Cohost borrows
+/// Explicit Host attachment chosen by the trusted launcher. Cohost borrows
 /// the already owned UI Store; it never opens a filesystem Root.
 #[derive(Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostLocation {
-    Process {
+    Public {
         root: PathBuf,
-        /// Optional launcher pin, checked by the child after acquiring the Root.
+        /// Optional launcher pin, checked against discovery and live status.
         #[serde(default, rename = "stateDomain")]
         state_domain: Option<String>,
     },
@@ -119,7 +114,7 @@ impl Configuration {
             {
                 return Err("invalid or duplicate local Host declaration".into());
             }
-            if let HostLocation::Process {
+            if let HostLocation::Public {
                 state_domain: Some(domain),
                 ..
             } = &host.location
@@ -144,20 +139,6 @@ impl Configuration {
     }
 }
 
-/// Trusted launcher-selected executable and its compiled Host role. No plugin
-/// configuration can choose this program or transport native factory closures.
-pub struct HostExecutable {
-    path: PathBuf,
-    arguments: Vec<OsString>,
-}
-impl HostExecutable {
-    pub fn new(path: PathBuf, arguments: Vec<OsString>) -> Result<Self> {
-        Ok(Self {
-            path: std::path::absolute(path).map_err(|e| e.to_string())?,
-            arguments,
-        })
-    }
-}
 struct PreparedHost {
     configuration: Host,
     consumers: BTreeSet<InstanceId>,
@@ -181,7 +162,7 @@ enum Phase {
     Closing,
     Closed,
 }
-/// Actual child and original physical-call custody belong to the launcher.
+/// UI physical-call custody belongs to the launcher; public Hosts remain independent.
 /// Prepare first, retain this object, then observe start through a mutable borrow.
 /// Close the UI and its actual accepted work before draining these connections.
 pub struct Connections {
@@ -193,9 +174,9 @@ pub struct Connections {
     cohost_native: maka_host_runtime::application::NativeRegistry,
     cohost_scripts: Option<Arc<dyn maka_host_runtime::application::backend::Factory>>,
     namespaces: RootNamespaces,
-    executable: HostExecutable,
+    helper: PathBuf,
     prepared: Vec<PreparedHost>,
-    hosts: Vec<OwnedHost>,
+    hosts: Vec<ConnectedHost>,
     registrations: Vec<RemoteService>,
     startup_errors: Vec<String>,
     phase: Phase,
@@ -210,16 +191,45 @@ impl Connections {
         target: PresentationTarget,
         configuration: Configuration,
         namespaces: RootNamespaces,
-        executable: HostExecutable,
-        mut cohost_native: maka_host_runtime::application::NativeRegistry,
+        helper: PathBuf,
+        cohost_native: maka_host_runtime::application::NativeRegistry,
         cohost_scripts: Option<Arc<dyn maka_host_runtime::application::backend::Factory>>,
     ) -> Result<Self> {
-        configuration.validate()?;
         let loaded = store
             .load_application(deployment)
             .await
             .map_err(|e| e.to_string())?
             .ok_or("UI deployment not found")?;
+        Self::prepare_loaded(
+            store,
+            loaded,
+            target,
+            configuration,
+            namespaces,
+            helper,
+            cohost_native,
+            cohost_scripts,
+        )
+        .await
+    }
+
+    /// Adopt one checked UI snapshot from the same live original Root owner.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn prepare_loaded(
+        store: Arc<EventLog>,
+        loaded: maka_event_log::applications::LoadedDeployment,
+        target: PresentationTarget,
+        configuration: Configuration,
+        namespaces: RootNamespaces,
+        helper: PathBuf,
+        mut cohost_native: maka_host_runtime::application::NativeRegistry,
+        cohost_scripts: Option<Arc<dyn maka_host_runtime::application::backend::Factory>>,
+    ) -> Result<Self> {
+        loaded
+            .check_store(&store)
+            .map_err(|error| error.to_string())?;
+        configuration.validate()?;
+        let deployment = loaded.source().reference.deployment;
         if loaded.source().input.environment.location != ExecutionLocation::Ui
             || loaded.source().input.environment.presentation != Some(target)
         {
@@ -243,7 +253,7 @@ impl Connections {
         for mut host in configuration.hosts {
             let consumers = consumers(plan, &host.name);
             match &mut host.location {
-                HostLocation::Process { root, .. } => {
+                HostLocation::Public { root, .. } => {
                     *root = std::path::absolute(&*root).map_err(|e| e.to_string())?
                 }
                 HostLocation::Cohost {} => {
@@ -280,7 +290,7 @@ impl Connections {
             observations: loaded.source().remote_exports.clone(),
             initial: Some(loaded),
             namespaces,
-            executable,
+            helper: std::path::absolute(helper).map_err(|error| error.to_string())?,
             prepared,
             hosts: Vec::new(),
             registrations: Vec::new(),
@@ -288,8 +298,8 @@ impl Connections {
             phase: Phase::Prepared,
         })
     }
-    /// The launcher owns self before this future can spawn a child. Dropping the
-    /// observer releases only its borrow; it never drops or restarts that child.
+    /// The launcher retains actual local custody before awaiting startup. Dropping
+    /// the observer never restarts a public Host or closes an accepted UI call.
     pub async fn start(&mut self) -> Result<()> {
         if self.phase != Phase::Prepared {
             return Err("Host connections cannot start in this phase".into());
@@ -360,77 +370,141 @@ impl Connections {
         source: DeploymentRef,
     ) -> Result<crate::transport::Catalogue> {
         match host.location.clone() {
-            HostLocation::Process { root, .. } => {
-                self.start_process(host, consumers, root, source).await
+            HostLocation::Public { root, .. } => {
+                self.connect_public(host, consumers, root, source).await
             }
             HostLocation::Cohost {} => self.start_cohost(host, consumers, source).await,
         }
     }
-    async fn start_process(
+    async fn connect_public(
         &mut self,
-        host: Host,
+        configuration: Host,
         consumers: BTreeSet<InstanceId>,
         root: PathBuf,
         source: DeploymentRef,
     ) -> Result<crate::transport::Catalogue> {
-        let configuration = host.clone();
-        let nonce = Uuid::new_v4();
-        let address = Address::create(nonce)?;
-        let state_domain = match &host.location {
-            HostLocation::Process { state_domain, .. } => state_domain.clone(),
-            HostLocation::Cohost {} => unreachable!("process location required"),
+        tokio::time::timeout(
+            std::time::Duration::from_secs(40),
+            self.connect_public_inner(configuration, consumers, root, source),
+        )
+        .await
+        .map_err(|_| "local Host connection/startup deadline elapsed".to_owned())?
+    }
+    async fn connect_public_inner(
+        &mut self,
+        configuration: Host,
+        consumers: BTreeSet<InstanceId>,
+        root: PathBuf,
+        source: DeploymentRef,
+    ) -> Result<crate::transport::Catalogue> {
+        let mut startup = None;
+        let mut discovered = match self.discover(&root).await {
+            Ok(discovered) => discovered,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                startup = Some(self.start_public_helper(&configuration, &root).await?);
+                self.discover(&root)
+                    .await
+                    .map_err(|error| error.to_string())?
+            }
+            Err(error) => return Err(error.to_string()),
         };
-        let bootstrap = Bootstrap {
-            root,
-            state_domain,
-            deployment: host.deployment,
-            namespaces: self.namespaces.clone(),
-            source,
-            consumers,
-            endpoints: host.endpoints.clone(),
-            native: host.native.clone(),
-            address: address.path.clone(),
-            nonce,
+        let HostLocation::Public { state_domain, .. } = &configuration.location else {
+            unreachable!()
         };
-        bootstrap.validate()?;
+        if discovered.source.deployment != configuration.deployment
+            || state_domain
+                .as_ref()
+                .is_some_and(|expected| *expected != discovered.root_id)
+        {
+            return Err(
+                "discovered Host differs from its configured deployment or State Root".into(),
+            );
+        }
+        let stream = match maka_host_runtime::ipc::connect(&discovered.endpoint).await {
+            Ok(stream) => stream,
+            Err(error)
+                if startup.is_none()
+                    && error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                        error.kind() == std::io::ErrorKind::ConnectionRefused
+                            || error.kind() == std::io::ErrorKind::NotFound
+                    }) =>
+            {
+                startup = Some(self.start_public_helper(&configuration, &root).await?);
+                discovered = self
+                    .discover(&root)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                maka_host_runtime::ipc::connect(&discovered.endpoint)
+                    .await
+                    .map_err(|error| error.to_string())?
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let status = Client::status_stream(stream, Some(discovered.host_epoch)).await?;
+        discovered
+            .verify(&status)
+            .map_err(|error| error.to_string())?;
+        if discovered.source.deployment != configuration.deployment
+            || state_domain
+                .as_ref()
+                .is_some_and(|expected| *expected != discovered.root_id)
+            || startup.as_ref().is_some_and(|(_, ready)| {
+                discovered.host_epoch != ready.epoch || discovered.root_id != ready.root_id
+            })
+        {
+            return Err("local Host identity changed during startup".into());
+        }
+        let client = Client::connect_peer(
+            &discovered.endpoint,
+            Some(discovered.host_epoch),
+            source.clone(),
+            consumers.clone(),
+            configuration.endpoints.clone(),
+        )
+        .await?;
+        let catalogue = client.catalogue().clone();
         let connection =
-            native::Connection::new(Arc::new(ipc::Connector::new(address.path.clone(), nonce)?));
-        let mut child = Command::new(&self.executable.path)
-            .args(&self.executable.arguments)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        let control = Control::new(
-            child.stdout.take().expect("piped child stdout"),
-            child.stdin.take().expect("piped child stdin"),
-            nonce,
-        )?;
-        // Publish actual custody before polling bootstrap IO.
-        self.hosts.push(OwnedHost {
-            owner: HostOwner::Process {
-                child,
-                control: Box::new(control),
-                _address: address,
+            native::Connection::new(Arc::new(ipc::Connector::new(client.call_channel_opener()?)));
+        self.hosts.push(ConnectedHost {
+            owner: HostLink::Public {
+                client: Some(Box::new(client)),
             },
             connection: Some(connection),
-            ready: false,
+            ready: true,
             published: false,
             epochs: BTreeMap::new(),
             configuration,
-            peers: crate::transport::Peers::new(crate::transport::Peer::new(
-                bootstrap.source.clone(),
-                bootstrap.consumers.clone(),
-            )?),
+            peers: crate::transport::Peers::new(crate::transport::Peer::new(source, consumers)?),
         });
-        let owned = self.hosts.last_mut().unwrap();
-        let HostOwner::Process { control, .. } = &mut owned.owner else {
+        drop(startup);
+        Ok(catalogue)
+    }
+    async fn discover(&self, root: &Path) -> std::io::Result<discovery::Discovery> {
+        let namespaces = self.namespaces.clone();
+        let root = root.to_owned();
+        tokio::task::spawn_blocking(move || discovery::read_with_namespaces(&root, &namespaces))
+            .await
+            .map_err(std::io::Error::other)?
+    }
+    async fn start_public_helper(
+        &self,
+        configuration: &Host,
+        root: &Path,
+    ) -> Result<(crate::startup::Anchor, crate::startup::Ready)> {
+        let HostLocation::Public { state_domain, .. } = &configuration.location else {
             unreachable!()
         };
-        let catalogue = control.start(&bootstrap).await?;
-        owned.ready = true;
-        Ok(catalogue)
+        crate::startup::launch(
+            &self.helper,
+            crate::startup::Request {
+                root: root.to_owned(),
+                state_domain: state_domain.clone(),
+                deployment: configuration.deployment,
+                endpoints: configuration.endpoints.clone(),
+                native: configuration.native.clone(),
+            },
+        )
+        .await
     }
     async fn start_cohost(
         &mut self,
@@ -439,8 +513,8 @@ impl Connections {
         source: DeploymentRef,
     ) -> Result<crate::transport::Catalogue> {
         let peers = crate::transport::Peers::new(crate::transport::Peer::new(source, consumers)?);
-        self.hosts.push(OwnedHost {
-            owner: HostOwner::Cohost {
+        self.hosts.push(ConnectedHost {
+            owner: HostLink::Cohost {
                 application: None,
                 server: None,
                 captured: None,
@@ -453,7 +527,7 @@ impl Connections {
             peers: peers.clone(),
         });
         let owned = self.hosts.last_mut().unwrap();
-        let HostOwner::Cohost {
+        let HostLink::Cohost {
             application,
             server,
             ..
@@ -609,14 +683,14 @@ impl Connections {
         {
             let prepared = self.prepared.remove(index);
             let callers = consumers(&plan, &prepared.configuration.name);
-            // Newly needed executors belong to this controller before bootstrap
-            // is observed. A failure retains actual custody, not a retryable recipe.
+            // Retain newly selected local custody before observing startup.
+            // Public connections never restart or replace the discovered Host.
             let owners = self.hosts.len();
             let result = self
                 .start_selected(prepared.configuration.clone(), callers, source.clone())
                 .await;
-            // All pre-custody work is synchronous. Cancellation at the first
-            // suspension already belongs to an actual owner, never this recipe.
+            // A failed connection without published custody may remain prepared.
+            // This never replays an operation or replaces an existing connection.
             if result.is_err() && self.hosts.len() == owners {
                 self.prepared.insert(index, prepared);
             }
@@ -706,7 +780,7 @@ impl Connections {
             return Err("UI source selects an endpoint outside its configured grants".into());
         }
         // Complete the whole batch's known validation before changing any grant.
-        // Physical IO failure still belongs to each original child, not rollback.
+        // Physical IO failure still belongs to its original connection, not rollback.
         for (owned, approval) in self.hosts.iter_mut().zip(staged) {
             let Some((approved, consumers, catalogue)) = approval else {
                 owned.peers.update(None, &BTreeSet::new())?;
@@ -762,10 +836,12 @@ impl Connections {
         }
     }
 
-    /// Revoke every connection synchronously, then drain all original children.
-    /// Both same-child Closed and actual exit are necessary. Failed original
-    /// Calls and caller tokens remain in their physical owner even after exit.
+    /// Fence UI calls synchronously, then confirm their original physical cleanup.
+    /// Public session detachment never claims Host cleanup or waits for Host exit.
     pub fn close(&mut self) -> BoxFuture<'_, Result<()>> {
+        self.close_with(crate::ExitMode::KeepHost)
+    }
+    pub fn close_with(&mut self, mode: crate::ExitMode) -> BoxFuture<'_, Result<()>> {
         self.phase = Phase::Closing;
         let physical: Vec<_> = self
             .hosts
@@ -777,21 +853,16 @@ impl Connections {
             })
             .collect();
         async move {
+            let namespaces = &self.namespaces;
             let closes: Vec<_> = self
                 .hosts
                 .iter_mut()
                 .zip(physical)
                 .map(|(host, physical)| async move {
-                    let (physical, process) = tokio::join!(
-                        async {
-                            match physical {
-                                Some(physical) => physical.await,
-                                None => Ok(()),
-                            }
-                        },
-                        host.close_owner()
-                    );
-                    physical.and(process)
+                    if let Some(physical) = physical {
+                        physical.await?;
+                    }
+                    host.close_owner(mode, namespaces).await
                 })
                 .collect();
             let results = join_all(closes).await;
@@ -811,12 +882,15 @@ impl Connections {
         }
         .boxed()
     }
-    /// Unconfirmed cleanup keeps the same owners and runtime alive. Never kill a
-    /// child, release a failed Call, or infer cleanup from historical receipts.
+    /// Unconfirmed UI cleanup retains its original owners and runtime. Historical
+    /// receipts or a detached public session cannot settle a failed physical Call.
     pub async fn drain(&mut self) {
+        self.drain_with(crate::ExitMode::KeepHost).await;
+    }
+    pub async fn drain_with(&mut self, mode: crate::ExitMode) {
         let mut reported = BTreeSet::new();
         loop {
-            match self.close().await {
+            match self.close_with(mode).await {
                 Ok(()) => return,
                 Err(error) => {
                     if reported.insert(error.clone()) {

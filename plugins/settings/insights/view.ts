@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   Emission,
@@ -375,6 +376,7 @@ export function frame<N extends Node>(
               `insights-field-${state.editing.key}-${name}`,
               'input',
               {
+                menu: editorMenu(props.theme, props.locale),
                 appearance:
                   presentation.target === 'tui'
                     ? {
@@ -493,6 +495,7 @@ export function frame<N extends Node>(
               'insights-search-input',
               'input',
               {
+                menu: editorMenu(props.theme, props.locale),
                 appearance:
                   presentation.target === 'tui'
                     ? {

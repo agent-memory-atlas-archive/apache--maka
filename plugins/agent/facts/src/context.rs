@@ -23,8 +23,7 @@ use serde::{Deserialize, Serialize};
 mod checkpoint_mode;
 mod summary;
 pub use checkpoint_mode::CheckpointMode;
-pub use summary::{SUMMARY_FORMAT_TEMPLATE, validate_summary};
-pub const MAX_SUMMARY_BYTES: usize = 256 * 1024;
+pub use summary::{DEFAULT_COMPACTION_PROMPT, SUMMARY_FORMAT_TEMPLATE};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -124,6 +123,7 @@ pub struct ContextCheckpoint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SummaryFormat {
+    /// Legacy wire label; the prompt determines content and no sections are required.
     SectionsV1,
 }
 
@@ -136,16 +136,6 @@ pub struct TextSummary {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SummaryDefect {
-    #[error("empty_summary")]
-    Empty,
-    #[error("summary_too_large")]
-    TooLarge,
-    #[error("malformed_summary_missing_section")]
-    MissingSection,
-    #[error("malformed_summary_truncated")]
-    Truncated,
-    #[error("malformed_summary_too_small_for_fold")]
-    TooSmallForFold,
     #[error("summary_contains_tool_content")]
     ToolContent,
     #[error("summary_has_invalid_finish_reason")]
@@ -153,16 +143,9 @@ pub enum SummaryDefect {
 }
 
 impl TextSummary {
-    pub fn validate(&self) -> Result<(), SummaryDefect> {
-        match self.format {
-            SummaryFormat::SectionsV1 => validate_summary(&self.text, None),
-        }
-    }
-
     /// Ordinary text parts concatenate in original order; thinking is not a
-    /// portable summary. Missing usage stays unknown; roll-forward inputs do
-    /// not measure the entire folded span and therefore never receive its floor.
-    pub fn from_model_step(step: &ModelStep, initial_fold: bool) -> Result<Self, SummaryDefect> {
+    /// portable summary. The prompt controls the summary's content and format.
+    pub fn from_model_step(step: &ModelStep) -> Result<Self, SummaryDefect> {
         if step.finish_reason != ModelFinishReason::Stop {
             return Err(SummaryDefect::InvalidFinish);
         }
@@ -174,9 +157,6 @@ impl TextSummary {
                     text: part,
                     ..
                 } => {
-                    if part.len() > MAX_SUMMARY_BYTES.saturating_sub(text.len()) {
-                        return Err(SummaryDefect::TooLarge);
-                    }
                     text.push_str(part);
                 }
                 ModelPart::Text {
@@ -190,11 +170,9 @@ impl TextSummary {
                 }
             }
         }
-        let text = text.trim_matches(summary::js_space);
-        validate_summary(text, initial_fold.then_some(&step.usage))?;
         Ok(Self {
             format: SummaryFormat::SectionsV1,
-            text: text.into(),
+            text,
         })
     }
 }
@@ -219,9 +197,7 @@ impl ContextCheckpoint {
         if let Some(id) = &self.previous_checkpoint_id {
             crate::interaction::entity_id(id)?;
         }
-        self.summary
-            .validate()
-            .map_err(|_| "invalid checkpoint summary")
+        Ok(())
     }
 }
 
@@ -229,6 +205,49 @@ impl ContextCheckpoint {
 mod tests {
     use super::*;
     use crate::input::InvocationInput;
+
+    #[test]
+    fn summary_preserves_custom_text_without_content_heuristics() {
+        for text in [
+            String::new(),
+            "  custom JSON or prose:...\n```".into(),
+            "x".repeat(300_000),
+        ] {
+            let step: ModelStep = serde_json::from_value(serde_json::json!({
+                "parts": [
+                    {"kind":"text", "text_kind":"thinking", "text":"private reasoning"},
+                    {"kind":"text", "text_kind":"text", "text":text}
+                ],
+                "finish_reason":"stop", "usage":{"input_tokens":20000,"output_tokens":1}
+            }))
+            .unwrap();
+            assert_eq!(TextSummary::from_model_step(&step).unwrap().text, text);
+        }
+    }
+
+    #[test]
+    fn summary_requires_completed_text_execution() {
+        let mut step: ModelStep = serde_json::from_value(serde_json::json!({
+            "parts":[{"kind":"text","text_kind":"text","text":"custom summary"}],
+            "finish_reason":"length","usage":{}
+        }))
+        .unwrap();
+        assert_eq!(
+            TextSummary::from_model_step(&step),
+            Err(SummaryDefect::InvalidFinish)
+        );
+        step.finish_reason = ModelFinishReason::Stop;
+        step.parts.push(ModelPart::ToolCall {
+            call: serde_json::from_value(serde_json::json!({
+                "id":"call", "name":"Read", "input":{}, "provider_executed":false
+            }))
+            .unwrap(),
+        });
+        assert_eq!(
+            TextSummary::from_model_step(&step),
+            Err(SummaryDefect::ToolContent)
+        );
+    }
 
     #[test]
     fn model_purpose_must_match_the_canonical_opening() {

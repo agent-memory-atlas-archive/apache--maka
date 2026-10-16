@@ -103,7 +103,7 @@ async fn native_acp_continues_after_only_its_caller_is_reactivated() {
             .unwrap()
             .configuration
             .values
-            .insert("maxSteps".into(), json!(2));
+            .insert("toolDiscovery".into(), json!(true));
         let source = f
             .store
             .commit_application(

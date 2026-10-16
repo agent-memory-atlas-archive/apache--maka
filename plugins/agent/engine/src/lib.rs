@@ -73,8 +73,6 @@ pub enum RunError {
     InvalidInput(String),
     #[error("execution cancelled")]
     Cancelled,
-    #[error("model step limit reached")]
-    StepLimit,
     #[error("model output was incomplete; local tools from this response were not executed")]
     ModelIncomplete,
     #[error(transparent)]
@@ -191,13 +189,11 @@ pub enum RunWork {
     Continuation {
         source: maka_agent_facts::continuation::RunBoundary,
         tools: ToolCatalog,
-        max_steps: Option<usize>,
     },
     Message {
         message: MessageInput,
         source_messages: Vec<maka_agent_facts::message::RootSourceMessage>,
         tools: ToolCatalog,
-        max_steps: Option<usize>,
         /// Only a newly submitted client Turn may observe a sealed, unknown prior tool effect.
         allow_prior_unknown: bool,
     },
@@ -430,16 +426,8 @@ impl Engine {
                     ));
                 }
             }
-            RunWork::Message { max_steps, .. }
-                if max_steps.is_some_and(|steps| steps == 0 || steps > 256) =>
-            {
-                return Err(RunError::InvalidInput("step limit".into()));
-            }
-            RunWork::Continuation {
-                source, max_steps, ..
-            } => {
-                if max_steps.is_some_and(|steps| steps == 0 || steps > 256)
-                    || source.invocation.session_id != input.invocation.session_id
+            RunWork::Continuation { source, .. } => {
+                if source.invocation.session_id != input.invocation.session_id
                     || input
                         .request_fingerprint
                         .as_ref()

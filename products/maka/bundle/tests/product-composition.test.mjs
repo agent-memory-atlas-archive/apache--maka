@@ -43,7 +43,6 @@ test('default Agent and WorkHub installations allow requests for additional proc
   ]) {
     assert.equal(agent.permissions.access, 'workspace_write');
     assert.equal(agent.permissions.requestPermissions, true);
-    assert.equal(agent.maxSteps, undefined);
     assert.equal(processes.network, 'allowed');
     assert.deepEqual(processes.filesystem, { default: 'write', rules: [], denyGlobs: [] });
   }
@@ -209,7 +208,6 @@ test('WorkHub product authors two independent Agent graphs with explicit native 
     const agent = {
       workspaceRoots: [{ label: 'Project', path: '/private/product-workspace' }],
       permissions: { access: 'workspace_write', requestPermissions: true },
-      maxSteps: 2,
       tools: [],
     };
     for (const presentation of ['desktop', 'tui']) {
@@ -382,6 +380,10 @@ test('inline approval Escape returns to the retained task and composer', async (
     permissions: { access: 'workspace_write', requestPermissions: true },
     workspace: { path: '/project', directoryIdentity: 'a'.repeat(64), identity: 'workspace-a' },
   };
+  out.frame.state.interactions = {
+    revision: 1,
+    entries: [{ requestId: 'request-a', kind: 'permissions' }],
+  };
   out.frame.state.dialog = 'approval';
   out = module.component.update(out.frame.state, {}, values);
   const nodes = (node) =>
@@ -414,4 +416,19 @@ test('inline approval Escape returns to the retained task and composer', async (
     'closing approval preserves the native draft owner',
   );
   assert.equal(after.props.command, composer.props.command);
+  assert.equal(after.props.approvalPending, true, 'closing a review does not settle its approval');
+  for (const kind of ['service_approval', 'permissions', 'client_capability', 'question', 'form']) {
+    out.frame.state.interactions.entries[0].kind = kind;
+    out = module.component.update(out.frame.state, {}, values);
+    assert.equal(
+      nodes(out.frame.view).find((n) => n.key === 'composer').props.approvalPending,
+      !['question', 'form'].includes(kind),
+    );
+  }
+  out.frame.state.interactions.entries = [];
+  out = module.component.update(out.frame.state, {}, values);
+  assert.equal(
+    nodes(out.frame.view).find((n) => n.key === 'composer').props.approvalPending,
+    false,
+  );
 });

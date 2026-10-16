@@ -3941,6 +3941,19 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/TextareaAppearance',
           },
+          inlineTokens: {
+            description:
+              'Exact whitespace-delimited literals rendered and edited as atomic inline tokens.',
+            type: 'array',
+            maxItems: 4096,
+            items: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 512,
+              pattern: '^\\S+$',
+            },
+            default: [],
+          },
           menu: {
             anyOf: [
               {
@@ -3973,6 +3986,7 @@ export const contracts = {
             default: {
               min: 3,
               max: 8,
+              resizable: false,
               maxViewportFraction: null,
             },
           },
@@ -3981,6 +3995,18 @@ export const contracts = {
             anyOf: [
               {
                 $ref: '#/$defs/SubmitKey',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
+          navigation: {
+            description: 'Yield suggestion navigation only for the original observed editor state.',
+            anyOf: [
+              {
+                $ref: '#/$defs/EditorNavigation',
               },
               {
                 type: 'null',
@@ -4620,6 +4646,12 @@ export const contracts = {
                 minimum: 1,
                 maximum: 65535,
               },
+              resizable: {
+                description:
+                  'Allow dragging the lower-right grip to override preferred rows, up to\nthe containing viewport height. The minimum still applies.',
+                type: 'boolean',
+                default: false,
+              },
               maxViewportFraction: {
                 description:
                   "Optional cap relative to the nearest declared layout viewport's height,\nor the surface when none is declared. The minimum still applies.",
@@ -4638,6 +4670,24 @@ export const contracts = {
               'Product-selected native submit gesture. PrimaryEnter uses the platform\naccelerator on Desktop and Control+Enter in a terminal.',
             type: 'string',
             enum: ['enter', 'primary_enter', 'control_enter'],
+          },
+          EditorNavigation: {
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              basedOn: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'basedOn'],
           },
           EditorCommand: {
             type: 'object',
@@ -4669,6 +4719,26 @@ export const contracts = {
           },
           EditorEdit: {
             oneOf: [
+              {
+                description:
+                  'Replace a bounded UTF-16 range in the current revision, preserving its suffix.',
+                type: 'object',
+                properties: {
+                  range: {
+                    $ref: '#/$defs/TextRange',
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'replace_range',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'range', 'text'],
+              },
               {
                 type: 'object',
                 properties: {
@@ -4717,6 +4787,24 @@ export const contracts = {
                 required: ['kind', 'text'],
               },
             ],
+          },
+          TextRange: {
+            description: 'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
+            type: 'object',
+            properties: {
+              start: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              end: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['start', 'end'],
           },
           FilePastePolicy: {
             type: 'object',
@@ -4923,6 +5011,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -5132,6 +5222,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -5258,6 +5350,180 @@ export const contracts = {
             },
           },
         },
+        navigated: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'EditorNavigated',
+          type: 'object',
+          properties: {
+            key: {
+              $ref: '#/$defs/EditorNavigationKey',
+            },
+            observation: {
+              $ref: '#/$defs/EditorObservation',
+            },
+          },
+          additionalProperties: false,
+          required: ['key', 'observation'],
+          $defs: {
+            EditorNavigationKey: {
+              type: 'string',
+              enum: ['up', 'down', 'enter', 'tab', 'escape'],
+            },
+            EditorObservation: {
+              type: 'object',
+              properties: {
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                snapshot: {
+                  $ref: '#/$defs/EditorSnapshot',
+                },
+                receipt: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/EditorReceipt',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['revision', 'snapshot', 'receipt'],
+            },
+            EditorSnapshot: {
+              type: 'object',
+              properties: {
+                text: {
+                  $ref: '#/$defs/EditorTextRef',
+                },
+                selection: {
+                  $ref: '#/$defs/TextRange',
+                },
+                reversed: {
+                  type: 'boolean',
+                },
+                marked: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/TextRange',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['text', 'selection', 'reversed', 'marked'],
+            },
+            EditorTextRef: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                bytes: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'revision', 'bytes'],
+            },
+            TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
+              type: 'object',
+              properties: {
+                start: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+                end: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['start', 'end'],
+            },
+            EditorReceipt: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                sequence: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                outcome: {
+                  $ref: '#/$defs/EditorOutcome',
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'sequence', 'revision', 'outcome'],
+            },
+            EditorOutcome: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    status: {
+                      type: 'string',
+                      const: 'applied',
+                    },
+                  },
+                  required: ['status'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    reason: {
+                      $ref: '#/$defs/EditorConflict',
+                    },
+                    status: {
+                      type: 'string',
+                      const: 'conflict',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['status', 'reason'],
+                },
+              ],
+            },
+            EditorConflict: {
+              type: 'string',
+              enum: [
+                'persistence',
+                'owner',
+                'representation',
+                'revision',
+                'composition',
+                'sequence',
+              ],
+            },
+          },
+        },
         submitted: {
           $schema: 'https://json-schema.org/draft/2020-12/schema',
           title: 'EditorObservation',
@@ -5332,6 +5598,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -5507,6 +5775,17 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/InputAppearance',
           },
+          menu: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TextareaMenu',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           accessibilityLabel: {
             type: 'string',
             minLength: 1,
@@ -5866,6 +6145,131 @@ export const contracts = {
             additionalProperties: false,
             required: ['top', 'right', 'bottom', 'left'],
           },
+          TextareaMenu: {
+            description:
+              'Local presentation for user-initiated native editing actions. This is not\na command interface: clipboard access still requires native activation.',
+            type: 'object',
+            properties: {
+              appearance: {
+                $ref: '#/$defs/MenuAppearance',
+              },
+              labels: {
+                $ref: '#/$defs/TextareaMenuLabels',
+              },
+            },
+            additionalProperties: false,
+            required: ['appearance', 'labels'],
+          },
+          MenuAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              activeBackground: {
+                $ref: '#/$defs/Color',
+              },
+              activeForeground: {
+                $ref: '#/$defs/Color',
+              },
+              disabledForeground: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+              rowPadding: {
+                $ref: '#/$defs/Insets',
+              },
+              width: {
+                type: 'number',
+                format: 'float',
+                minimum: 32,
+                maximum: 1024,
+              },
+              windowMargin: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'background',
+              'border',
+              'activeBackground',
+              'activeForeground',
+              'disabledForeground',
+              'borderWidth',
+              'radius',
+              'padding',
+              'rowPadding',
+              'width',
+              'windowMargin',
+            ],
+          },
+          TextareaMenuLabels: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              undo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              redo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              cut: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              copy: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              paste: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              selectAll: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+            },
+            additionalProperties: false,
+            required: ['title', 'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'],
+          },
           TerminalPaste: {
             type: 'string',
             enum: ['reject_controls', 'spaces'],
@@ -5900,6 +6304,26 @@ export const contracts = {
           },
           EditorEdit: {
             oneOf: [
+              {
+                description:
+                  'Replace a bounded UTF-16 range in the current revision, preserving its suffix.',
+                type: 'object',
+                properties: {
+                  range: {
+                    $ref: '#/$defs/TextRange',
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'replace_range',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'range', 'text'],
+              },
               {
                 type: 'object',
                 properties: {
@@ -5948,6 +6372,24 @@ export const contracts = {
                 required: ['kind', 'text'],
               },
             ],
+          },
+          TextRange: {
+            description: 'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
+            type: 'object',
+            properties: {
+              start: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              end: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['start', 'end'],
           },
           SubmitCopy: {
             type: 'object',
@@ -6061,6 +6503,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -6213,6 +6657,17 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/InputAppearance',
           },
+          menu: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TextareaMenu',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           accessibilityLabel: {
             type: 'string',
             minLength: 1,
@@ -6572,6 +7027,131 @@ export const contracts = {
             additionalProperties: false,
             required: ['top', 'right', 'bottom', 'left'],
           },
+          TextareaMenu: {
+            description:
+              'Local presentation for user-initiated native editing actions. This is not\na command interface: clipboard access still requires native activation.',
+            type: 'object',
+            properties: {
+              appearance: {
+                $ref: '#/$defs/MenuAppearance',
+              },
+              labels: {
+                $ref: '#/$defs/TextareaMenuLabels',
+              },
+            },
+            additionalProperties: false,
+            required: ['appearance', 'labels'],
+          },
+          MenuAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              activeBackground: {
+                $ref: '#/$defs/Color',
+              },
+              activeForeground: {
+                $ref: '#/$defs/Color',
+              },
+              disabledForeground: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+              rowPadding: {
+                $ref: '#/$defs/Insets',
+              },
+              width: {
+                type: 'number',
+                format: 'float',
+                minimum: 32,
+                maximum: 1024,
+              },
+              windowMargin: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'background',
+              'border',
+              'activeBackground',
+              'activeForeground',
+              'disabledForeground',
+              'borderWidth',
+              'radius',
+              'padding',
+              'rowPadding',
+              'width',
+              'windowMargin',
+            ],
+          },
+          TextareaMenuLabels: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              undo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              redo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              cut: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              copy: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              paste: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              selectAll: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+            },
+            additionalProperties: false,
+            required: ['title', 'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'],
+          },
           TerminalPaste: {
             type: 'string',
             enum: ['reject_controls', 'spaces'],
@@ -6606,6 +7186,26 @@ export const contracts = {
           },
           EditorEdit: {
             oneOf: [
+              {
+                description:
+                  'Replace a bounded UTF-16 range in the current revision, preserving its suffix.',
+                type: 'object',
+                properties: {
+                  range: {
+                    $ref: '#/$defs/TextRange',
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'replace_range',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'range', 'text'],
+              },
               {
                 type: 'object',
                 properties: {
@@ -6654,6 +7254,24 @@ export const contracts = {
                 required: ['kind', 'text'],
               },
             ],
+          },
+          TextRange: {
+            description: 'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
+            type: 'object',
+            properties: {
+              start: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              end: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['start', 'end'],
           },
           SubmitCopy: {
             type: 'object',
@@ -6767,6 +7385,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -8491,6 +9111,187 @@ export const contracts = {
           },
           resources: {},
         },
+        compact: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentCompact',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              model: {
+                $ref: '#/$defs/ModelSelection',
+              },
+              thinkingLevel: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/ThinkingLevel',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              prompt: {
+                description: 'One invocation only; omission uses the global preference.',
+                type: ['string', 'null'],
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'model'],
+            $defs: {
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentCompactResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  execution: {
+                    $ref: '#/$defs/AgentExecution',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'started',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'execution'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentCompactRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentExecution: {
+                description:
+                  'Canonical physical execution receipt, independent of the current Session tip.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  runId: {
+                    type: 'string',
+                  },
+                  invocationId: {
+                    type: 'string',
+                  },
+                  highWater: {
+                    description: 'Run-local event count, not the root-global transcript cursor.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  state: {
+                    $ref: '#/$defs/AgentExecutionState',
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId', 'runId', 'invocationId', 'highWater', 'state'],
+              },
+              AgentExecutionState: {
+                type: 'string',
+                enum: [
+                  'admitted',
+                  'running',
+                  'waiting',
+                  'paused',
+                  'completed',
+                  'failed',
+                  'cancelled',
+                ],
+              },
+              AgentCompactRejection: {
+                type: 'string',
+                enum: ['busy', 'closed', 'archived', 'backend_unavailable', 'workspace_changed'],
+              },
+            },
+          },
+          resources: {},
+        },
+        compactionPrompt: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentCompactionPrompt',
+            type: 'object',
+            properties: {
+              compactionPrompt: {
+                type: 'string',
+              },
+              defaultCompactionPrompt: {
+                type: 'string',
+              },
+            },
+            additionalProperties: false,
+            required: ['compactionPrompt', 'defaultCompactionPrompt'],
+          },
+          resources: {},
+        },
         create: {
           mode: 'mutation',
           input: {
@@ -10101,6 +10902,65 @@ export const contracts = {
           },
           resources: {},
         },
+        globalInstructions: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGlobalInstructionsRead',
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGlobalInstructionsView',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/AgentGlobalInstructionSource',
+                  },
+                  path: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'string',
+                  },
+                  content: {
+                    type: 'string',
+                  },
+                  exists: {
+                    type: 'boolean',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'available',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'source', 'path', 'revision', 'content', 'exists'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              AgentGlobalInstructionSource: {
+                type: 'string',
+                enum: ['maka', 'agents'],
+              },
+            },
+          },
+          resources: {},
+        },
         goal: {
           mode: 'query',
           input: {
@@ -10656,6 +11516,16 @@ export const contracts = {
               AgentHistoryChunk: {
                 type: 'object',
                 properties: {
+                  compaction: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryCompaction',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   attachments: {
                     description:
                       'Display metadata only, on the first user-message fragment; no storage capability.',
@@ -10734,6 +11604,21 @@ export const contracts = {
                   'text',
                   'tool',
                 ],
+              },
+              HistoryCompaction: {
+                description:
+                  'Duration of a successfully adopted context checkpoint, in recorded milliseconds.',
+                type: 'object',
+                properties: {
+                  durationMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: ['durationMs'],
               },
               AgentHistoryAttachment: {
                 type: 'object',
@@ -10814,7 +11699,7 @@ export const contracts = {
                 description:
                   'Canonical message author/kind; the field identifies body versus thinking.\nTool body JSON contributes string values, never its keys.',
                 type: 'string',
-                enum: ['user', 'assistant', 'tool_call', 'tool_result'],
+                enum: ['compaction', 'user', 'assistant', 'tool_call', 'tool_result'],
               },
               HistoryTool: {
                 description:
@@ -10851,6 +11736,15 @@ export const contracts = {
               HistoryToolCall: {
                 type: 'object',
                 properties: {
+                  ancestorToolUseIds: {
+                    description:
+                      'Recorded ancestors in this Turn, nearest first; display references only.',
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 32,
+                  },
                   presentation: {
                     description:
                       'Opaque display contract captured at dispatch; no execution authority.',
@@ -10888,7 +11782,14 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'name', 'title', 'pending', 'dispatched'],
+                required: [
+                  'ancestorToolUseIds',
+                  'sequence',
+                  'name',
+                  'title',
+                  'pending',
+                  'dispatched',
+                ],
               },
               DisplayText: {
                 description:
@@ -14878,6 +15779,9 @@ export const contracts = {
               session: {
                 $ref: '#/$defs/AgentSession',
               },
+              compacting: {
+                type: 'boolean',
+              },
               rememberedBackend: {
                 anyOf: [
                   {
@@ -15248,6 +16152,11 @@ export const contracts = {
                   approximate: {
                     type: 'boolean',
                   },
+                  contextLastKnown: {
+                    description:
+                      "The context count is the last completed request's baseline; newer additions are unknown.",
+                    type: 'boolean',
+                  },
                   outputTokensPerSecond: {
                     description:
                       "Provider output tokens divided by the model request's wall time.\nIncludes reasoning and time to first token; excludes tool/user waits.",
@@ -15256,7 +16165,7 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['modelId', 'approximate'],
+                required: ['modelId', 'approximate', 'contextLastKnown'],
               },
               AgentRun: {
                 type: 'object',
@@ -21321,6 +22230,177 @@ export const contracts = {
           },
           resources: {},
         },
+        skillCandidates: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSkillCandidatesRead',
+            description:
+              "Read-only suggestions resolved against the session's actual skill context.",
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              backend: {
+                $ref: '#/$defs/AgentSkillCandidatesBackend',
+              },
+              query: {
+                type: 'string',
+                maxLength: 4096,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'backend', 'query'],
+            $defs: {
+              AgentSkillCandidatesBackend: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      model: {
+                        $ref: '#/$defs/ModelSelection',
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'model'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSkillCandidates',
+            type: 'object',
+            properties: {
+              revision: {
+                type: ['string', 'null'],
+              },
+              skills: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentSkillCandidate',
+                },
+              },
+            },
+            required: ['skills'],
+            $defs: {
+              AgentSkillCandidate: {
+                type: 'object',
+                properties: {
+                  reference: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  invocation: {
+                    type: 'string',
+                  },
+                },
+                required: ['reference', 'name', 'description', 'invocation'],
+              },
+            },
+          },
+          resources: {},
+        },
         snapshotPatch: {
           mode: 'mutation',
           input: {
@@ -21820,6 +22900,15 @@ export const contracts = {
               HistoryToolCall: {
                 type: 'object',
                 properties: {
+                  ancestorToolUseIds: {
+                    description:
+                      'Recorded ancestors in this Turn, nearest first; display references only.',
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 32,
+                  },
                   presentation: {
                     description:
                       'Opaque display contract captured at dispatch; no execution authority.',
@@ -21857,7 +22946,14 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'name', 'title', 'pending', 'dispatched'],
+                required: [
+                  'ancestorToolUseIds',
+                  'sequence',
+                  'name',
+                  'title',
+                  'pending',
+                  'dispatched',
+                ],
               },
               DisplayText: {
                 description:
@@ -22089,6 +23185,85 @@ export const contracts = {
             required: ['names'],
             title: 'AgentToolNames',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        updateGlobalInstructions: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGlobalInstructionsUpdate',
+            type: 'object',
+            properties: {
+              source: {
+                $ref: '#/$defs/AgentGlobalInstructionSource',
+              },
+              revision: {
+                type: 'string',
+              },
+              content: {
+                type: 'string',
+                maxLength: 65536,
+              },
+            },
+            additionalProperties: false,
+            required: ['source', 'revision', 'content'],
+            $defs: {
+              AgentGlobalInstructionSource: {
+                type: 'string',
+                enum: ['maka', 'agents'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGlobalInstructionsUpdated',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'saved',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
           },
           resources: {},
         },
@@ -36656,6 +37831,12 @@ export const contracts = {
             title: 'SettingsAssistantPreferences',
             type: 'object',
             properties: {
+              compactionPrompt: {
+                type: 'string',
+              },
+              defaultCompactionPrompt: {
+                type: 'string',
+              },
               revision: {
                 type: 'integer',
                 format: 'uint64',
@@ -36675,14 +37856,20 @@ export const contracts = {
               incognitoActive: {
                 type: 'boolean',
               },
+              shellTitles: {
+                type: 'boolean',
+              },
             },
             additionalProperties: false,
             required: [
+              'compactionPrompt',
+              'defaultCompactionPrompt',
               'revision',
               'displayName',
               'assistantTone',
               'workspaceInstructions',
               'incognitoActive',
+              'shellTitles',
             ],
           },
           resources: {},
@@ -38632,9 +39819,8 @@ export const contracts = {
               providers: {
                 type: 'array',
                 items: {
-                  $ref: '#/$defs/SettingsProvider',
+                  $ref: '#/$defs/SettingsProviderSummary',
                 },
-                maxItems: 8,
               },
               next: {
                 type: ['integer', 'null'],
@@ -38645,18 +39831,24 @@ export const contracts = {
             additionalProperties: false,
             required: ['providers', 'next'],
             $defs: {
-              SettingsProvider: {
+              SettingsProviderSummary: {
                 type: 'object',
                 properties: {
                   identity: {
                     $ref: '#/$defs/Identity',
                   },
-                  descriptor: {
-                    $ref: '#/$defs/Descriptor',
+                  label: {
+                    type: 'string',
+                  },
+                  authentication: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/SettingsProviderAuthenticationSummary',
+                    },
                   },
                 },
                 additionalProperties: false,
-                required: ['identity', 'descriptor'],
+                required: ['identity', 'label', 'authentication'],
               },
               Identity: {
                 description:
@@ -38679,64 +39871,18 @@ export const contracts = {
                 additionalProperties: false,
                 required: ['packageId', 'entryId', 'scope', 'name'],
               },
-              Descriptor: {
+              SettingsProviderAuthenticationSummary: {
                 type: 'object',
                 properties: {
                   label: {
                     type: 'string',
-                  },
-                  customEndpoint: {
-                    description: 'Offers a user-selected endpoint instead of a named service.',
-                    type: 'boolean',
-                    default: false,
-                  },
-                  configurationSchema: true,
-                  configurationDefaults: true,
-                  authentication: {
-                    type: 'array',
-                    items: {
-                      $ref: '#/$defs/Method',
-                    },
-                  },
-                  anonymous: {
-                    description:
-                      "Whether the provider supports a connection without a stored credential.\nPresentation metadata; authorization remains the provider's decision.",
-                    type: 'boolean',
-                  },
-                  discovery: {
-                    type: 'boolean',
-                  },
-                },
-                additionalProperties: false,
-                required: [
-                  'label',
-                  'customEndpoint',
-                  'configurationSchema',
-                  'configurationDefaults',
-                  'authentication',
-                  'anonymous',
-                  'discovery',
-                ],
-              },
-              Method: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                  },
-                  label: {
-                    type: 'string',
-                  },
-                  inputSchema: {
-                    description:
-                      'Secret-bearing form input never enters the connection configuration.',
                   },
                   interactive: {
                     type: 'boolean',
                   },
                 },
                 additionalProperties: false,
-                required: ['id', 'label', 'inputSchema', 'interactive'],
+                required: ['label', 'interactive'],
               },
             },
           },
@@ -39984,6 +41130,20 @@ export const contracts = {
                   {
                     type: 'object',
                     properties: {
+                      prompt: {
+                        type: ['string', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'compaction_prompt',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
                       displayName: {
                         type: 'string',
                         maxLength: 256,
@@ -40027,6 +41187,20 @@ export const contracts = {
                     },
                     additionalProperties: false,
                     required: ['kind', 'incognitoActive'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      enabled: {
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'shell_titles',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'enabled'],
                   },
                 ],
               },
@@ -43493,6 +44667,105 @@ export const contracts = {
           },
           resources: {},
         },
+        exportPackage: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'PackageBundleRead',
+            description:
+              'An immutable package from one committed revision, including binary files.',
+            type: 'object',
+            properties: {
+              source: {
+                $ref: '#/$defs/DeploymentRef',
+              },
+              package: {
+                $ref: '#/$defs/PackageRef',
+              },
+            },
+            additionalProperties: false,
+            required: ['source', 'package'],
+            $defs: {
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              PackageRef: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['id', 'revision'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'PackageBundleExport',
+            description:
+              'Bundle JSON already encodes file bytes; text chunks add no second base64 layer.',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  offset: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  totalBytes: {
+                    type: 'integer',
+                    format: 'uint',
+                    minimum: 0,
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 16384,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'chunk',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'offset', 'totalBytes', 'text'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'complete',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind'],
+              },
+            ],
+          },
+          resources: {},
+        },
         install: {
           mode: 'mutation',
           input: {
@@ -45722,6 +46995,13 @@ export const contracts = {
                 version: 1,
               },
               optional: false,
+            },
+            packages: {
+              type: {
+                name: 'maka.bytes',
+                version: 1,
+              },
+              optional: true,
             },
           },
         },

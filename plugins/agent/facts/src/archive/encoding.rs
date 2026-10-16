@@ -17,7 +17,6 @@
  * under the License.
  */
 
-use super::MAX_ARCHIVE_BYTES;
 use crate::{
     artifact::content_digest,
     attachment::StorageRef,
@@ -77,12 +76,10 @@ pub fn encode_projection(projection: &DurableToolProjection) -> Result<Vec<u8>, 
                     }
                 }
                 result.push('}');
-                bounded(&result)?;
             }
             result.push(']');
         }
     }
-    bounded(&result)?;
     Ok(result.into_bytes())
 }
 
@@ -97,19 +94,9 @@ pub fn projection_digest(projection: &DurableToolProjection) -> Result<String, &
     Ok(content_digest(json.as_bytes()))
 }
 
-fn bounded(output: &str) -> Result<(), &'static str> {
-    if output.len() > MAX_ARCHIVE_BYTES {
-        Err("archive body exceeds limit")
-    } else {
-        Ok(())
-    }
-}
 fn string(output: &mut String, value: &str) -> Result<(), &'static str> {
-    if value.len() > MAX_ARCHIVE_BYTES {
-        return Err("archive string exceeds limit");
-    }
     output.push_str(&serde_json::to_string(value).map_err(|_| "invalid string")?);
-    bounded(output)
+    Ok(())
 }
 fn index(key: &str) -> Option<u32> {
     let index = key.parse::<u32>().ok()?;
@@ -167,5 +154,5 @@ fn value_json(
             output.push('}');
         }
     }
-    bounded(output)
+    Ok(())
 }

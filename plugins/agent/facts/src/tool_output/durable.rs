@@ -35,7 +35,6 @@ pub const MAX_RAW_TOOL_RESULT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_RAW_TOOL_RESULT_JSON_DEPTH: usize = 64;
 pub const DURABLE_TOOL_PROJECTION_FAILURE_MESSAGE: &str =
     "The tool completed, but its model-visible result could not be projected safely.";
-const MAX_PROJECTION_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -195,8 +194,7 @@ pub(crate) fn freeze(
             )
         }),
         ToolOutput::Json(value) => {
-            if !json_shape(value, &mut 0, 0) || bounded_encode(value, MAX_PROJECTION_BYTES).is_err()
-            {
+            if !json_shape(value, &mut 0, 0) {
                 None
             } else {
                 Some((
@@ -222,14 +220,12 @@ pub(crate) fn freeze(
             )),
             _ => None,
         },
-        ToolOutput::Text(text) => (text.len() <= MAX_PROJECTION_BYTES).then(|| {
-            (
-                DurableToolProjection::Json {
-                    value: serde_json::json!({"kind":"text","text":text}),
-                },
-                Vec::new(),
-            )
-        }),
+        ToolOutput::Text(text) => Some((
+            DurableToolProjection::Json {
+                value: serde_json::json!({"kind":"text","text":text}),
+            },
+            Vec::new(),
+        )),
         ToolOutput::Model(result) => Some((
             DurableToolProjection::Json {
                 value: serde_json::json!({
@@ -270,7 +266,7 @@ impl DurableToolProjection {
         if !valid {
             return Err("invalid durable tool projection");
         }
-        bounded_encode(self, MAX_PROJECTION_BYTES).map(|_| ())
+        Ok(())
     }
 }
 

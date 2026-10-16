@@ -58,12 +58,15 @@ struct Read {
     revision: u64,
     receiver: mpsc::Receiver<Result<Output, FileError>>,
 }
-pub(super) struct Paste {
+pub(in crate::application) struct Paste {
     context: NativeContext,
     selection: FileSelection,
     batch: Option<Batch>,
     read: Option<Read>,
     dirty: bool,
+    text_target: Option<(PasteTarget, bool)>,
+    text_read: bool,
+    text_error: Option<FileError>,
     #[cfg(test)]
     clipboard: Option<String>,
 }
@@ -81,6 +84,9 @@ impl Paste {
             batch: None,
             read: None,
             dirty: false,
+            text_target: None,
+            text_read: false,
+            text_error: None,
             #[cfg(test)]
             clipboard: None,
         }
@@ -88,6 +94,75 @@ impl Paste {
     #[cfg(test)]
     pub fn set_clipboard_text(&mut self, text: String) {
         self.clipboard = Some(text);
+    }
+    pub fn text(&mut self, editor: &Editor, spaces: bool) {
+        if self.pending() {
+            return;
+        }
+        self.text_target = Some((editor.paste_target(), spaces));
+        self.text_read = true;
+        self.text_error = None;
+        let budget = self.context.budget.clone();
+        #[cfg(test)]
+        if let Some(value) = self.clipboard.take() {
+            return self.spawn(Box::new(move || {
+                let memory = budget.reserve(Kind::Encoded, value.capacity())?;
+                Ok(Output::Clipboard(Content::Text(clipboard::Text {
+                    value,
+                    _memory: memory,
+                })))
+            }));
+        }
+        self.spawn(Box::new(move || {
+            clipboard::read_text(&budget).map(Output::Clipboard)
+        }));
+    }
+    pub fn cancel_text(&mut self) {
+        self.text_target = None;
+    }
+    pub fn poll_text(&mut self, editor: &mut Editor, enabled: bool) {
+        if !enabled {
+            self.cancel_text();
+        }
+        if let Some(error) = self.text_error.take() {
+            editor.error = Some(match error {
+                FileError::BudgetExhausted | FileError::LimitExceeded => {
+                    "Clipboard text exceeds the input limit"
+                }
+                _ => "Clipboard unavailable",
+            });
+        }
+        if !self.text_read {
+            return;
+        }
+        let Some(read) = &self.read else {
+            return;
+        };
+        let result = match read.receiver.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(_) => Err(FileError::WorkerFailed),
+        };
+        self.read = None;
+        self.text_read = false;
+        let Some((target, spaces)) = self.text_target.take() else {
+            return;
+        };
+        match result {
+            Ok(Output::Clipboard(Content::Text(text))) => {
+                let value = if spaces {
+                    text.value
+                        .replace("\r\n", " ")
+                        .replace(['\r', '\n', '\t'], " ")
+                } else {
+                    text.value.clone()
+                };
+                if !editor.paste_at(target, &value) {
+                    editor.error = Some("Paste rejected: input changed or text is invalid");
+                }
+            }
+            _ => editor.error = Some("Clipboard unavailable"),
+        }
     }
     /// The whole paste must classify as local paths. Otherwise native text keeps it.
     pub fn stage(&mut self, text: &str, policy: &FilePastePolicy) -> Option<NativeInput> {
@@ -271,6 +346,12 @@ impl Paste {
         }
     }
     fn fail(&mut self, error: FileError) {
+        if self.text_read {
+            self.text_read = false;
+            self.text_target = None;
+            self.text_error = Some(error);
+            return;
+        }
         if let Some(batch) = &mut self.batch
             && matches!(batch.source, Source::Clipboard { .. })
         {
@@ -359,6 +440,70 @@ impl Paste {
 mod tests {
     use super::*;
     use maka_ui_runtime::budget::{BudgetLimits, NativeBudget};
+    #[test]
+    fn text_only_worker_preserves_target_and_rejects_stale_or_cancelled_insertion() {
+        for change in [
+            "selected", "cursor", "draft", "disabled", "focus", "invalid",
+        ] {
+            let resources = Arc::new(maka_capabilities::call::Resources::default());
+            let budget = NativeBudget::default();
+            let mut paste = Paste::new(NativeContext {
+                checkpoint: None,
+                resources: resources.clone(),
+                budget: budget.clone(),
+            });
+            let mut editor = Editor::default();
+            editor.insert("original");
+            editor.select_all();
+            paste.set_clipboard_text(
+                if change == "invalid" {
+                    "bad\u{1b}"
+                } else {
+                    "/tmp/plain-path\r\n中文"
+                }
+                .into(),
+            );
+            paste.text(&editor, false);
+            match change {
+                "cursor" => {
+                    editor.key(crossterm::event::KeyEvent::new(
+                        crossterm::event::KeyCode::End,
+                        crossterm::event::KeyModifiers::NONE,
+                    ));
+                }
+                "draft" => {
+                    editor.insert("changed");
+                }
+                "focus" => paste.cancel_text(),
+                _ => {}
+            }
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(resources.finish())
+                .unwrap();
+            paste.poll_text(&mut editor, change != "disabled");
+            assert_eq!(
+                editor.text(),
+                match change {
+                    "selected" | "cursor" => "/tmp/plain-path\n中文",
+                    "draft" => "changed",
+                    _ => "original",
+                }
+            );
+            assert_eq!(
+                editor.error.is_some(),
+                matches!(change, "draft" | "invalid")
+            );
+            assert!(
+                paste.observe().is_none(),
+                "text controls cannot publish file observations"
+            );
+            assert!(!paste.pending());
+            assert_eq!(budget.usage(), (0, 0, 0));
+        }
+    }
     fn settled(paste: &mut Paste) -> FilePasteObservation {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {

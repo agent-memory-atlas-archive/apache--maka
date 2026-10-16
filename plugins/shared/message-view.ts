@@ -18,7 +18,7 @@
  */
 
 import type { HistorySource } from '../../packages/plugin-sdk/src/index.js';
-import type { Theme } from './contracts.js';
+import type { Theme, ToolDisplayStatus } from './contracts.js';
 import { copy } from './locale-catalogs/message-view.js';
 import { toolPresentation } from '../agent/tool-details/index.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
@@ -54,7 +54,12 @@ function timeLabel(millis: number | null): string | null {
 }
 
 export function toolLabel(
-  message: { tool: HistorySource['tool']; live?: boolean; waiting?: boolean },
+  message: {
+    tool: HistorySource['tool'];
+    live?: boolean;
+    waiting?: boolean;
+    detailStatus?: ToolDisplayStatus | null;
+  },
   locale: string,
 ) {
   const text = copy(locale);
@@ -81,37 +86,43 @@ export function toolLabel(
   const result = message.tool?.result;
   const settlement = result?.settlement;
   const pending = message.live && message.tool?.call?.pending;
-  const status =
+  const state =
     settlement === 'failed'
-      ? text.toolFailed
+      ? 'failed'
       : settlement === 'rejected'
-        ? text.toolRejected
+        ? 'rejected'
         : settlement === 'unknown'
-          ? text.toolUnknown
+          ? 'unknown'
           : result?.isError
-            ? text.toolReportedError
+            ? 'reportedError'
             : result
-              ? text.toolReturned
+              ? (message.detailStatus ?? (kind ? 'unresolved' : 'returned'))
               : pending
                 ? message.waiting
-                  ? text.waiting
+                  ? 'waiting'
                   : message.tool?.call?.dispatched
-                    ? text.toolDispatched
-                    : text.toolPending
+                    ? 'running'
+                    : 'pending'
                 : message.tool?.call?.dispatched
-                  ? text.toolDispatchedMissing
-                  : text.toolMissing;
-  const tone: 'error' | 'warning' | 'success' | 'accent' =
-    result?.isError || settlement === 'failed' || settlement === 'rejected'
-      ? 'error'
-      : settlement === 'unknown'
-        ? 'warning'
-        : result
-          ? 'success'
-          : !pending || message.waiting
-            ? 'warning'
-            : 'accent';
-  return { name, status, tone };
+                  ? 'unsettled'
+                  : 'missing';
+  const states = {
+    failed: [text.toolFailed, 'error', '!', '×'],
+    rejected: [text.toolRejected, 'error', '!', '×'],
+    unknown: [text.toolUnknown, 'warning', '?', '?'],
+    reportedError: [text.toolReportedError, 'error', '!', '×'],
+    returned: [text.toolReturned, 'success', '+', '•'],
+    unresolved: [text.toolReturned, 'subtle', '.', '•'],
+    succeeded: [text.completed, 'success', '+', '•'],
+    cancelled: [text.toolProcessCancelled, 'warning', '!', '×'],
+    waiting: [text.waiting, 'warning', '?', '◇'],
+    running: [text.toolDispatched, 'accent', '*', '◌'],
+    pending: [text.toolPending, 'accent', '.', '·'],
+    unsettled: [text.toolDispatchedMissing, 'warning', '?', '?'],
+    missing: [text.toolMissing, 'warning', '?', '?'],
+  } as const;
+  const [status, tone, ascii, symbol] = states[state];
+  return { name, status, tone, ascii, symbol };
 }
 
 export function messageView<N extends Node>(
@@ -121,6 +132,10 @@ export function messageView<N extends Node>(
   locale: string,
   message: {
     browse?: { key: string; current: boolean };
+    traceDepth?: number;
+    detailStatus?: ToolDisplayStatus | null;
+    separate?: boolean;
+    separateBefore?: boolean;
     id: string;
     role: HistorySource['role'] | 'thinking';
     timestamp: number | null;
@@ -154,9 +169,9 @@ export function messageView<N extends Node>(
             : message.role === 'failure'
               ? text.findFieldFailure
               : text.toolOutput;
-  const { name, status, tone } = tool
+  const { name, status, tone, ascii, symbol } = tool
     ? toolLabel(message, locale)
-    : { name: null, status: null, tone: 'subtle' as const };
+    : { name: null, status: null, tone: 'subtle' as const, ascii: '*', symbol: '•' };
   const result = message.tool?.result,
     settlement = result?.settlement;
   const time =
@@ -169,15 +184,21 @@ export function messageView<N extends Node>(
       result?.isError ||
       settlement === 'failed' ||
       settlement === 'rejected';
-    const marker = user
+    const marker = tool
       ? theme.ascii
-        ? '>'
-        : '❯'
-      : tool || thinking || failed
+        ? ascii
+        : tone === 'success'
+          ? '·'
+          : symbol
+      : user
         ? theme.ascii
-          ? '*'
-          : '•'
-        : ' ';
+          ? '>'
+          : '❯'
+        : thinking || failed
+          ? theme.ascii
+            ? '*'
+            : '•'
+          : ' ';
     const markerColor = tool
       ? theme[tone]
       : failed
@@ -201,21 +222,44 @@ export function messageView<N extends Node>(
             }
           : {}),
       });
+    const toolControl = {
+      background: 0,
+      align: 'start' as const,
+      text: { ...theme.markdown.body, foreground: theme.muted },
+    };
     const gutter = (rail = false) =>
       ui.box(
         'gutter-' + message.id + (rail ? '-rail' : ''),
         [
-          ui.text(
-            'marker-' + message.id + (rail ? '-rail' : ''),
-            rail ? (theme.ascii ? '|' : '│') : marker,
-            14,
-            rail ? theme.border : markerColor,
-            400,
-            {},
-            !rail && tool ? (status ?? '') : '',
-          ),
+          ...(tool
+            ? [
+                ui.box('indent-' + message.id + (rail ? '-rail' : ''), [], {
+                  terminal: { basis: 2 + 2 * (message.traceDepth ?? 0) },
+                }),
+              ]
+            : []),
+          ...(rail
+            ? expanded && ui.rule
+              ? [ui.rule('rail-' + message.id, 'column')]
+              : []
+            : [
+                ui.text(
+                  'marker-' + message.id,
+                  marker,
+                  14,
+                  markerColor,
+                  400,
+                  {},
+                  tool ? (status ?? '') : '',
+                ),
+              ]),
         ],
-        { terminal: { basis: 2 }, surface: user },
+        {
+          row: true,
+          gap: 0,
+          terminal: { basis: tool ? 4 + 2 * (message.traceDepth ?? 0) : 2 },
+          surface: user,
+        },
       );
     const heading = tool
       ? row('tool-heading-' + message.id, [
@@ -223,14 +267,14 @@ export function messageView<N extends Node>(
           message.toggle
             ? ui.button(
                 message.toggle,
-                compactLabel(name ?? caption, 72),
+                `${expanded ? (theme.ascii ? 'v' : '⌄') : theme.ascii ? '>' : '›'} ${compactLabel(name ?? caption, 72)}`,
                 false,
-                true,
-                { background: 0, align: 'start' },
+                false,
+                toolControl,
                 undefined,
                 expanded ? text.collapseTool : text.expandTool,
               )
-            : ui.text('role-' + message.id, name ?? caption, 14, theme.text, 600),
+            : ui.text('role-' + message.id, name ?? caption, 14, theme.muted),
         ])
       : row(
           'message-body-' + message.id,
@@ -278,7 +322,7 @@ export function messageView<N extends Node>(
         ];
     const hasMenu = !!ui.contextMenu && actions.length > 0;
     const card = ui.box(
-      (hasMenu ? 'message-card-' : 'message-') + message.id,
+      (hasMenu || message.separateBefore ? 'message-card-' : 'message-') + message.id,
       [
         ...(user && !theme.terminal?.terminal
           ? [ui.box('band-top-' + message.id, [], { surface: true, terminal: { basis: 1 } })]
@@ -308,26 +352,26 @@ export function messageView<N extends Node>(
                             visible: expanded,
                             row: true,
                             gap: 1,
-                            surface: true,
                             terminal: { wrap: true },
                           },
                         ),
+                        ...(expanded && message.toggle
+                          ? [
+                              ui.button(
+                                'collapse-' + message.id,
+                                `${theme.ascii ? '^' : '↑'} ${text.collapseTool}`,
+                                false,
+                                false,
+                                toolControl,
+                              ),
+                            ]
+                          : []),
                       ],
-                      { gap: 0, surface: true, terminal: { grow: 1, shrink: true } },
+                      { gap: 0, terminal: { grow: 1, shrink: true } },
                     ),
                   ]),
                 ],
                 { gap: 0, visible: expanded || !!message.structured },
-              ),
-            ]
-          : []),
-        ...(tool && !expanded && !message.structured && message.text
-          ? [
-              ui.text(
-                'summary-' + message.id,
-                '  ' + compactLabel(message.text, 72),
-                14,
-                theme.muted,
               ),
             ]
           : []),
@@ -345,12 +389,28 @@ export function messageView<N extends Node>(
         ...(user && !theme.terminal?.terminal
           ? [ui.box('band-bottom-' + message.id, [], { surface: true, terminal: { basis: 1 } })]
           : []),
+        ...(message.separate
+          ? [ui.box('message-space-' + message.id, [], { terminal: { basis: 1 } })]
+          : []),
       ],
       { gap: 0, surface: user },
     );
-    return hasMenu
-      ? ui.contextMenu!('message-' + message.id, caption, card, actions, text.copy)
+    const content = hasMenu
+      ? ui.contextMenu!(
+          (message.separateBefore ? 'message-menu-' : 'message-') + message.id,
+          caption,
+          card,
+          actions,
+          text.copy,
+        )
       : card;
+    return message.separateBefore
+      ? ui.box(
+          'message-' + message.id,
+          [ui.box('message-space-before-' + message.id, [], { terminal: { basis: 1 } }), content],
+          { gap: 0 },
+        )
+      : content;
   }
   const label = name
     ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24)

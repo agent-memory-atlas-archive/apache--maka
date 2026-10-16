@@ -19,7 +19,6 @@
 
 use crate::{Inner, RunContext, RunError, auto_context, model_attempt, prune};
 use futures_util::FutureExt;
-use maka_agent_facts::context::ModelPurpose;
 use maka_tools::RunTools;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -37,7 +36,6 @@ pub(super) async fn run(
 ) -> Result<maka_agent_facts::event::InvocationOutcome, RunError> {
     let crate::runner::ModelWork {
         tools: catalog,
-        max_steps,
         restored,
     } = work;
     let lane = maka_model::Conversation::default();
@@ -67,8 +65,7 @@ pub(super) async fn run(
             tools.restore(&checkpoint)?;
             compaction = budget;
         }
-        let mut remaining_steps = max_steps;
-        while remaining_steps != Some(0) {
+        loop {
             crate::interactions::wait_until_clear(&inner.log, &input.invocation, cancellation)
                 .await?;
             inner.log.commit_pending_steering(&input.invocation).await?;
@@ -90,7 +87,6 @@ pub(super) async fn run(
                         inner,
                         input,
                         &context,
-                        ModelPurpose::Main,
                         cancellation,
                         continuation_base,
                         &intent.successor_invocation_id,
@@ -107,9 +103,6 @@ pub(super) async fn run(
                     .ok()?;
                     let pause = maka_agent_facts::handoff::HandoffPause {
                         intent,
-                        remaining_steps: remaining_steps.map(|steps| {
-                            std::num::NonZeroU16::new(steps as u16).expect("validated step budget")
-                        }),
                         execution: Box::new(maka_agent_facts::handoff::HandoffExecution {
                             replay,
                             context: input.context.clone(),
@@ -138,7 +131,6 @@ pub(super) async fn run(
             if cancellation.is_cancelled() {
                 return Err(RunError::Cancelled);
             }
-            remaining_steps = remaining_steps.map(|remaining| remaining - 1);
             input.refresh_model(cancellation).await?;
             if tools.code_idle()
                 && pending
@@ -157,7 +149,6 @@ pub(super) async fn run(
                 inner,
                 input,
                 &context,
-                ModelPurpose::Main,
                 cancellation,
                 continuation_base,
                 &input.invocation.invocation_id,
@@ -198,7 +189,6 @@ pub(super) async fn run(
                     inner,
                     input,
                     &context,
-                    ModelPurpose::Main,
                     cancellation,
                     continuation_base,
                     &input.invocation.invocation_id,
@@ -265,7 +255,6 @@ pub(super) async fn run(
                     }),
                 ) if (compaction == CompactionBudget::Available || pending.is_some())
                     && tools.code_idle()
-                    && remaining_steps != Some(0)
                     && !cancellation.is_cancelled() =>
                 {
                     let candidate = match pending.take() {
@@ -307,8 +296,8 @@ pub(super) async fn run(
                 return Ok(maka_agent_facts::event::InvocationOutcome::Completed);
             }
             // An exec/wait observation can settle while its cell is still
-            // asking the user. Pause before advancing or consuming the final
-            // step budget. First settle/reject the entire model tool batch:
+            // asking the user. Pause before advancing. First settle/reject
+            // the entire model tool batch:
             // cancellation must still journal every remaining provider call.
             crate::interactions::wait_until_clear(&inner.log, &input.invocation, cancellation)
                 .await?;
@@ -321,16 +310,12 @@ pub(super) async fn run(
             if request_tools.finished() {
                 return Ok(maka_agent_facts::event::InvocationOutcome::Completed);
             }
-            if remaining_steps != Some(0)
-                && !cancellation.is_cancelled()
-                && lane.needs_confirmation()
-            {
+            if !cancellation.is_cancelled() && lane.needs_confirmation() {
                 let context = model_attempt::read_source(inner, input, prior_unknown).await?;
                 let replay = model_attempt::prompt(
                     inner,
                     input,
                     &context,
-                    ModelPurpose::Main,
                     cancellation,
                     continuation_base,
                     &input.invocation.invocation_id,
@@ -342,11 +327,6 @@ pub(super) async fn run(
                     .await?;
             }
             main_progress = true;
-        }
-        if cancellation.is_cancelled() {
-            Err(RunError::Cancelled)
-        } else {
-            Err(RunError::StepLimit)
         }
     })
     .catch_unwind()

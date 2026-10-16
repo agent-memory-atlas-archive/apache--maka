@@ -54,8 +54,13 @@ impl Manager {
         if request.expected_revision != metadata.source.reference.revision {
             return conflict(metadata.source.reference.revision);
         }
-        self.replace_document(request.expected_revision, request.document, metadata)
-            .await
+        self.replace_document(
+            request.expected_revision,
+            request.document,
+            metadata,
+            Vec::new(),
+        )
+        .await
     }
     pub(super) async fn read_package(&self, input: Value) -> Result<Value> {
         let request: PackageSourceRead =
@@ -86,101 +91,5 @@ impl Manager {
             (None, None)
         };
         serde_json::to_value(PackageSourceChunk { paths, text, next }).map_err(|e| e.to_string())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use maka_event_log::root::{RootNamespaces, RootOwner};
-    use maka_plugin_core::composition::{Environment, Input};
-    use serde_json::json;
-
-    #[tokio::test]
-    async fn text_authoring_uses_original_source_revision_and_package_validation() {
-        let dir = tempfile::tempdir().unwrap();
-        let owner = Arc::new(
-            RootOwner::create(
-                &dir.path().join("root"),
-                &RootNamespaces {
-                    ownership: dir.path().join("owners"),
-                    control: dir.path().join("control"),
-                },
-            )
-            .unwrap(),
-        );
-        let store = Arc::new(EventLog::for_root(owner).await.unwrap());
-        let environment = Environment {
-            location: ExecutionLocation::Host,
-            presentation: None,
-        };
-        let input = Input {
-            environment,
-            instances: BTreeMap::new(),
-            recovery: None,
-            launch: None,
-        };
-        let source = store
-            .commit_application(uuid::Uuid::new_v4(), 0, input.clone(), vec![], vec![])
-            .await
-            .unwrap();
-        let manager = ManagementTarget::from_source(store.clone(), source.clone())
-            .await
-            .unwrap()
-            .0;
-        let files = json!({
-            "maka.extension.json":json!({"schemaVersion":1,"id":"example.footer","application":{"entries":{"host":{"implementation":{"kind":"javascript","module":"host.mjs","realm":"shared"},"configuration":{"type":"object"},"imports":{},"exports":{}}}}}).to_string(),
-            "host.mjs":"export function activate() { return {}; } // 界面"
-        });
-        let installed = manager
-            .install_source(json!({"expectedRevision":1,"files":files}))
-            .await
-            .unwrap();
-        let installed: ManagementResult<PackageInstalled> =
-            serde_json::from_value(installed).unwrap();
-        let ManagementResult::Committed { value } = installed else {
-            panic!("valid package rejected")
-        };
-        assert_eq!(value.source.revision, 2);
-        let read = manager
-            .read_package(
-                json!({"source":value.source,"package":value.package,"path":"host.mjs","offset":0}),
-            )
-            .await
-            .unwrap();
-        assert!(read["text"].as_str().unwrap().ends_with("界面"));
-        let stale = manager
-            .install_source(json!({"expectedRevision":1,"files":files}))
-            .await
-            .unwrap();
-        assert_eq!(stale["status"], "conflict");
-        let invalid = manager
-            .install_source(json!({"expectedRevision":2,"files":{"../outside":"invalid"}}))
-            .await
-            .unwrap();
-        assert_eq!(invalid["status"], "rejected");
-        let mut foreign = value.source.clone();
-        foreign.deployment = uuid::Uuid::new_v4();
-        assert!(
-            manager
-                .read_package(
-                    json!({"source":foreign,"package":value.package,"path":null,"offset":0})
-                )
-                .await
-                .is_err()
-        );
-        let replaced=manager.replace_source(json!({"expectedRevision":2,"document":{"input":input,"remoteExports":[],"packages":[value.package]}})).await.unwrap();
-        assert_eq!(replaced["status"], "committed");
-        assert_eq!(
-            store
-                .read_application_metadata(source.deployment)
-                .await
-                .unwrap()
-                .unwrap()
-                .source
-                .reference
-                .revision,
-            3
-        );
     }
 }

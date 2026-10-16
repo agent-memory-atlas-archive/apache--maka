@@ -47,7 +47,45 @@ use uuid::Uuid;
 
 const MAX_JSON: usize = MAX_DOCUMENT_BYTES;
 
-/// One read transaction captures the source and every immutable byte it selects.
+/// Immutable source, bytes and plan checked together before persistence.
+/// This value carries no Root authority and is not evidence of a committed revision.
+pub struct PreparedApplication {
+    input: Input,
+    observations: Vec<RemoteObservation>,
+    packages: Vec<Package>,
+    plan: Plan,
+}
+impl PreparedApplication {
+    pub fn new(
+        input: Input,
+        observations: Vec<RemoteObservation>,
+        packages: Vec<Package>,
+    ) -> Result<Self, StoreError> {
+        check_document(
+            &input,
+            &observations,
+            packages.iter().map(Package::application_ref).collect(),
+        )?;
+        let plan = validate(&input, &observations, &packages)?;
+        Ok(Self {
+            input,
+            observations,
+            packages,
+            plan,
+        })
+    }
+    pub fn input(&self) -> &Input {
+        &self.input
+    }
+    pub fn remote_exports(&self) -> &[RemoteObservation] {
+        &self.observations
+    }
+    pub fn packages(&self) -> &[Package] {
+        &self.packages
+    }
+}
+
+/// Exact committed source and immutable bytes, checked together with its plan.
 pub struct LoadedDeployment {
     source: Deployment,
     packages: Vec<Package>,
@@ -108,6 +146,10 @@ fn validate(
     observations: &[RemoteObservation],
     bytes: &[Package],
 ) -> Result<Plan, StoreError> {
+    let packages = validate_packages(bytes)?;
+    validate_plan(input, observations, &packages)
+}
+fn validate_packages(bytes: &[Package]) -> Result<Packages, StoreError> {
     let mut packages = Packages::default();
     let mut references = BTreeSet::new();
     for package in bytes {
@@ -120,9 +162,16 @@ fn validate(
             .as_ref()
             .ok_or_else(|| invalid("application declaration required"))?;
         packages
-            .insert(package.application_ref(), declaration.clone())
+            .insert_checked(package.application_ref(), declaration.clone())
             .map_err(|e| invalid(e.to_string()))?;
     }
+    Ok(packages)
+}
+fn validate_plan(
+    input: &Input,
+    observations: &[RemoteObservation],
+    packages: &Packages,
+) -> Result<Plan, StoreError> {
     let mut remote = RemoteExports::new();
     for observation in observations {
         if remote
@@ -135,7 +184,7 @@ fn validate(
             return Err(invalid("duplicate remote capability observation"));
         }
     }
-    Plan::prepare(input, &packages, &remote).map_err(|e| invalid(e.to_string()))
+    Plan::prepare(input, packages, &remote).map_err(|e| invalid(e.to_string()))
 }
 fn check_document(
     input: &Input,
@@ -168,6 +217,47 @@ pub fn validate_application(
     )?;
     validate(input, observations, bytes).map(|_| ())
 }
+
+/// Check several sources against the same immutable package set. Each source
+/// keeps its own document budget, selected packages, observations and plan.
+pub fn prepare_applications(
+    sources: &[(&Input, &[RemoteObservation])],
+    bytes: &[Package],
+) -> Result<Vec<PreparedApplication>, StoreError> {
+    for (input, observations) in sources {
+        // Reject oversized source data before planning. Package references are
+        // counted after selection: other sources' packages are not persisted here.
+        check_document(input, observations, Vec::new())?;
+    }
+    let packages = validate_packages(bytes)?;
+    sources
+        .iter()
+        .map(|(input, observations)| {
+            let plan = validate_plan(input, observations, &packages)?;
+            let required: BTreeSet<_> = plan
+                .instances()
+                .values()
+                .map(|instance| &instance.package)
+                .collect();
+            let selected: Vec<_> = bytes
+                .iter()
+                .filter(|package| required.contains(&package.application_ref()))
+                .cloned()
+                .collect();
+            check_document(
+                input,
+                observations,
+                selected.iter().map(Package::application_ref).collect(),
+            )?;
+            Ok(PreparedApplication {
+                input: (*input).clone(),
+                observations: observations.to_vec(),
+                packages: selected,
+                plan,
+            })
+        })
+        .collect()
+}
 impl EventLog {
     fn application_domain(&self) -> Result<String, StoreError> {
         self.validate_root()?;
@@ -186,18 +276,36 @@ impl EventLog {
         observations: Vec<RemoteObservation>,
         bytes: Vec<Package>,
     ) -> Result<DeploymentRef, StoreError> {
+        let prepared = PreparedApplication::new(input, observations, bytes)?;
+        Ok(self
+            .commit_prepared_application(deployment, expected_revision, prepared)
+            .await?
+            .source
+            .reference)
+    }
+
+    /// A successful COMMIT binds the checked source to this exact live Root owner.
+    /// An unknown COMMIT outcome returns no executable snapshot; callers recover
+    /// using the original durable pending operation and normal storage validation.
+    pub async fn commit_prepared_application(
+        &self,
+        deployment: Uuid,
+        expected_revision: u64,
+        prepared: PreparedApplication,
+    ) -> Result<LoadedDeployment, StoreError> {
         let domain = self.application_domain()?;
         if deployment.is_nil() || expected_revision >= 9_007_199_254_740_991 {
             return Err(invalid("invalid deployment or exhausted revision"));
         }
-        check_document(
-            &input,
-            &observations,
-            bytes.iter().map(Package::application_ref).collect(),
-        )?;
+        let PreparedApplication {
+            input,
+            observations,
+            packages: bytes,
+            plan,
+        } = prepared;
         let encoded = encode(&input, MAX_JSON)?;
         let remote = encode(&observations, MAX_JSON - encoded.len())?;
-        validate(&input, &observations, &bytes)?;
+        let owner = std::sync::Arc::downgrade(self.root_owner.as_ref().expect("owned source Root"));
         let commits = self.commits.clone();
         self.connection.run(move |connection| Box::pin(async move {
             let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
@@ -213,7 +321,7 @@ impl EventLog {
                 .bind(&id).bind(revision as i64).bind(encoded).bind(remote).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO application_deployments VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision")
                 .bind(&id).bind(revision as i64).execute(&mut *tx).await?;
-            for package in bytes {
+            for package in &bytes {
                 let reference = package.application_ref();
                 // Existing immutable content must match as well; never repair corruption by an overwrite.
                 let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM application_packages WHERE id = ? AND revision = ?)")
@@ -234,7 +342,12 @@ impl EventLog {
             }
             tx.commit().await.map_err(StoreError::CommitUnknown)?;
             commits.send_modify(|_| {});
-            Ok(DeploymentRef { state_domain: domain, deployment, revision })
+            let reference = DeploymentRef { state_domain: domain, deployment, revision };
+            let snapshot = SourceSnapshot::new(owner, reference.clone(), input.environment.location, &plan);
+            Ok(LoadedDeployment {
+                source: Deployment { reference, input, remote_exports: observations },
+                packages: bytes, plan, snapshot,
+            })
         })).await
     }
 

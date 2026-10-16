@@ -18,11 +18,44 @@
  */
 
 use super::super::Result;
-use super::super::transport::Catalogue;
+use super::super::transport::{Catalogue, HostEndpoint, NativeGrant};
 use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
+
+/// Persisted trusted-local Host publication and native invocation authority.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Configuration {
+    PublicHost {
+        endpoints: BTreeMap<String, HostEndpoint>,
+        native: Vec<NativeGrant>,
+    },
+}
+impl Configuration {
+    pub fn validate(&self) -> Result<()> {
+        let Self::PublicHost { endpoints, native } = self;
+        if endpoints.is_empty()
+            || endpoints.len() > 128
+            || endpoints
+                .keys()
+                .any(|name| name.is_empty() || name.len() > 256)
+        {
+            return Err("invalid public Host endpoint configuration".into());
+        }
+        for endpoint in endpoints.values() {
+            endpoint.validate()?;
+        }
+        if native.len() > 128 {
+            return Err("maximum 128 native service grants".into());
+        }
+        for grant in native {
+            grant.validate()?;
+        }
+        Ok(())
+    }
+}
 
 pub const VERSION: u32 = 1;
 #[derive(Serialize, Deserialize)]
@@ -38,10 +71,25 @@ pub struct Opening {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Connect,
+    /// Trusted current-account launcher approval; remote principals cannot use it.
+    ConnectPeer {
+        source: DeploymentRef,
+        consumers: BTreeSet<InstanceId>,
+        endpoints: BTreeMap<String, HostEndpoint>,
+    },
     Call {
         session: Uuid,
     },
     Status,
+    Quit {
+        session: Uuid,
+    },
+    /// Current-account owner only. Source/packages remain a separate CAS operation.
+    Configure {
+        source: DeploymentRef,
+        previous: Configuration,
+        configuration: Configuration,
+    },
     Retire {
         #[serde(default)]
         interrupt: bool,
@@ -66,7 +114,14 @@ pub enum Request {
 pub enum Response {
     Connected(Connected),
     Accepted,
+    Epochs(Result<BTreeMap<String, Option<Uuid>>>),
+    Captured(Result<Catalogue>),
+    Approved {
+        source: DeploymentRef,
+        result: Result<()>,
+    },
     Status(Status),
+    Configured(Result<()>),
     Retired(Result<bool>),
     Closed,
     Pairing(Result<super::Pairing>),
@@ -77,6 +132,14 @@ pub enum Response {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionControl {
     Close,
+    Epochs,
+    Capture,
+    Approve {
+        source: DeploymentRef,
+        consumers: BTreeSet<InstanceId>,
+        retain: BTreeSet<u64>,
+        captured: Option<Catalogue>,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

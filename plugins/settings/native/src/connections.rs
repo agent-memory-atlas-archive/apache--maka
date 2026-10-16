@@ -142,29 +142,52 @@ pub(crate) fn providers(input: Value) -> Result<Value, String> {
     }
     let mut providers = Vec::new();
     let mut next = None;
+    let mut provider_bytes = 0;
+    // Include the envelope and largest possible cursor in the byte budget.
+    let envelope_bytes = serde_json::to_vec(&ProvidersPage {
+        providers: Vec::new(),
+        next: Some(usize::MAX),
+    })
+    .map_err(|_| "settings_output_invalid")?
+    .len();
     for (offset, identity) in identities.into_iter().enumerate().skip(input.offset) {
-        let descriptor = definition(&identity)?.descriptor().clone();
-        providers.push(Provider {
+        let provider = definition(&identity)?;
+        let descriptor = provider.descriptor();
+        let summary = ProviderSummary {
             identity,
-            descriptor,
-        });
-        // Include the envelope and largest bounded cursor in the byte budget.
-        let projected = serde_json::to_value(ProvidersPage {
-            providers: Vec::new(),
-            next: Some(offset + 1),
-        })
-        .map_err(|_| "settings_output_invalid")?;
-        let bytes = serde_json::to_vec(&providers)
+            label: descriptor.label.clone(),
+            authentication: descriptor
+                .authentication
+                .iter()
+                .map(|method| ProviderAuthenticationSummary {
+                    label: method.label.clone(),
+                    interactive: method.interactive,
+                })
+                .collect(),
+        };
+        let row_bytes = serde_json::to_vec(&summary)
             .map_err(|_| "settings_output_invalid")?
             .len()
-            + serde_json::to_vec(&projected)
-                .map_err(|_| "settings_output_invalid")?
-                .len();
-        if providers.len() > 8 || bytes > 128 * 1024 {
-            providers.pop();
+            + usize::from(!providers.is_empty());
+        let bytes = provider_bytes + row_bytes + envelope_bytes;
+        if bytes > 128 * 1024 {
+            if providers.is_empty() {
+                return Err("settings_output_budget".into());
+            }
             next = Some(offset);
             break;
         }
+        provider_bytes += row_bytes;
+        providers.push(summary);
     }
     encode(ProvidersPage { providers, next })
+}
+
+pub(crate) fn provider(input: Value) -> Result<Value, String> {
+    let identity = serde_json::from_value(input).map_err(|_| "settings_input_invalid")?;
+    let descriptor = definition(&identity)?.descriptor().clone();
+    encode(Provider {
+        identity,
+        descriptor,
+    })
 }

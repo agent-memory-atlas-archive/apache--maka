@@ -75,7 +75,14 @@ const messages = {
   undo: msg_undo,
   unknown: msg_unknown,
 };
-export const copy = /* @__PURE__ */ createCopy(messages);
+const baseCopy = /* @__PURE__ */ createCopy(messages);
+export const copy = (locale: string) => ({
+  ...baseCopy(locale),
+  unknownCommand: locale.startsWith('zh') ? '没有可用的匹配命令' : 'No matching commands available',
+  commandHint: locale.startsWith('zh')
+    ? '↑↓ 选择 · Enter 选择 · Tab 补全 · Esc 关闭'
+    : '↑↓ select · Enter choose · Tab complete · Esc dismiss',
+});
 export type Copy = ReturnType<typeof copy>;
 
 const terminalMessages = {

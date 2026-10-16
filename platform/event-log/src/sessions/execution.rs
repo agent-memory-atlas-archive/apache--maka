@@ -69,7 +69,8 @@ pub(super) async fn read(
     let opened_at = number(&opening, 2)?;
     let terminal = sqlx::query(
         "SELECT json_extract(event_json, '$.fact.outcome.kind'),
-                catalog_time(json_extract(event_json, '$.recorded_at')) FROM event_log
+                catalog_time(json_extract(event_json, '$.recorded_at')),
+                json_extract(event_json, '$.fact.outcome.outcome.kind') FROM event_log
                 INDEXED BY invocation_boundary
          WHERE invocation_id = ? AND kind IN ('invocation_opened', 'invocation_ended')
          AND kind = 'invocation_ended' ORDER BY sequence DESC LIMIT 1",
@@ -84,6 +85,11 @@ pub(super) async fn read(
             Ok(SessionExecutionState::Ended {
                 recorded_at,
                 status: match kind.as_str() {
+                    "context_compact_finished"
+                        if row.try_get::<Option<String>, _>(2)?.as_deref() == Some("failed") =>
+                    {
+                        Ok(TerminalStatus::Failed)
+                    }
                     "completed" | "context_compact_finished" => Ok(TerminalStatus::Completed),
                     "failed" => Ok(TerminalStatus::Failed),
                     "cancelled" => Ok(TerminalStatus::Cancelled),

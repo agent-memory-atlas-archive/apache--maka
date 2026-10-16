@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { compactQuery, compactSettled } from './compact.js';
 import type {
   Action,
   AgentRecapReceipt,
@@ -80,6 +81,8 @@ function settled(state: State, actions: Action[], request: Mutation, value: unkn
       limit: 1,
     });
     catalog(state);
+  } else if (request.kind === 'compact') {
+    compactSettled(state, actions, request.sessionId, value);
   } else if (request.kind === 'create') {
     const created = value as AgentCreated;
     if (created.kind === 'rejected') {
@@ -302,6 +305,14 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
 }
 
 export function queryFailed(state: State, request: Request) {
+  if (
+    request.kind === 'compactPrompt' ||
+    request.kind === 'compactField' ||
+    request.kind === 'compact'
+  ) {
+    if (state.compact?.sessionId === request.sessionId) state.compact.failed = true;
+    return;
+  }
   // A failed background checkpoint can be retried on the next confirmed result.
   if ((request.kind === 'restorePage' || request.kind === 'restoreReceipt') && !state.restoring) {
     state.restoreAfter = state.restoreThrough;
@@ -425,6 +436,10 @@ export function queryFailed(state: State, request: Request) {
 
 export function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'compactPrompt':
+    case 'compactField':
+      compactQuery(state, actions, request, value);
+      break;
     case 'goalField':
       goalFieldResult(state, actions, request, value);
       break;
@@ -540,6 +555,7 @@ export function querySucceeded(state: State, actions: Action[], request: Request
         observation.session.revision >= state.selected!.revision
       ) {
         state.run = observation.run ?? null;
+        state.compacting = observation.compacting ?? false;
         state.metrics = observation.metrics ?? null;
         state.runThrough = observation.through;
         if (!state.run && state.notice === 'stopping') state.notice = null;

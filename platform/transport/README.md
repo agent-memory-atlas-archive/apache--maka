@@ -21,8 +21,8 @@
 
 [简体中文](README.zh-CN.md)
 
-Connects a foreground UI to independently owned Host deployments over local IPC. The launcher supplies trusted executable paths, connection configuration and method/recovery grants. `connections` owns those connections; `Updates` coordinates approved source changes.
+Connects a foreground UI to independently owned Host deployments over local IPC. The launcher supplies trusted connection configuration and method/recovery grants. Public connections discover a Root-bound Host or ask the trusted CLI launcher to start it; cohosts borrow the UI Store. `connections` owns those connections; `Updates` coordinates approved source changes.
 
-Remote registration data describes available services. It cannot create permission, choose a different caller or retarget an accepted operation. Shutdown waits for the original UI work, Host cleanup and child-process exit.
+Remote registration data describes available services. It cannot create permission, choose a different caller or retarget an accepted operation. Closing the UI waits for its original physical calls and locally owned cohost cleanup. Normal quit asks each public Host to stop if no other session remains, atomically with session admission. Explicit UI-only exit detaches and preserves background work.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

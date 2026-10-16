@@ -25,9 +25,9 @@ mod lifecycle;
 pub mod websocket;
 pub use access::Pairing;
 pub mod protocol;
-pub use client::{Client, LocalCall};
+pub use client::{CallChannelOpener, Client, LocalCall};
 pub use discovery::Registration;
-pub use protocol::{LifecycleMode, Status, VERSION};
+pub use protocol::{Configuration, LifecycleMode, Status, VERSION};
 
 use super::transport::{
     Catalogue, Endpoints, HostEndpoint, NativeGrant, Peer, PeerPolicy, Peers, Server, wire,
@@ -37,7 +37,7 @@ use super::{Application, NativeRegistry, Result};
 use crate::ipc::{LocalListener, LocalStream};
 use access::{Authority, Principal};
 use maka_event_log::EventLog;
-use maka_plugin_core::{composition::InstanceId, deployment::DeploymentRef};
+use maka_plugin_core::deployment::DeploymentRef;
 use protocol::{Connected, Opening, Request, Response, SessionControl};
 use sha2::Digest;
 use std::{
@@ -73,13 +73,12 @@ pub struct Host {
     application: Application,
     store: Arc<EventLog>,
     access: Arc<maka_config::ConfigurationStore>,
-    access_grant: String,
+    access_grant: Mutex<String>,
     access_gate: tokio::sync::Mutex<()>,
     epoch: Uuid,
     source: DeploymentRef,
     policy: Arc<PeerPolicy>,
-    endpoints: Endpoints,
-    consumers: BTreeMap<String, InstanceId>,
+    selections: Mutex<BTreeMap<String, HostEndpoint>>,
     sessions: Mutex<BTreeMap<Uuid, Arc<Session>>>,
     stop: CancellationToken,
     residency: Mutex<lifecycle::Residency>,
@@ -88,6 +87,14 @@ struct Session {
     principal: Principal,
     peer: Arc<Peers>,
     transport: Arc<Server>,
+    mode: SessionMode,
+}
+enum SessionMode {
+    Owned,
+    Peer {
+        source: DeploymentRef,
+        selections: BTreeMap<String, HostEndpoint>,
+    },
 }
 impl Host {
     pub async fn open(
@@ -118,6 +125,25 @@ impl Host {
         grants: Vec<NativeGrant>,
         options: Options,
     ) -> Result<Arc<Self>> {
+        let loaded = store
+            .load_application(deployment)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("deployment not found")?;
+        Self::open_loaded_with_options(store, loaded, native, scripts, selections, grants, options)
+            .await
+    }
+
+    /// Open a checked committed source without rereading its immutable packages.
+    pub async fn open_loaded_with_options(
+        store: Arc<EventLog>,
+        loaded: maka_event_log::applications::LoadedDeployment,
+        native: NativeRegistry,
+        scripts: Option<Arc<dyn super::backend::Factory>>,
+        selections: BTreeMap<String, HostEndpoint>,
+        grants: Vec<NativeGrant>,
+        options: Options,
+    ) -> Result<Arc<Self>> {
         if options.handshake_timeout.is_zero()
             || options.handshake_timeout > Duration::from_secs(300)
             || options
@@ -129,22 +155,18 @@ impl Host {
         }
         let root = store.owned_root().map_err(|error| error.to_string())?;
         let policy = Arc::new(PeerPolicy::with_native_grants(grants)?);
-        let application = Application::start_from_store(
+        let application = Application::start_loaded(
             store.clone(),
-            deployment,
+            loaded,
             with_gateway(native)?,
             policy.issuer(),
             policy.clone(),
             scripts,
-        )
-        .await?;
-        let endpoints = match Endpoints::start(&application.client(), &selections).await {
-            Ok(endpoints) => endpoints,
-            Err(error) => {
-                application.shutdown().await?;
-                return Err(error);
-            }
-        };
+        )?;
+        if let Err(error) = Endpoints::start(&application.client(), &selections).await {
+            application.shutdown().await?;
+            return Err(error);
+        }
         let access = match maka_config::ConfigurationStore::for_root(root.clone()).await {
             Ok(access) => Arc::new(access),
             Err(error) => {
@@ -155,8 +177,14 @@ impl Host {
         let access_grant = format!(
             "application.owner:{:x}",
             sha2::Sha256::digest(
-                serde_json::to_vec(&(application.source(), &selections))
-                    .map_err(|error| error.to_string())?
+                serde_json::to_vec(&(
+                    application.source(),
+                    Configuration::PublicHost {
+                        endpoints: selections.clone(),
+                        native: policy.native_grants(),
+                    }
+                ))
+                .map_err(|error| error.to_string())?
             )
         );
         Ok(Arc::new(Self {
@@ -166,19 +194,65 @@ impl Host {
             application,
             store,
             access,
-            access_grant,
+            access_grant: Mutex::new(access_grant),
             access_gate: tokio::sync::Mutex::new(()),
             policy,
-            endpoints,
             epoch: Uuid::new_v4(),
-            consumers: selections
-                .into_iter()
-                .map(|(name, endpoint)| (name, endpoint.consumer))
-                .collect(),
+            selections: Mutex::new(selections),
             sessions: Mutex::default(),
             stop: CancellationToken::new(),
             residency: Mutex::new(lifecycle::Residency::default()),
         }))
+    }
+    /// This configuration step is durable independently of source replacement.
+    /// The launcher's original pending operation coordinates their retries.
+    async fn configure(
+        &self,
+        source: DeploymentRef,
+        previous: Configuration,
+        configuration: Configuration,
+    ) -> Result<()> {
+        previous.validate()?;
+        configuration.validate()?;
+        if source.state_domain != self.root_id() || source.deployment != self.source.deployment {
+            return Err("foreign Host configuration source".into());
+        }
+        let _gate = self.access_gate.lock().await;
+        if self.stop.is_cancelled() {
+            return Err("Host is closing".into());
+        }
+        let current = Configuration::PublicHost {
+            endpoints: self.selections.lock().unwrap().clone(),
+            native: self.policy.native_grants(),
+        };
+        let current = serde_json::to_value(current).map_err(|error| error.to_string())?;
+        let previous = serde_json::to_value(previous).map_err(|error| error.to_string())?;
+        let desired = serde_json::to_value(&configuration).map_err(|error| error.to_string())?;
+        if current != previous && current != desired {
+            return Err("Host configuration conflicts with current authority".into());
+        }
+        let access_grant = format!(
+            "application.owner:{:x}",
+            sha2::Sha256::digest(
+                serde_json::to_vec(&(Some(&self.source), &configuration))
+                    .map_err(|error| error.to_string())?
+            )
+        );
+        if !self
+            .store
+            .compare_and_set_application_launch_configuration(source, previous, desired)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Err("Host configuration source or persisted authority changed".into());
+        }
+        // No await between durable confirmation and publication of live authority.
+        // Existing sessions retain their captured bindings and accepted jobs.
+        let Configuration::PublicHost { endpoints, native } = configuration;
+        *self.selections.lock().unwrap() = endpoints;
+        self.policy.replace_native_grants(native);
+        *self.access_grant.lock().unwrap() = access_grant;
+        Ok(())
     }
     pub fn root_id(&self) -> &str {
         self.root.root_id()
@@ -319,7 +393,7 @@ impl Host {
         let opening: Opening = tokio::select! {
             biased;
             () = self.stop.cancelled() => return Err("Host is closing".into()),
-            value = tokio::time::timeout(self.options.handshake_timeout, input.read_bounded(4096)) => value.map_err(|_| "Host handshake timed out")??,
+            value = tokio::time::timeout(self.options.handshake_timeout, input.read_bounded(512 * 1024)) => value.map_err(|_| "Host handshake timed out")??,
         };
         if opening.version != VERSION || opening.epoch.is_some_and(|epoch| epoch != self.epoch) {
             return Err("Host protocol or incarnation changed".into());
@@ -331,6 +405,15 @@ impl Host {
                     .await?;
                 drop(gate);
                 wire::write(&mut output, &Response::Status(self.status())).await
+            }
+            Request::Configure {
+                source,
+                previous,
+                configuration,
+            } => {
+                authority.local()?;
+                let result = self.configure(source, previous, configuration).await;
+                wire::write(&mut output, &Response::Configured(result)).await
             }
             Request::PrepareAccess { principal } => {
                 authority.local()?;
@@ -366,42 +449,105 @@ impl Host {
                 let result = self.retire(interrupt, allow_idle_connections).await;
                 wire::write(&mut output, &Response::Retired(result)).await
             }
-            Request::Connect => {
+            Request::Quit { session: id } => {
+                authority.local()?;
+                let session = self.sessions.lock().unwrap().get(&id).cloned();
+                if let Some(session) = session {
+                    session.peer.replace(vec![])?;
+                    session.transport.close().await?;
+                }
+                let stop = {
+                    // Admission and the last-session decision share the same gate.
+                    let _gate = self.access_gate.lock().await;
+                    let mut sessions = self.sessions.lock().unwrap();
+                    sessions.remove(&id);
+                    let stop = sessions.is_empty();
+                    if stop {
+                        self.residency.lock().unwrap().paused = true;
+                        self.stop.cancel();
+                    }
+                    stop
+                };
+                if stop {
+                    self.shutdown().await?;
+                }
+                wire::write(&mut output, &Response::Closed).await
+            }
+            request @ (Request::Connect | Request::ConnectPeer { .. }) => {
                 let gate = self.access_gate.lock().await;
                 let principal = self
                     .identify(&authority, opening.client_instance.as_deref())
                     .await?;
-                let id = Uuid::new_v4();
-                let session = {
-                    let mut sessions = self.sessions.lock().unwrap();
-                    if self.stop.is_cancelled() {
-                        return Err("Host is closing".into());
+                let (mode, peer, endpoints, selections) = match request {
+                    Request::Connect => {
+                        let selections = self.selections.lock().unwrap().clone();
+                        (
+                            SessionMode::Owned,
+                            Peer::new(
+                                self.source.clone(),
+                                selections
+                                    .values()
+                                    .map(|endpoint| endpoint.consumer.clone())
+                                    .collect(),
+                            )?,
+                            Endpoints::capture(&self.application.client(), &selections).await?,
+                            selections,
+                        )
                     }
-                    let session = Arc::new(Session {
-                        principal,
-                        peer: Peers::new(Peer::new(
-                            self.source.clone(),
-                            self.consumers.values().cloned().collect(),
-                        )?),
-                        transport: Server::new(
-                            self.application.client(),
-                            self.policy.clone(),
-                            self.endpoints.clone(),
-                        )?,
-                    });
+                    Request::ConnectPeer {
+                        source,
+                        consumers,
+                        endpoints: selections,
+                    } => {
+                        authority.local()?;
+                        self.check_peer_selections(&selections)?;
+                        let peer = Peer::new(source.clone(), consumers)?;
+                        let endpoints =
+                            Endpoints::capture(&self.application.client(), &selections).await?;
+                        (
+                            SessionMode::Peer {
+                                source,
+                                selections: selections.clone(),
+                            },
+                            peer,
+                            endpoints,
+                            selections,
+                        )
+                    }
+                    _ => unreachable!(),
+                };
+                let id = Uuid::new_v4();
+                let session = Arc::new(Session {
+                    principal,
+                    peer: Peers::new(peer),
+                    transport: Server::new(
+                        self.application.client(),
+                        self.policy.clone(),
+                        endpoints,
+                    )?,
+                    mode,
+                });
+                {
+                    let mut sessions = self.sessions.lock().unwrap();
                     let mut residency = self.residency.lock().unwrap();
-                    if residency.paused {
+                    if residency.paused || self.stop.is_cancelled() {
                         return Err("Host admission is paused".into());
                     }
                     residency.admitted = true;
                     sessions.insert(id, session.clone());
-                    session
-                };
+                }
                 drop(gate);
                 let result = async {
                     let connected = Connected {
-                        version: VERSION, epoch: self.epoch, session: id, source: self.source.clone(),
-                        consumers: self.consumers.clone(), catalogue: Catalogue::captured(&self.endpoints),
+                        version: VERSION,
+                        epoch: self.epoch,
+                        session: id,
+                        source: self.source.clone(),
+                        consumers: selections
+                            .into_iter()
+                            .map(|(name, endpoint)| (name, endpoint.consumer))
+                            .collect(),
+                        catalogue: session.transport.catalogue(),
                     };
                     let response = Response::Connected(connected);
                     tokio::select! {
@@ -409,21 +555,111 @@ impl Host {
                         () = self.stop.cancelled() => return Err("Host is closing".into()),
                         result = wire::write(&mut output, &response) => result?,
                     }
-                    tokio::select! {
-                        biased;
-                        () = self.stop.cancelled() => Ok(()),
-                        () = session.transport.wait_for_close() => Ok(()),
-                        result = input.read::<SessionControl>() => result.map(|SessionControl::Close| ()),
+                    let mut captured = None;
+                    loop {
+                        let command = tokio::select! {
+                            biased;
+                            () = self.stop.cancelled() => break Ok(()),
+                            () = session.transport.wait_for_close() => break Ok(()),
+                            result = input.read::<SessionControl>() => result?,
+                        };
+                        if matches!(command, SessionControl::Close) {
+                            break Ok(());
+                        }
+                        let SessionMode::Peer {
+                            source: origin,
+                            selections,
+                        } = &session.mode
+                        else {
+                            return Err("Host-owned session cannot approve peer sources".into());
+                        };
+                        let response = match command {
+                            SessionControl::Epochs => Response::Epochs(
+                                Endpoints::capture(&self.application.client(), selections)
+                                    .await
+                                    .map(|endpoints| endpoints.epochs()),
+                            ),
+                            SessionControl::Capture => {
+                                captured = None;
+                                let result =
+                                    Endpoints::capture(&self.application.client(), selections)
+                                        .await
+                                        .map(|endpoints| {
+                                            let catalogue = Catalogue::captured(&endpoints);
+                                            captured = Some(endpoints);
+                                            catalogue
+                                        });
+                                let response = Response::Captured(result);
+                                if wire::encode_bounded(&response, wire::FRAME_LIMIT).is_err() {
+                                    captured = None;
+                                    Response::Captured(Err(
+                                        "Host captured catalogue exceeds control frame limit"
+                                            .into(),
+                                    ))
+                                } else {
+                                    response
+                                }
+                            }
+                            SessionControl::Approve {
+                                source,
+                                consumers,
+                                retain,
+                                captured: expected,
+                            } => {
+                                let result = (|| {
+                                    source.validate()?;
+                                    if source.state_domain != origin.state_domain
+                                        || source.deployment != origin.deployment
+                                    {
+                                        return Err("foreign approval deployment".into());
+                                    }
+                                    let approved = if consumers.is_empty() {
+                                        None
+                                    } else {
+                                        Some(Peer::new(source.clone(), consumers)?)
+                                    };
+                                    if approved.is_none() != expected.is_none() {
+                                        return Err(
+                                            "approval requires its captured endpoints".into()
+                                        );
+                                    }
+                                    session.peer.check_update(approved.clone(), &retain)?;
+                                    if let Some(expected) = expected {
+                                        let endpoints = captured
+                                            .take()
+                                            .ok_or("Host endpoints were not captured")?;
+                                        if Catalogue::captured(&endpoints) != expected {
+                                            return Err("Host captured endpoints differ".into());
+                                        }
+                                        session.transport.replace_endpoints(endpoints)?;
+                                    }
+                                    session.peer.update(approved, &retain)
+                                })();
+                                Response::Approved { source, result }
+                            }
+                            SessionControl::Close => unreachable!(),
+                        };
+                        tokio::select! {
+                            biased;
+                            () = self.stop.cancelled() => break Ok(()),
+                            () = session.transport.wait_for_close() => break Ok(()),
+                            result = wire::write(&mut output, &response) => result?,
+                        }
                     }
-                }.await;
+                }
+                .await;
                 // Revocation fences late admissions, then the same transport
                 // drains all original calls before releasing the session.
                 session.peer.replace(vec![])?;
                 session.transport.close().await?;
-                self.sessions.lock().unwrap().remove(&id);
-                if result.is_ok() {
-                    wire::write(&mut output, &Response::Closed).await?;
+                {
+                    let _gate = self.access_gate.lock().await;
+                    self.sessions.lock().unwrap().remove(&id);
                 }
+                // EOF or a partial control frame still requests this same
+                // session's drain. Only the completed cleanup above authorizes
+                // its acknowledgement; writing that acknowledgement may fail.
+                wire::write(&mut output, &Response::Closed).await?;
                 result
             }
             Request::Call { session } => {
@@ -447,12 +683,42 @@ impl Host {
                 drop(gate);
                 wire::write(&mut output, &Response::Accepted).await?;
                 // Carry buffered bytes into the existing bounded transport.
-                session
-                    .transport
-                    .serve_owned(input.inner, output, session.peer.clone())?
-                    .await
+                match &session.mode {
+                    SessionMode::Owned => {
+                        session
+                            .transport
+                            .serve_owned(input.inner, output, session.peer.clone())?
+                            .await
+                    }
+                    SessionMode::Peer { .. } => {
+                        session
+                            .transport
+                            .serve(input.inner, output, session.peer.clone())?
+                            .await
+                    }
+                }
             }
         }
+    }
+    fn check_peer_selections(&self, selections: &BTreeMap<String, HostEndpoint>) -> Result<()> {
+        if selections.is_empty() || selections.len() > 128 {
+            return Err("invalid peer endpoint selections".into());
+        }
+        let published = self.selections.lock().unwrap();
+        for (name, selection) in selections {
+            selection.validate()?;
+            let published = published
+                .get(name)
+                .ok_or("Host endpoint is not published")?;
+            if selection.consumer != published.consumer
+                || selection.import != published.import
+                || !selection.grant.methods.is_subset(&published.grant.methods)
+                || (selection.grant.recovery && !published.grant.recovery)
+            {
+                return Err("peer endpoint exceeds the published Host grant".into());
+            }
+        }
+        Ok(())
     }
     /// Physical transport cleanup precedes Application cleanup and SQL drain.
     /// Errors retain this Host and its original Root for the embedding to hold.

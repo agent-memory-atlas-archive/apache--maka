@@ -23,6 +23,6 @@
 
 Builds the `maka-desktop` executable and owns native windows. It loads a committed Desktop composition, injects the UI JavaScript execution adapter and uses `maka-render-gpui` to present frames. Pages and workflows come from plugin packages.
 
-Build with `just build`, then launch an installed Desktop deployment with `target/debug/maka desktop --root PATH --deployment UUID --connections FILE`. The CLI starts its sibling frontend. Window shutdown waits for native resource release, accepted operations and Host connection cleanup. Platform-specific IME and accessibility behavior needs verification in a real window.
+Build with `just build`, then launch an installed Desktop deployment with `target/debug/maka desktop --root PATH --deployment UUID --connections FILE`. The CLI starts its sibling frontend. Startup connects to the configured local Host or starts it automatically through the sibling `maka` executable. Closing the last window or quitting also stops the Host when no other client remains. Choose “Close UI and Keep Host” from the application menu to keep background tasks running. Platform-specific IME and accessibility behavior needs verification in a real window.
 
 [Source](src/main.rs) · [Cargo manifest](Cargo.toml)

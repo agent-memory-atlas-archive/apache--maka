@@ -82,6 +82,24 @@ impl Surface {
         })
     }
 
+    pub fn summary(
+        adapter: maka_agent_ports::model::Binding,
+        mut composition: RequestComposition,
+        output_budget: u64,
+    ) -> Result<Self, RunError> {
+        composition.max_output_tokens = Some(output_budget);
+        Ok(Self {
+            adapter,
+            max_output_tokens: Some(output_budget),
+            system: composition.system_prompt.clone(),
+            evidence: Arc::new(
+                composition
+                    .freeze()
+                    .map_err(|error| RunError::Internal(error.into()))?,
+            ),
+        })
+    }
+
     pub fn apply(&self, mut history: Vec<Message>) -> Vec<Message> {
         if matches!(history.first(), Some(Message::System { .. })) {
             history.remove(0);

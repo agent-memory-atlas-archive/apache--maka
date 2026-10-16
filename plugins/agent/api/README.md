@@ -23,4 +23,8 @@
 
 Contains Agent, Session, Executor and WorkHub wire declarations, plus the Agent configuration schema. Native services and SDK generation share these definitions. Use this crate when a consumer needs the public contract without pulling in the Agent execution engine.
 
+Independent Desktop clients consume the same persisted Agent service through the Root-bound [public Host client](../../../platform/host-runtime/src/application/host/client.rs); they do not open Agent storage or embed its execution engine. [Agent contracts](src/contract.rs) and [interaction contracts](src/contract_interactions.rs) are the source of field definitions and schemas.
+
+Read `history` pages under one fixed `through` fence and resume `watch` from its last `nextAfter`; watch also publishes queue and pending-interaction updates. `send` admits work and returns its identity; `stop` names that exact invocation. Use `pendingInteractions`, `interaction` and `respond` to reconstruct and answer the original request after reconnecting. Mutations retain their original operation receipts: a lost response does not authorize another send. See [native acceptance](../native/README.md) and [transport ownership and exit modes](../../../platform/transport/README.md).
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

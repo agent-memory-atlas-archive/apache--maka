@@ -374,10 +374,8 @@ impl InputOwner {
             }
         } else {
             self.sequence = command.sequence;
-            let value = match &command.edit {
-                EditorEdit::Replace { text } | EditorEdit::Reset { text } => text.clone(),
-                EditorEdit::Append { text } => format!("{}{text}", self.snapshot.text),
-            };
+            let current = self.snapshot.text.to_string();
+            let value = command.edit.replacement(&current);
             if command.based_on != self.revision {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Revision,
@@ -386,12 +384,22 @@ impl InputOwner {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Composition,
                 }
-            } else if value.len() > self.max_bytes || !representable(&value) {
+            } else if value
+                .as_ref()
+                .is_none_or(|value| value.len() > self.max_bytes || !representable(value))
+            {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Representation,
                 }
             } else {
                 self.state.update(cx, |state, cx| match &command.edit {
+                    EditorEdit::ReplaceRange { range, text } => {
+                        state.set_selected_range(
+                            range.utf8_range(&current).expect("validated range"),
+                            cx,
+                        );
+                        state.replace(text.clone(), window, cx);
+                    }
                     EditorEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
                     EditorEdit::Reset { text } => state.set_value(text.clone(), window, cx),
                     EditorEdit::Append { text } => {

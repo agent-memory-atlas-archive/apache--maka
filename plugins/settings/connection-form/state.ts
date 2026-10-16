@@ -27,6 +27,8 @@ import type {
   RecoveryRef,
   SettingsConnectionDetail,
   SettingsProvider,
+  SettingsProviderSummary,
+  Identity,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { type Search } from '../search.js';
 import { type Copy } from './locale.js';
@@ -71,6 +73,7 @@ export interface Field {
 
 export type Request =
   | { kind: 'providers'; offset: number }
+  | { kind: 'provider'; identity: Identity }
   | { kind: 'read'; field: FieldName; captured: EditorObservation; attempt: number }
   | { kind: 'mutate' }
   | { kind: 'receipt'; reference: RecoveryRef }
@@ -86,7 +89,7 @@ export interface State extends PageState {
   baseline: Detail | null;
   catalogRevision: number;
   provider: SettingsProvider | null;
-  providers: SettingsProvider[];
+  providers: SettingsProviderSummary[];
   search: Search;
   providerActive: number;
   providerGroup: string | null;

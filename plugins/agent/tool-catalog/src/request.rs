@@ -40,6 +40,11 @@ pub enum BoundTool {
         handler: Arc<dyn ToolPreparer>,
         description: String,
     },
+    /// A request-scoped model input projection; execution retains its registered binding.
+    Input {
+        handler: Arc<dyn ToolPreparer>,
+        schema: serde_json::Value,
+    },
     Provider(ProviderTool),
 }
 pub type BindingFuture =
@@ -101,21 +106,39 @@ impl ToolCatalog {
                 let entries = Arc::make_mut(&mut self.entries);
                 let entry = entries.get(&name).expect("selected entry");
                 let mut registration = entry.registration.clone();
-                let projection = if let BoundTool::Described {
-                    handler,
-                    description,
-                } = projection
-                {
-                    if description.trim().is_empty() || description.len() > 16 * 1024 {
-                        return Err(ToolError::Failed("request tool description invalid".into()));
+                let mut validator = entry.validator.clone();
+                let projection = match projection {
+                    BoundTool::Described {
+                        handler,
+                        description,
+                    } => {
+                        if description.trim().is_empty() || description.len() > 16 * 1024 {
+                            return Err(ToolError::Failed(
+                                "request tool description invalid".into(),
+                            ));
+                        }
+                        registration.definition.description = description;
+                        BoundTool::Prepared(handler)
                     }
-                    registration.definition.description = description;
-                    BoundTool::Prepared(handler)
-                } else {
-                    projection
+                    BoundTool::Input { handler, schema } => {
+                        if schema != registration.definition.input_schema {
+                            validator = Arc::new(
+                                jsonschema::options()
+                                    .offline()
+                                    .should_validate_formats(false)
+                                    .build(&schema)
+                                    .map_err(|e| ToolError::Failed(e.to_string()))?,
+                            );
+                            registration.definition.input_schema = schema;
+                        }
+                        BoundTool::Prepared(handler)
+                    }
+                    projection => projection,
                 };
                 match projection {
-                    BoundTool::Described { .. } => unreachable!("description already applied"),
+                    BoundTool::Described { .. } | BoundTool::Input { .. } => {
+                        unreachable!("projection already applied")
+                    }
                     BoundTool::Unavailable => {
                         entries.remove(&name);
                         continue;
@@ -146,7 +169,7 @@ impl ToolCatalog {
                     Arc::new(RegisteredTool {
                         always_visible: entry.always_visible,
                         registration,
-                        validator: entry.validator.clone(),
+                        validator,
                         bytes,
                     }),
                 );

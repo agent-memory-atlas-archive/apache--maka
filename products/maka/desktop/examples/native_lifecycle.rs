@@ -17,9 +17,14 @@
  * under the License.
  */
 
-//! Live macOS probe of the production launcher, native quit selector and Host close.
-//! Run with a fresh evidence directory and optionally `fail`; create `release`
-//! after `closing` appears. Failed close intentionally remains fenced until killed.
+//! Live macOS probe of native quit and public Host cleanup.
+//! Run with a fresh evidence directory and optionally `fail`, `keep`, or `sql`.
+//! Default native quit closes the last Host session: wait for `closing`, then
+//! create `release`; confirmed Host cleanup writes `closed`, `host_stopped`.
+//! The external driver verifies UI exit and Root release before writing `ui_process_exited`.
+//! Failed cleanup retains the Host and Root until killed. `keep` invokes the native
+//! "Close UI and Keep Host" menu: `ui_process_exited` precedes Host cleanup; create
+//! `close_host`, wait for `closing`, then create `release`. SQL uses `release_sql`.
 #[cfg(target_os = "macos")]
 #[allow(dead_code)]
 #[path = "../src/main.rs"]
@@ -116,12 +121,17 @@ mod probe {
                 .nth(2)
                 .ok_or("probe directory required")?,
         );
-        let fail = std::env::args_os().nth(3).is_some_and(|a| a == "fail");
+        let deployment: uuid::Uuid = std::env::args()
+            .nth(3)
+            .ok_or("Host deployment required")?
+            .parse()?;
+        let fail = std::env::args_os().nth(4).is_some_and(|a| a == "fail");
         let mut native = NativeRegistry::default();
+        let resource_directory = directory.clone();
         native.insert(
             "probe.File".into(),
             Arc::new(move |_, _| {
-                let directory = directory.clone();
+                let directory = resource_directory.clone();
                 Box::pin(async move {
                     let file = std::fs::File::create(directory.join("native-resource"));
                     let error = file.as_ref().err().map(ToString::to_string);
@@ -151,16 +161,70 @@ mod probe {
             .worker_threads(1)
             .enable_all()
             .build()?;
-        timer.block_on(maka_transport::transport::process::serve(
-            native,
-            Some(maka_host_js::factory(Default::default())),
-        ))?;
-        Ok(())
+        timer.block_on(async {
+            use maka_host_runtime::{application::host::Host, ipc::LocalListener};
+            use std::os::unix::fs::PermissionsExt;
+            let namespaces = RootNamespaces::for_current_account()?;
+            let owner = Arc::new(RootOwner::open(&directory.join("host"), &namespaces)?);
+            let store = Arc::new(EventLog::for_root(owner).await?);
+            let host = Host::open(
+                store.clone(),
+                deployment,
+                native,
+                Some(maka_host_js::factory(Default::default())),
+                endpoints()?,
+                vec![],
+            )
+            .await?;
+            let socket_directory = tempfile::Builder::new()
+                .prefix("maka-probe-")
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir_in("/tmp")?;
+            let address = socket_directory.path().join("h.sock");
+            let listener = LocalListener::bind(&address)
+                .map_err(|error| error as Box<dyn std::error::Error>)?;
+            let registration = host.publish_registration(&address, None)?;
+            let stop = tokio_util::sync::CancellationToken::new();
+            let shutdown = stop.clone();
+            let signal = directory.clone();
+            tokio::spawn(async move {
+                while !signal.join("close_host").is_file() {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                shutdown.cancel();
+            });
+            std::fs::write(directory.join("host_ready"), std::process::id().to_string())?;
+            if let Err(error) = host.serve_local(listener, stop).await {
+                eprintln!("public Host cleanup unconfirmed: {error}");
+                // Retain the actual Host, SQL worker, registration and Root after
+                // a failed close; process exit is not a cleanup acknowledgement.
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    if host.shutdown().await.is_ok() {
+                        break;
+                    }
+                }
+            }
+            registration.remove()?;
+            drop(host);
+            drop(store);
+            std::fs::write(
+                directory.join("host_stopped"),
+                b"public Host cleanup confirmed",
+            )?;
+            Result::<(), Box<dyn std::error::Error>>::Ok(())
+        })
+    }
+    fn endpoints() -> Result<BTreeMap<String, maka_transport::HostEndpoint>, serde_json::Error> {
+        serde_json::from_value(json!({
+            "business":{"consumer":fixture::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},
+            "receipts":{"consumer":fixture::identity(13),"import":"receipts","grant":{"methods":["read"],"recovery":true}}
+        }))
     }
     pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         if std::env::args_os()
             .nth(1)
-            .is_some_and(|a| a == "application-host")
+            .is_some_and(|a| a == "public-host")
         {
             return host();
         }
@@ -171,7 +235,8 @@ mod probe {
         );
         std::fs::create_dir(&directory)?;
         let mode = std::env::args().nth(2);
-        let fail = mode.as_deref() == Some("fail");
+        let fail = matches!(mode.as_deref(), Some("fail" | "keep-fail"));
+        let keep = matches!(mode.as_deref(), Some("keep" | "keep-fail"));
         let sql = mode.as_deref() == Some("sql");
         let timer = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -209,10 +274,39 @@ mod probe {
         } else {
             std::fs::write(
                 &path,
-                serde_json::to_vec(
-                    &json!({"hosts":[{"name":"local","location":{"kind":"process","root":directory.join("host")},"deployment":host,"endpoints":{"business":{"consumer":fixture::identity(13),"import":"business","grant":{"methods":["read","write"],"recovery":false}},"receipts":{"consumer":fixture::identity(13),"import":"receipts","grant":{"methods":["read"],"recovery":true}}}}]}),
-                )?,
+                serde_json::to_vec(&json!({"hosts":[{
+                    "name":"local",
+                    "location":{"kind":"public","root":directory.join("host")},
+                    "deployment":host,
+                    "endpoints":endpoints()?
+                }]}))?,
             )?;
+        }
+        if !sql {
+            let mut command = std::process::Command::new(std::env::current_exe()?);
+            command
+                .arg("public-host")
+                .arg(&directory)
+                .arg(host.to_string())
+                .stdin(std::process::Stdio::null());
+            if fail {
+                command.arg("fail");
+            }
+            // This fixture starts the independently owned service. The Desktop
+            // launcher only discovers it and never receives its process handle.
+            let mut child = command.spawn()?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !directory.join("host_ready").is_file() {
+                if let Some(status) = child.try_wait()? {
+                    return Err(format!("public Host startup failed: {status}").into());
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill()?;
+                    child.wait()?;
+                    return Err("public Host startup timed out".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
         }
         let launcher = desktop::Launcher::start(
             desktop::Args {
@@ -220,14 +314,6 @@ mod probe {
                 deployment: caller,
                 connections: Some(path),
             },
-            maka_transport::HostExecutable::new(
-                std::env::current_exe()?,
-                vec![
-                    "application-host".into(),
-                    directory.clone().into_os_string(),
-                    if fail { "fail".into() } else { "ok".into() },
-                ],
-            )?,
             maka_render_gpui::registry(),
         )?;
         if sql {
@@ -278,13 +364,44 @@ mod probe {
                     let windows: *mut objc2::runtime::AnyObject = msg_send![app, windows];
                     let count: usize = msg_send![windows, count];
                     if count > 0 && !signal.join("requested").exists() {
-                        std::fs::write(
-                            signal.join("requested"),
-                            b"native terminate requested with a real window",
-                        )
-                        .unwrap();
-                        let _: () =
-                            msg_send![app,terminate:std::ptr::null_mut::<objc2::runtime::AnyObject>()];
+                        if keep {
+                            let active: objc2::runtime::Bool = msg_send![app, isActive];
+                            let key: *mut objc2::runtime::AnyObject = msg_send![app, keyWindow];
+                            if !active.as_bool() || key.is_null() {
+                                return;
+                            }
+                            // Invoke the actual native menu action, including its
+                            // explicit KeepHost mode and ordinary cleanup path.
+                            let menu: *mut objc2::runtime::AnyObject = msg_send![app, mainMenu];
+                            let item: *mut objc2::runtime::AnyObject = msg_send![menu, itemAtIndex:0usize];
+                            let menu: *mut objc2::runtime::AnyObject = msg_send![item, submenu];
+                            let _: () = msg_send![menu, update];
+                            let count: usize = msg_send![menu, numberOfItems];
+                            let mut invoked = false;
+                            for index in 0..count {
+                                let item: *mut objc2::runtime::AnyObject = msg_send![menu, itemAtIndex:index];
+                                let title: *mut objc2::runtime::AnyObject = msg_send![item, title];
+                                let title: *const std::ffi::c_char = msg_send![title, UTF8String];
+                                if std::ffi::CStr::from_ptr(title).to_bytes() == b"Close UI and Keep Host" {
+                                    let enabled: objc2::runtime::Bool = msg_send![item, isEnabled];
+                                    assert!(enabled.as_bool(), "native Keep Host menu action disabled");
+                                    let action: objc2::runtime::Sel = msg_send![item, action];
+                                    let target: *mut objc2::runtime::AnyObject = msg_send![item, target];
+                                    // Use Cocoa's menu action/responder routing and
+                                    // verify delivery, rather than assuming a menu
+                                    // item lookup proves its action was invoked.
+                                    let sent: objc2::runtime::Bool = msg_send![app, sendAction: action, to: target, from: item];
+                                    assert!(sent.as_bool(), "native Keep Host menu action was not dispatched");
+                                    std::fs::write(signal.join("requested"), b"native Keep Host menu action dispatched").unwrap();
+                                    invoked = true;
+                                    break;
+                                }
+                            }
+                            assert!(invoked, "native Keep Host menu action missing");
+                        } else {
+                            std::fs::write(signal.join("requested"), b"native terminate requested with a real window").unwrap();
+                            let _: () = msg_send![app,terminate:std::ptr::null_mut::<objc2::runtime::AnyObject>()];
+                        }
                     }
                     if signal.join("request_again").is_file() {
                         std::fs::remove_file(signal.join("request_again")).unwrap();
@@ -294,6 +411,8 @@ mod probe {
                 });
             }
         });
+        // Cocoa termination may exit the process without returning from run.
+        // The external driver verifies actual process exit and released Root.
         launcher.run()
     }
 }

@@ -37,16 +37,8 @@ pub(super) fn title(method: &str, input: &Value) -> maka_agent_facts::display::T
             "重設電腦操作環境",
         );
     }
-    if let Some(value) = input["title"].as_str() {
-        let mut value = value.split_whitespace().collect::<Vec<_>>().join(" ");
-        value.retain(|c| {
-            !c.is_control() && !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-        });
-        value.truncate(value.floor_char_boundary(value.len().min(256)));
-        let title = Text::plain(value);
-        if title.validate().is_ok() {
-            return title;
-        }
+    if let Some(title) = input["title"].as_str().and_then(Text::single_line) {
+        return title;
     }
     Text::localized("Use computer", "操作电脑", "操作電腦")
 }

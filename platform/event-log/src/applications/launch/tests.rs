@@ -211,3 +211,168 @@ async fn product_baseline_and_connections_publish_atomically_with_completion() {
     assert_eq!(current.pending, Some(vec![9]));
     store.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn host_configuration_cas_checks_source_and_original_authority_on_retries() {
+    let (_directory, store) = crate::applications::tests::store().await;
+    let deployment = Uuid::new_v4();
+    let source = store
+        .commit_application(
+            deployment,
+            0,
+            crate::applications::tests::input(),
+            vec![],
+            vec![],
+        )
+        .await
+        .unwrap();
+    let previous = json!({"kind":"public_host","native":[],"endpoints":{"old":true}});
+    let desired = json!({"kind":"public_host","native":[],"endpoints":{"new":true}});
+    store
+        .begin_application_launch(Launch {
+            deployment,
+            configuration: previous.clone(),
+            pending: Some(vec![1]),
+        })
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .compare_and_set_application_launch_configuration(
+                source.clone(),
+                previous.clone(),
+                desired.clone()
+            )
+            .await
+            .unwrap()
+    );
+    store.complete_application_launch(deployment).await.unwrap();
+    assert!(
+        !store
+            .compare_and_set_application_launch_configuration(
+                source.clone(),
+                json!({"foreign":true}),
+                desired.clone()
+            )
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .compare_and_set_application_launch_configuration(
+                source.clone(),
+                previous.clone(),
+                desired.clone()
+            )
+            .await
+            .unwrap()
+    );
+    // The same desired authority is an idempotent retry at this exact source.
+    assert!(
+        store
+            .compare_and_set_application_launch_configuration(
+                source.clone(),
+                previous.clone(),
+                desired.clone()
+            )
+            .await
+            .unwrap()
+    );
+    let newer = store
+        .commit_application(
+            deployment,
+            1,
+            crate::applications::tests::input(),
+            vec![],
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert!(
+        !store
+            .compare_and_set_application_launch_configuration(source, previous, desired.clone())
+            .await
+            .unwrap()
+    );
+    let latest = json!({"kind":"public_host","native":[],"endpoints":{"latest":true}});
+    assert!(
+        store
+            .compare_and_set_application_launch_configuration(newer, desired, latest.clone())
+            .await
+            .unwrap()
+    );
+    let record = store.application_launch().await.unwrap().unwrap();
+    assert_eq!(record.configuration, latest);
+    assert!(record.pending.is_none());
+    store.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn committed_selection_requires_current_source_and_never_overwrites_selection() {
+    let (_directory, store) = crate::applications::tests::store().await;
+    let deployment = Uuid::new_v4();
+    let original = store
+        .commit_application(
+            deployment,
+            0,
+            crate::applications::tests::input(),
+            vec![],
+            vec![],
+        )
+        .await
+        .unwrap();
+    let mut missing = original.clone();
+    missing.deployment = Uuid::new_v4();
+    assert!(
+        store
+            .select_committed_application_launch(missing, json!({}))
+            .await
+            .is_err()
+    );
+    let current = store
+        .commit_application(
+            deployment,
+            1,
+            crate::applications::tests::input(),
+            vec![],
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .select_committed_application_launch(original, json!({}))
+            .await
+            .is_err()
+    );
+    assert!(store.application_launch().await.unwrap().is_none());
+    let configuration = json!({"trusted":"committed"});
+    store
+        .select_committed_application_launch(current.clone(), configuration.clone())
+        .await
+        .unwrap();
+    let selected = store.application_launch().await.unwrap().unwrap();
+    assert_eq!(selected.deployment, deployment);
+    assert_eq!(selected.configuration, configuration);
+    assert!(selected.pending.is_none());
+    assert!(
+        store
+            .select_committed_application_launch(current.clone(), json!({"replacement":true}))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .application_launch()
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration,
+        configuration
+    );
+    assert_eq!(
+        store.application_head(deployment).await.unwrap(),
+        Some(current)
+    );
+    store.close().await.unwrap();
+}

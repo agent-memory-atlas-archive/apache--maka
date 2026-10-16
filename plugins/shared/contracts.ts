@@ -86,6 +86,7 @@ export interface Theme {
   markdown: MarkdownAppearance;
 }
 export interface Message {
+  compaction?: { durationMs: number };
   pending?: boolean;
   id: string;
   // Stable message field/byte-segment identity, including the streaming prefix.
@@ -131,7 +132,8 @@ export interface ModelSetup {
   catalogEpoch: number;
   kind: 'loading' | 'unavailable' | 'connect' | 'choose';
 }
-export interface ToolFileContext {
+export type ToolDisplayStatus = 'succeeded' | 'failed' | 'running' | 'cancelled' | 'unknown';
+export interface ToolDetailsContext {
   sessionId: string;
   through: number;
   toolUseId: string;
@@ -139,6 +141,8 @@ export interface ToolFileContext {
   call: number | null;
   result: number | null;
   path: string | null;
+  status: ToolDisplayStatus | null;
+  expandable: boolean;
 }
 export interface TimelineFileContext {
   sessionId: string;
@@ -331,7 +335,16 @@ export interface ComposerSent {
   dataSource: AgentDataSource;
   attachments: string[];
 }
+export interface ComposerCommand {
+  id: string;
+  command: string;
+  label: string;
+  disabled: boolean;
+}
 export interface ComposerProps {
+  skillContext?: string;
+  commands?: ComposerCommand[];
+  approvalPending?: boolean;
   backend: ComposerBackend | null;
   sendLabel?: string;
   dataSource: AgentDataSource | null;
@@ -404,7 +417,8 @@ const messageSchema = object(
     pending: { type: 'boolean' },
     id: string,
     contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
-    role: { enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result'] },
+    role: { enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result', 'compaction'] },
+    compaction: object({ durationMs: { type: 'integer', minimum: 0, maximum: 9007199254740991 } }),
     timestamp: {
       anyOf: [{ type: 'integer', minimum: 0, maximum: 9007199254740991 }, { type: 'null' }],
     },
@@ -839,7 +853,7 @@ export const toolDetailsContract = component(
     ['theme', 'locale', 'context', 'tool', 'expanded', 'focusOnPointer'],
   ),
   {
-    fileContext: object({
+    context: object({
       sessionId: string,
       through: { type: 'integer', minimum: 1 },
       toolUseId: string,
@@ -847,6 +861,8 @@ export const toolDetailsContract = component(
       call: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
       result: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
       path: filePath,
+      status: { enum: ['succeeded', 'failed', 'running', 'cancelled', 'unknown', null] },
+      expandable: { type: 'boolean' },
     }),
   },
 );
@@ -1145,6 +1161,7 @@ export const composerFooterContract = component(
     sessionId: { anyOf: [string, { type: 'null' }] },
     dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },
     running: { type: 'boolean' },
+    compacting: { type: 'boolean' },
     metrics: { anyOf: [{ $ref: '#/$defs/AgentSessionMetrics' }, { type: 'null' }] },
     theme: { $ref: '#/$defs/Theme' },
     locale,
@@ -1168,6 +1185,18 @@ export const composerContract = component(
   'maka.agent.Composer',
   object(
     {
+      skillContext: string,
+      approvalPending: { type: 'boolean' },
+      commands: {
+        type: 'array',
+        maxItems: 32,
+        items: object({
+          id: string,
+          command: string,
+          label: string,
+          disabled: { type: 'boolean' },
+        }),
+      },
       backend: composerBackend,
       sendLabel: string,
       context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },
@@ -1223,6 +1252,9 @@ export const composerContract = component(
         dataSource: { $ref: '#/$defs/AgentDataSource' },
         attachments: { type: 'array', maxItems: 8, items: string },
       }),
+    ),
+    command: withDefs(
+      object({ context: string, dataSource: { $ref: '#/$defs/AgentDataSource' }, id: string }),
     ),
     setup: object({ context: string }),
     readiness: withDefs({

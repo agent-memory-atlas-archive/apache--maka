@@ -22,7 +22,7 @@ use super::{CellRect, Placement, Presenter};
 use maka_plugin_core::runtime::Mount;
 use ratatui::{
     buffer::Buffer,
-    layout::{Rect, Size},
+    layout::{Position, Rect, Size},
     style::{Color, Modifier, Style},
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -169,6 +169,8 @@ fn paint_button(
 #[derive(Clone)]
 pub(super) enum TargetKind {
     Hint,
+    /// Keep an existing focus anchor while a button awaits an operation result.
+    Disabled,
     SelectionCopy {
         text: std::rc::Rc<str>,
     },
@@ -278,9 +280,11 @@ impl Target {
 /// A pending scene is not input geometry until the embedding confirms a flush.
 /// 绘制成功并完成实际 flush 后，才发布对应的命中区域。
 pub struct PaintedScene {
+    cursor: Option<(Option<super::dialog::Scope>, Position)>,
     next_frame: Option<std::time::Instant>,
     tooltip: Option<(Option<super::dialog::Scope>, Placement, String, Style)>,
     pub(super) viewport: Rect,
+    pub(super) editor_menu: Option<std::rc::Weak<()>>,
     pub(super) targets: Vec<Target>,
     pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
     focus_offers: Vec<(TargetIdentity, Target)>,
@@ -295,6 +299,19 @@ pub struct PaintedScene {
     openings: Vec<super::dialog::Scope>,
     pub(super) input_path: Vec<super::dialog::Scope>,
     pub(super) foreground_path: Vec<super::dialog::Scope>,
+}
+
+impl PaintedScene {
+    /// The focused editor's physical cursor, used by terminal IME positioning.
+    pub fn cursor_position(&self) -> Option<Position> {
+        self.cursor
+            .as_ref()
+            .filter(|(scope, _)| {
+                self.editor_menu.is_none()
+                    && super::dialog::same_scope(scope, &self.foreground_path.last().cloned())
+            })
+            .map(|(_, position)| *position)
+    }
 }
 
 struct PaintedMount {
@@ -474,6 +491,19 @@ impl Slots<'_> {
                     owner: std::rc::Rc::downgrade(&owner.identity),
                 },
             );
+        Ok(())
+    }
+    /// Keep the physical cursor in the same output transaction as its editor.
+    pub fn native_cursor(&mut self, position: Option<Position>) -> maka_ui_runtime::Result<()> {
+        if !self.focused() {
+            return Ok(());
+        }
+        let scene = self.scene.as_deref_mut().ok_or_else(|| {
+            maka_ui_runtime::Error::Invalid("cannot position cursor while measuring".into())
+        })?;
+        scene.cursor = position
+            .filter(|position| scene.viewport.contains(*position))
+            .map(|position| (scene.input_scope.clone(), position));
         Ok(())
     }
     pub fn native_geometry(
@@ -686,9 +716,11 @@ impl Presenter {
                 .fg(Color::Rgb(235, 235, 240)),
         );
         let mut scene = PaintedScene {
+            cursor: None,
             next_frame: None,
             tooltip: None,
             viewport: area,
+            editor_menu: None,
             targets: Vec::new(),
             focus_offers: Vec::new(),
             placed: Default::default(),
@@ -723,31 +755,46 @@ impl Presenter {
             && super::dialog::same_scope(scope, &scene.foreground_path.last().cloned())
             && area.height > 1
         {
-            let width = (sanitize(hint).width() as u16)
+            let width = sanitize(hint)
+                .lines()
+                .map(UnicodeWidthStr::width)
+                .max()
+                .unwrap_or(0)
                 .saturating_add(2)
-                .min(area.width);
+                .min(usize::from(area.width.min(80))) as u16;
+            let padding = u16::from(width > 2);
+            let rows = lines(hint, width.saturating_sub(padding * 2));
+            let below = area.bottom().saturating_sub(anchor.visible().bottom());
+            let above = anchor.visible().y.saturating_sub(area.y);
+            let height = rows.len().min(usize::from(below.max(above))) as u16;
             let x = anchor.visible().x.min(area.right().saturating_sub(width));
-            let y = if anchor.visible().bottom() < area.bottom() {
+            let y = if height <= below {
                 anchor.visible().bottom()
             } else {
-                anchor.visible().y.saturating_sub(1).max(area.y)
+                anchor.visible().y.saturating_sub(height).max(area.y)
             };
-            let tooltip: Placement = Rect::new(x, y, width, 1).into();
-            buffer.set_stringn(
-                x,
-                y,
-                " ".repeat(usize::from(width)),
-                usize::from(width),
-                *style,
-            );
-            paint_button(
-                &truncated_line(hint, width.saturating_sub(2)),
-                tooltip,
-                buffer,
-                *style,
-                None,
-            );
+            // Tooltips wrap so explanations remain readable on narrow terminals.
+            // Reverse video keeps passive text hints distinct from the page below.
+            let style = style.add_modifier(Modifier::REVERSED);
+            for (row, line) in rows.iter().take(usize::from(height)).enumerate() {
+                let y = y + row as u16;
+                buffer.set_stringn(
+                    x,
+                    y,
+                    " ".repeat(usize::from(width)),
+                    usize::from(width),
+                    style,
+                );
+                buffer.set_stringn(
+                    x + padding,
+                    y,
+                    line,
+                    usize::from(width.saturating_sub(padding * 2)),
+                    style,
+                );
+            }
         }
+        self.paint_editor_menu(area, buffer, &mut scene);
         scene.next_frame = cache.next_frame.get();
         Ok(scene)
     }
@@ -835,6 +882,8 @@ impl Presenter {
                 self.resources
                     .present(&pending.mount, &pending.owner, pending.geometry);
             }
+            self.present_editor_menu(scene.editor_menu.as_ref());
+            self.viewport = scene.viewport;
             self.scene = scene.targets;
             return;
         }
@@ -951,9 +1000,22 @@ impl Presenter {
             .or(restored)
             .or(reading_focus)
             .or_else(|| {
-                self.focus
-                    .take()
-                    .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned())
+                self.focus.take().and_then(|old| {
+                    scene
+                        .targets
+                        .iter()
+                        .find(|new| {
+                            new.same(&old)
+                                || (matches!(
+                                    (&new.kind, &old.kind),
+                                    (TargetKind::Disabled, TargetKind::Action { .. })
+                                        | (TargetKind::Action { .. }, TargetKind::Disabled)
+                                ) && new.mount == old.mount
+                                    && new.key == old.key
+                                    && std::rc::Rc::ptr_eq(&new.owner, &old.owner))
+                        })
+                        .cloned()
+                })
             })
             .or_else(|| {
                 scene
@@ -988,6 +1050,8 @@ impl Presenter {
             }
         }
         self.keyboard = scene.keyboard;
+        self.present_editor_menu(scene.editor_menu.as_ref());
+        self.viewport = scene.viewport;
         self.scene = scene.targets;
         if frames_current {
             let mounts: Vec<_> = scene
@@ -1638,22 +1702,23 @@ impl Presenter {
                 if let Some(background) = background {
                     style = style.bg(color(*background));
                 }
-                if *disabled {
-                    style = style.add_modifier(Modifier::DIM);
-                    paint_button(&label, button_area, buffer, style, *align);
-                    return Ok(());
-                }
                 let target = Target {
-                    kind: match focus_child {
-                        Some(child) => TargetKind::Focus(self.freeze_focus_child(mount, child)?),
-                        None => TargetKind::Action {
-                            copy_text: copy_text.as_deref().map(Into::into),
-                        },
+                    kind: if *disabled {
+                        TargetKind::Disabled
+                    } else {
+                        match focus_child {
+                            Some(child) => {
+                                TargetKind::Focus(self.freeze_focus_child(mount, child)?)
+                            }
+                            None => TargetKind::Action {
+                                copy_text: copy_text.as_deref().map(Into::into),
+                            },
+                        }
                     },
                     ancestors: scene.ancestry.clone(),
                     revision: self.application.frame(mount)?.revision,
                     area: button_area,
-                    tab_index: 0,
+                    tab_index: if *disabled { -1 } else { 0 },
                     autofocus: false,
                     identity: TargetIdentity {
                         mount: mount.clone(),
@@ -1672,6 +1737,12 @@ impl Presenter {
                         scope: scene.input_scope.clone(),
                     },
                 };
+                if *disabled {
+                    style = style.add_modifier(Modifier::DIM);
+                    paint_button(&label, button_area, buffer, style, *align);
+                    scene.targets.push(target);
+                    return Ok(());
+                }
                 if !target.keyboard_reachable() {
                     return Ok(());
                 }
@@ -1894,12 +1965,20 @@ impl Presenter {
                     let thumb = (height * height / u64::from(viewport.content)).max(1);
                     let top =
                         u64::from(offset) * (height - thumb) / u64::from(viewport.end().max(1));
+                    let ascii = border.is_some_and(|border| {
+                        border.style == maka_ui_runtime::scene::terminal::BorderStyle::Ascii
+                    });
                     for y in 0..bar.visible().height {
                         let row = bar.visible().y + y;
                         let logical = (i64::from(row) - inner.y) as u64;
                         let active = (top..top + thumb).contains(&logical);
                         buffer[(bar.visible().x, row)]
-                            .set_char(if active { '█' } else { '│' })
+                            .set_char(match (ascii, active) {
+                                (true, true) => '#',
+                                (true, false) => '|',
+                                (false, true) => '┃',
+                                (false, false) => '│',
+                            })
                             .set_style(Style::default().fg(if active {
                                 Color::Gray
                             } else {

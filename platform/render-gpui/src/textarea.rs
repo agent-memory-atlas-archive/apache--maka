@@ -19,7 +19,7 @@
 
 use super::editing::{NativeSnapshot, TextSnapshot};
 use super::{LiveInput, Slots, Widget};
-use gpui_kit::base::input::{InputBase, RopeExt, TextareaState};
+use gpui_kit::base::input::{InlineToken, InputBase, RopeExt, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use maka_ui_runtime::{
@@ -51,6 +51,7 @@ pub struct TextareaOwner {
     open_menu: Option<menu::OpenMenu>,
     _menu_input: Option<Subscription>,
     submit: Option<SubmitKey>,
+    navigation: Option<EditorNavigation>,
     _keyboard: Option<Subscription>,
     checkpoint: Option<maka_ui_runtime::checkpoint::EditorCheckpoint>,
     persistence: Option<maka_ui_runtime::checkpoint::EditorPersistence>,
@@ -97,6 +98,18 @@ impl TextareaOwner {
                 cx,
             );
             state.set_value(props.initial_text.clone(), window, cx);
+            state
+                .set_literal_tokens(
+                    props
+                        .inline_tokens
+                        .iter()
+                        .map(|text| InlineToken::new(text.clone(), text.clone()))
+                        .collect(),
+                    cx,
+                )
+                .expect("validated inline literals");
+            install_token_style(&mut state, &props.appearance);
+
             state.set_placeholder(props.placeholder.clone(), window, cx);
             state.set_context_menu_enabled(props.menu.is_some());
             // Entity references release before GPUI reclaims their values.
@@ -144,6 +157,7 @@ impl TextareaOwner {
                 open_menu: None,
                 _menu_input: None,
                 submit: props.submit,
+                navigation: props.navigation.clone(),
                 _keyboard: None,
                 checkpoint,
                 persistence: props.persistence.clone(),
@@ -185,16 +199,56 @@ impl TextareaOwner {
         let weak = owner.downgrade();
         let window_id = window.window_handle().window_id();
         let keyboard = cx.intercept_keystrokes(move |event, window, cx| {
-            if event.keystroke.key != "enter" || window.window_handle().window_id() != window_id {
+            if window.window_handle().window_id() != window_id
+                || !matches!(
+                    event.keystroke.key.as_str(),
+                    "up" | "down" | "enter" | "tab" | "escape"
+                )
+            {
                 return;
             }
-            let Ok(Some((input, observation))) = weak.update(cx, |owner, cx| {
+            let Ok(Some((input, key, value))) = weak.update(cx, |owner, cx| {
                 if !window
                     .input_focus_is_admitted(owner.state.read(cx).presentation().focus_handle())
                 {
                     return None;
                 }
+                if !owner.visible || !owner.accepts_text_input(window, cx) {
+                    return None;
+                }
+                owner.refresh(false, window, cx);
+                let observation = EditorObservation {
+                    revision: owner.revision,
+                    snapshot: owner.observation_snapshot(),
+                    receipt: owner.receipt.clone(),
+                };
                 let modifiers = &event.keystroke.modifiers;
+                if !modifiers.modified()
+                    && owner
+                        .navigation
+                        .as_ref()
+                        .is_some_and(|navigation| navigation.matches(&observation))
+                {
+                    let key = match event.keystroke.key.as_str() {
+                        "up" => Some(EditorNavigationKey::Up),
+                        "down" => Some(EditorNavigationKey::Down),
+                        "enter" => Some(EditorNavigationKey::Enter),
+                        "tab" => Some(EditorNavigationKey::Tab),
+                        "escape" => Some(EditorNavigationKey::Escape),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        return Some((
+                            owner.input.clone(),
+                            "navigate",
+                            serde_json::to_value(EditorNavigated { key, observation })
+                                .expect("native navigation"),
+                        ));
+                    }
+                }
+                if event.keystroke.key != "enter" {
+                    return None;
+                }
                 let matches = match owner.submit {
                     Some(SubmitKey::Enter) => !modifiers.modified(),
                     Some(SubmitKey::ControlEnter) => {
@@ -227,11 +281,8 @@ impl TextareaOwner {
                 owner.input.current.borrow().as_ref()?;
                 Some((
                     owner.input.clone(),
-                    EditorObservation {
-                        revision: owner.revision,
-                        snapshot: owner.observation_snapshot(),
-                        receipt: owner.receipt.clone(),
-                    },
+                    "submit",
+                    serde_json::to_value(observation).expect("native submit observation"),
                 ))
             }) else {
                 return;
@@ -239,16 +290,8 @@ impl TextareaOwner {
             window.prevent_default();
             cx.stop_propagation();
             // Leave the entity borrow before the original component dispatch.
-            if input
-                .capture_input(
-                    "submit",
-                    serde_json::to_value(observation).expect("native submit observation"),
-                    window,
-                    cx,
-                )
-                .is_err()
-            {
-                eprintln!("editor submit rejected");
+            if input.capture_input(key, value, window, cx).is_err() {
+                eprintln!("editor keyboard event rejected");
             }
         });
         owner.update(cx, |owner, cx| {
@@ -423,6 +466,7 @@ impl TextareaOwner {
         // This synchronous barrier is authoritative for command admission.
         self.refresh(false, window, cx);
         self.submit = props.submit;
+        self.navigation.clone_from(&props.navigation);
         let appearance_changed = self.projection.data != props.appearance;
         if appearance_changed {
             self.projection = super::appearance::TextareaProjection::new(&props.appearance);
@@ -444,6 +488,17 @@ impl TextareaOwner {
                 self.projection.apply(state);
                 cx.notify();
             }
+            state
+                .set_literal_tokens(
+                    props
+                        .inline_tokens
+                        .iter()
+                        .map(|text| InlineToken::new(text.clone(), text.clone()))
+                        .collect(),
+                    cx,
+                )
+                .expect("validated inline literals");
+            install_token_style(state, &props.appearance);
             state.set_readonly(
                 props.read_only
                     || self
@@ -479,6 +534,8 @@ impl TextareaOwner {
             }
         } else {
             self.sequence = command.sequence;
+            let current = self.snapshot.text.to_string();
+            let value = command.edit.replacement(&current);
             if command.based_on != self.revision {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Revision,
@@ -495,19 +552,22 @@ impl TextareaOwner {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Composition,
                 }
-            } else if match &command.edit {
-                EditorEdit::Replace { text } | EditorEdit::Reset { text } => text.len() > 65536,
-                EditorEdit::Append { text } => {
-                    text.len() > 65536
-                        || self.snapshot.text.len().saturating_add(text.len())
-                            > maka_ui_runtime::textarea::MAX_BUFFER_BYTES
-                }
-            } {
+            } else if value
+                .as_ref()
+                .is_none_or(|value| value.len() > maka_ui_runtime::textarea::MAX_BUFFER_BYTES)
+            {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Representation,
                 }
             } else {
                 self.state.update(cx, |state, cx| match &command.edit {
+                    EditorEdit::ReplaceRange { range, text } => {
+                        state.set_selected_range(
+                            range.utf8_range(&current).expect("validated range"),
+                            cx,
+                        );
+                        state.replace(text.clone(), window, cx);
+                    }
                     EditorEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
                     EditorEdit::Reset { text } => state.set_value(text.clone(), window, cx),
                     EditorEdit::Append { text } => {
@@ -1051,6 +1111,7 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
                     maka_ui_runtime::checkpoint::observation_schema(),
                 ),
                 ("submit".into(), observation_schema()),
+                ("navigate".into(), navigation_schema()),
             ]),
             vec![],
         )?
@@ -1072,4 +1133,25 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
             )]))
         })
         .expect("unique native editor");
+}
+
+fn install_token_style(
+    state: &mut TextareaState,
+    appearance: &maka_ui_runtime::appearance::TextareaAppearance,
+) {
+    let foreground = super::appearance::color(appearance.text.foreground);
+    let background = super::appearance::color(appearance.selection);
+    state.install_token_presentation(
+        Some(Rc::new(move |token, _, _| {
+            div()
+                .px(px(4.))
+                .rounded(px(4.))
+                .bg(background)
+                .text_color(foreground)
+                .child(token.token().label().clone())
+                .into_any_element()
+        })),
+        None,
+        false,
+    );
 }

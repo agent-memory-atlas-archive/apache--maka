@@ -58,6 +58,7 @@ interface State {
   query: string;
   queryError: 'long' | 'unavailable' | null;
   pending: Request | null;
+  submitted: EditorTextRef | null;
   source: AgentSessionPage | null;
   scanOffset: number;
   matches: AgentSession[];
@@ -131,6 +132,7 @@ function capture(state: State, choice: Choice | null = null): Action[] {
   const basis = state.observation?.snapshot.text;
   if (!basis || state.pending?.kind === 'text') return [];
   if (basis.bytes > 1024) {
+    state.submitted = null;
     state.queryError = 'long';
     return [];
   }
@@ -171,12 +173,19 @@ function page(state: State, position: AgentList['position']): Action[] {
   ];
 }
 function resume(state: State, props: PaletteProps): Action[] {
+  if (
+    !interactive(state, props) ||
+    state.queryError ||
+    !sameText(state.submitted, state.observation?.snapshot.text ?? null)
+  )
+    state.submitted = null;
   if (!interactive(state, props) || state.pending || state.queryError) return [];
   if (dirty(state)) return capture(state);
-  if (!state.query || state.failed || state.matches.length >= state.matchLimit) return [];
-  if (!state.source) return page(state, { kind: 'start' });
   const active = rows(state, props)[state.active]?.key;
   while (
+    state.query &&
+    !state.failed &&
+    state.source &&
     state.scanOffset < state.source.sessions.length &&
     state.matches.length < state.matchLimit
   ) {
@@ -190,12 +199,30 @@ function resume(state: State, props: PaletteProps): Action[] {
       state.matches.push(session);
   }
   if (rows(state, props)[state.active]?.key !== active) reveal(state, props);
+  if (state.submitted) {
+    const row = rows(state, props)[state.active];
+    if (row) {
+      state.submitted = null;
+      // Clipboard admission belongs to the physical input, not a later reply.
+      if (
+        enabled(state, props, row.choice) &&
+        !(row.choice.kind === 'command' && row.choice.command.copyText)
+      )
+        return capture(state, row.choice);
+    }
+  }
+  if (!state.query || state.failed || state.matches.length >= state.matchLimit) {
+    state.submitted = null;
+    return [];
+  }
+  if (!state.source) return page(state, { kind: 'start' });
   if (state.matches.length < state.matchLimit && state.source.after)
     return page(state, {
       kind: 'after',
       revision: state.source.revision,
       cursor: state.source.after,
     });
+  state.submitted = null;
   return [];
 }
 function hasMore(state: State) {
@@ -362,6 +389,7 @@ function frame<N extends Node>(
   return out;
 }
 function close(state: State) {
+  state.submitted = null;
   if (state.pending?.kind === 'text') state.pending.choice = null;
 }
 export function palette<N extends Node>(
@@ -379,6 +407,7 @@ export function palette<N extends Node>(
         query: '',
         queryError: null,
         pending: null,
+        submitted: null,
         source: null,
         scanOffset: 0,
         matches: [],
@@ -446,11 +475,15 @@ export function palette<N extends Node>(
         if (request.kind === 'text') {
           if (!sameText(request.basis, state.observation?.snapshot.text ?? null))
             actions.push(...resume(state, props));
-          else if (result.status !== 'succeeded') state.queryError = 'unavailable';
-          else {
+          else if (result.status !== 'succeeded') {
+            state.submitted = null;
+            state.queryError = 'unavailable';
+          } else {
             const query = (result.value as TextChunk).text.trim();
-            if ([...query].length > 256) state.queryError = 'long';
-            else if (request.choice) {
+            if ([...query].length > 256) {
+              state.submitted = null;
+              state.queryError = 'long';
+            } else if (request.choice) {
               if (enabled(state, props, request.choice) && query === state.query) {
                 close(state);
                 events.push(
@@ -470,12 +503,16 @@ export function palette<N extends Node>(
           }
         } else if (request.query !== state.query || dirty(state))
           actions.push(...resume(state, props));
-        else if (result.status !== 'succeeded') state.failed = true;
-        else {
+        else if (result.status !== 'succeeded') {
+          state.submitted = null;
+          state.failed = true;
+        } else {
           const next = result.value as AgentSessionPage;
           // Never merge a replacement catalog with the current search batch.
-          if (state.source && state.source.revision !== next.revision) state.failed = true;
-          else {
+          if (state.source && state.source.revision !== next.revision) {
+            state.submitted = null;
+            state.failed = true;
+          } else {
             state.source = next;
             state.scanOffset = 0;
             actions.push(...resume(state, props));
@@ -495,6 +532,10 @@ export function palette<N extends Node>(
         } else if (input.name === 'submitted') {
           const row = rows(state, props)[state.active];
           if (row && enabled(state, props, row.choice)) choose(row.choice);
+          else if (interactive(state, props) && !state.queryError) {
+            state.submitted = state.observation?.snapshot.text ?? null;
+            actions.push(...resume(state, props));
+          }
         }
       } else if (input.kind === 'raw') {
         if (input.key === 'close') {

@@ -41,6 +41,16 @@ const provider = {
     ],
   },
 };
+function summary(provider) {
+  return {
+    identity: provider.identity,
+    label: provider.descriptor.label,
+    authentication: provider.descriptor.authentication.map(({ label, interactive }) => ({
+      label,
+      interactive,
+    })),
+  };
+}
 const target = {
   connectionId: 'connection-a',
   revision: 7,
@@ -223,8 +233,10 @@ for (const platform of ['tui', 'desktop']) {
       ...provider,
       descriptor: { ...provider.descriptor, anonymous: true, authentication: [] },
     };
-    c.reply(c.action('providers'), { providers: [anonymous], next: null });
+    c.reply(c.action('providers'), { providers: [summary(anonymous)], next: null });
     c.event({ kind: 'component', child: 'provider-query', name: 'submitted', event: {} });
+    assert.deepEqual(c.action('provider').input, identity);
+    c.reply(c.action('provider'), anonymous);
     assert.deepEqual(c.state.provider, anonymous);
     assert.equal(c.state.fields.endpoint.enabled, true);
   });
@@ -232,11 +244,11 @@ for (const platform of ['tui', 'desktop']) {
     const c = await client('connection-form', platform);
     c.reply(c.action('providers'), {
       providers: [
-        {
+        summary({
           ...provider,
           identity: { ...identity, name: 'other' },
           descriptor: { ...provider.descriptor, label: 'Other', authentication: [] },
-        },
+        }),
       ],
       next: 1,
     });
@@ -252,7 +264,7 @@ for (const platform of ['tui', 'desktop']) {
       metadata: { owner: 'provider-query', revision: 2, bytes: 5 },
       text: 'oauth',
     });
-    c.reply(second, { providers: [provider], next: null });
+    c.reply(second, { providers: [summary(provider)], next: null });
     assert.equal(c.state.providers.length, 2);
     assert.equal(c.state.search.query, 'oauth');
     if (platform === 'tui') {
@@ -260,19 +272,92 @@ for (const platform of ['tui', 'desktop']) {
       assert.equal(c.state.provider, null);
     }
     c.raw('provider-1');
+    assert.deepEqual(c.action('provider').input, identity);
+    c.reply(c.action('provider'), provider);
     assert.deepEqual(c.state.provider.identity, identity);
     assert.equal(c.state.fields.endpoint.enabled, false);
   });
   test(`${platform} a visible provider stays clickable while search or catalog reads are pending`, async () => {
     const c = await client('connection-form', platform);
-    c.reply(c.action('providers'), { providers: [provider], next: 1 });
+    c.reply(c.action('providers'), { providers: [summary(provider)], next: 1 });
     const next = c.action('providers');
     c.query('provider-query', 1, 'chatgpt');
     assert.ok(c.action('read'));
     c.raw('provider-0');
-    assert.deepEqual(c.state.provider.identity, identity);
-    c.reply(next, { providers: [], next: 2 });
+    const selected = c.action('provider');
+    assert.deepEqual(selected.input, identity);
+    c.reply(next, { providers: [summary(provider)], next: 2 });
     assert.equal(c.action('providers'), undefined, 'selection stops unnecessary catalog scanning');
+    c.reply(selected, provider);
+    assert.deepEqual(c.state.provider.identity, identity);
+  });
+  test(`${platform} provider detail keeps exact identity and ignores superseded selections`, async () => {
+    const c = await client('connection-form', platform);
+    const other = {
+      identity: {
+        ...identity,
+        packageId: 'other.package',
+        entryId: 'other.entry',
+      },
+      descriptor: {
+        ...provider.descriptor,
+        label: 'Other subscription',
+        customEndpoint: true,
+        configurationDefaults: {
+          baseUrl: 'https://other.example/api',
+          mode: 'custom',
+        },
+        configurationSchema: {
+          type: 'object',
+          properties: { mode: { type: 'string' } },
+        },
+      },
+    };
+    c.reply(c.action('providers'), {
+      providers: [summary(provider), summary(other)],
+      next: null,
+    });
+    c.raw('provider-0');
+    const first = c.action('provider');
+    assert.equal(first.binding, 'authentication');
+    c.raw('provider-1');
+    const second = c.action('provider');
+    assert.deepEqual(second.input, other.identity);
+    c.reply(first, provider);
+    assert.equal(c.state.provider, null);
+    c.reply(second, provider);
+    assert.equal(
+      c.state.provider,
+      null,
+      'a same-name provider from another package cannot substitute',
+    );
+    assert.equal(c.state.providersFailed, true);
+    c.raw('provider-1');
+    c.reply(c.action('provider'), other);
+    assert.deepEqual(c.state.provider, other);
+    assert.equal(c.state.fields.endpoint.enabled, true);
+  });
+  test(`${platform} provider detail cannot initialize a changed connection form`, async () => {
+    const c = await client('connection-form', platform);
+    c.reply(c.action('providers'), {
+      providers: [summary(provider)],
+      next: null,
+    });
+    c.raw('provider-0');
+    const selected = c.action('provider');
+    c.update({
+      connection: {
+        kind: 'ready',
+        target,
+        name: 'Changed',
+        enabled: true,
+        enabledModelCount: 0,
+      },
+    });
+    c.reply(selected, provider);
+    assert.equal(c.state.provider, null);
+    assert.equal(c.state.fields.name.enabled, false);
+    assert.match(JSON.stringify(c.out.frame.view), /changed/u);
   });
   test(`${platform} connections append one catalog revision and restart changed scans`, async () => {
     const c = await client('connections', platform);
@@ -389,8 +474,9 @@ for (const platform of ['tui', 'desktop']) {
     const c = await client('connection-form', platform, {
       existingSlugs: ['chatgpt', 'chatgpt-2'],
     });
-    c.reply(c.action('providers'), { providers: [provider], next: null });
+    c.reply(c.action('providers'), { providers: [summary(provider)], next: null });
     c.raw('provider-0');
+    c.reply(c.action('provider'), provider);
     assert.equal(c.state.defaultSlug, 'chatgpt-3');
     assert.equal(c.state.fields.name.enabled, true);
     assert.equal(c.state.fields.slug.enabled, true);

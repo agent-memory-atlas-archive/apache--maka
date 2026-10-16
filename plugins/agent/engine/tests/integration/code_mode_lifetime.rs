@@ -95,7 +95,6 @@ fn input(
                 handler: ToolHandler::Immediate(effect),
             }])
             .unwrap(),
-            max_steps: Some(1),
         },
     }
 }
@@ -331,9 +330,6 @@ async fn verify_yielded(continuation: bool) {
         CodeExecutor::new(CellLimits::default()).unwrap(),
     );
     let mut request = input(&base, "yielded", effect.clone());
-    if let maka_agent_engine::RunWork::Message { max_steps, .. } = &mut request.work {
-        *max_steps = Some(3);
-    }
     if continuation {
         use maka_agent_facts::event::EventWrite;
         use maka_agent_facts::event::InvocationInput;
@@ -377,10 +373,7 @@ async fn verify_yielded(continuation: bool) {
             .await
             .unwrap()
             .unwrap();
-        let maka_agent_engine::RunWork::Message {
-            tools, max_steps, ..
-        } = request.work
-        else {
+        let maka_agent_engine::RunWork::Message { tools, .. } = request.work else {
             unreachable!()
         };
         request.work = maka_agent_engine::RunWork::Continuation {
@@ -390,7 +383,6 @@ async fn verify_yielded(continuation: bool) {
                 digest: prefix.digest,
             },
             tools,
-            max_steps,
         };
     }
     engine.run(request, CancellationToken::new()).await.unwrap();

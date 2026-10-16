@@ -49,7 +49,7 @@ mod automatic;
 
 #[tokio::test]
 async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
-    for mode in ["accepted", "interrupted", "failed"] {
+    for mode in ["accepted", "rejected", "interrupted", "failed"] {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("events.sqlite");
         let log = EventLog::open(&path).await.unwrap();
@@ -160,6 +160,7 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
             .await
             .unwrap()
             .unwrap();
+        assert!(running.compacting);
         let root = running.root_turn.unwrap();
         assert_eq!(root.invocation, compact);
         assert!(matches!(root.input, InvocationInput::ContextCompact { .. }));
@@ -174,10 +175,14 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
                 .is_empty()
         );
         let delivery = log
-            .session_stream_events("session", old_end.sequence, delta.sequence, 1, 1)
+            .session_stream_events("session", old_end.sequence, delta.sequence, 1, 4096)
             .await
             .unwrap();
-        assert!(delivery.events.is_empty());
+        assert_eq!(delivery.events.len(), 1);
+        assert!(matches!(
+            delivery.events[0].fact,
+            StreamFact::ContextChanged
+        ));
         assert!(delivery.next_after.is_none());
         assert_eq!(delivery.through_sequence, delta.sequence);
         assert!(
@@ -187,7 +192,7 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
         );
         assert_eq!(transcript(&db), old_rows);
         let outcome = match mode {
-            "accepted" => {
+            "accepted" | "rejected" => {
                 hidden(
                     &log,
                     &mut view,
@@ -200,8 +205,14 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
                 .await;
                 hidden(&log, &mut view, &compact, accepted(&secret)).await;
                 InvocationOutcome::ContextCompactFinished {
-                    outcome: CompactOutcome::Unchanged {
-                        reason: "fixture".into(),
+                    outcome: if mode == "rejected" {
+                        CompactOutcome::Failed {
+                            reason: "output_length".into(),
+                        }
+                    } else {
+                        CompactOutcome::Unchanged {
+                            reason: "fixture".into(),
+                        }
                     },
                 }
             }
@@ -226,7 +237,11 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
                 message: None,
             },
         };
-        let status = outcome.status();
+        let status = if mode == "rejected" {
+            maka_agent_facts::event::TerminalStatus::Failed
+        } else {
+            outcome.status()
+        };
         let terminal = hidden(
             &log,
             &mut view,
@@ -242,6 +257,7 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
             .unwrap()
             .unwrap();
         assert!(ended.active_streams.is_empty());
+        assert!(!ended.compacting);
         assert!(
             matches!(ended.root_turn.unwrap().state, InvocationState::Ended {
             event_id, outcome: actual
@@ -255,15 +271,21 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
         );
         assert_eq!(ended.session.last_message, previous.last_message);
         let page = log
-            .session_stream_events("session", old_end.sequence, terminal.sequence, 1, 4096)
+            .session_stream_events("session", old_end.sequence, terminal.sequence, 32, 4096)
             .await
             .unwrap();
-        assert_eq!(page.events.len(), 1);
+        assert_eq!(page.events.len(), if mode == "failed" { 2 } else { 3 });
+        let (terminal_event, changes) = page.events.split_last().unwrap();
+        assert!(
+            changes
+                .iter()
+                .all(|event| matches!(event.fact, StreamFact::ContextChanged))
+        );
         assert!(matches!(
-            page.events[0].fact,
-            StreamFact::InvocationEnded { .. }
+            terminal_event.fact,
+            StreamFact::InvocationEnded { failed, .. } if failed == matches!(mode, "failed" | "rejected")
         ));
-        assert_eq!(page.events[0].id, terminal.event.id);
+        assert_eq!(terminal_event.id, terminal.event.id);
         assert!(page.next_after.is_none());
         assert_eq!(page.through_sequence, terminal.sequence);
         assert!(

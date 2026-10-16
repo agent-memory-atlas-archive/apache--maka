@@ -21,7 +21,7 @@ mod install;
 mod product;
 mod serve;
 
-pub(crate) use product::{Launch, Roots, open_host};
+pub(crate) use product::{Launch, Roots, open_host, select_committed_host};
 
 use std::{
     io::Read,
@@ -66,7 +66,7 @@ pub(super) enum Command {
     Commit(Commit),
     /// Read and validate the persisted source and every selected package.
     Read(ReadSource),
-    /// Own a shared Host with inherited bootstrap/control and private IPC calls.
+    /// Serve an existing deployment as an independent public Host.
     Serve(serve::Serve),
 }
 
@@ -210,7 +210,18 @@ impl Command {
                     .transpose()?
                     .unwrap_or_default();
                 let store = Arc::new(open_store(args.root).await?);
-                run_tui(store, args.deployment, configuration, None).await?;
+                let loaded = match store.load_application(args.deployment).await {
+                    Ok(Some(loaded)) => loaded,
+                    Ok(None) => {
+                        store.drain().await;
+                        return Err("UI deployment not found".into());
+                    }
+                    Err(error) => {
+                        store.drain().await;
+                        return Err(error.into());
+                    }
+                };
+                run_tui(store, loaded, configuration, None, Vec::new()).await?;
             }
         }
         Ok(())
@@ -241,7 +252,7 @@ impl Check {
                 .application
                 .as_ref()
                 .ok_or("package has no application declaration")?;
-            packages.insert(package.application_ref(), declaration.clone())?;
+            packages.insert_checked(package.application_ref(), declaration.clone())?;
         }
         let mut remote = RemoteExports::new();
         for observation in observations {
@@ -288,36 +299,34 @@ async fn open_store(root: PathBuf) -> Result<maka_event_log::EventLog, HostError
 
 async fn run_tui(
     store: Arc<maka_event_log::EventLog>,
-    deployment: uuid::Uuid,
+    loaded: maka_event_log::applications::LoadedDeployment,
     configuration: maka_transport::Configuration,
     startup: Option<maka_render_terminal::startup::Startup>,
+    anchors: Vec<maka_host_runtime::application::host::Client>,
 ) -> Result<(), HostError> {
     // Keep the foreground VM on one dedicated blocking owner, with
     // no deeply nested CLI async stack under V8 initialization.
     let scheduler = tokio::runtime::Handle::current();
     let setup = (|| -> Result<_, HostError> {
         let namespaces = maka_event_log::root::RootNamespaces::for_current_account()?;
-        let executable = maka_transport::HostExecutable::new(
-            std::env::current_exe()?,
-            vec!["application".into(), "serve".into()],
-        )?;
         let cohost_native = serve::native()?;
-        Ok((namespaces, executable, cohost_native))
+        let helper = std::env::current_exe()?;
+        Ok((namespaces, helper, cohost_native))
     })();
-    let (namespaces, executable, cohost_native) = match setup {
+    let (namespaces, helper, cohost_native) = match setup {
         Ok(value) => value,
         Err(error) => {
             store.drain().await;
             return Err(error);
         }
     };
-    let mut connections = match maka_transport::Connections::prepare(
+    let mut connections = match maka_transport::Connections::prepare_loaded(
         store.clone(),
-        deployment,
+        loaded,
         PresentationTarget::Tui,
         configuration,
         namespaces,
-        executable,
+        helper,
         cohost_native,
         Some(maka_host_js::factory(Default::default())),
     )
@@ -334,6 +343,8 @@ async fn run_tui(
         store.drain().await;
         return Err(error.into());
     }
+    // The actual UI peer now keeps the independently started Host resident.
+    drop(anchors);
     let startup_errors = connections.startup_errors().to_vec();
     let source = connections.source().clone();
     let loaded = connections.take_initial().expect("initial UI snapshot");
@@ -354,30 +365,35 @@ async fn run_tui(
         }
     };
     let terminal_errors = startup_errors.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<(), HostError> {
-        maka_render_terminal::application::run(
-            foreground_store,
-            loaded,
-            registrations,
-            scheduler,
-            updates,
-            maka_ui_js::execution(Default::default()),
-            startup,
-            terminal_errors,
-        )
-        .map_err(Into::into)
-    })
-    .await;
+    let result =
+        tokio::task::spawn_blocking(move || -> Result<maka_transport::ExitMode, HostError> {
+            maka_render_terminal::application::run(
+                foreground_store,
+                loaded,
+                registrations,
+                scheduler,
+                updates,
+                maka_ui_js::execution(Default::default()),
+                startup,
+                terminal_errors,
+            )
+            .map_err(Into::into)
+        })
+        .await;
     // A panic is not a terminal/module cleanup receipt. Preserve
     // both actual owners if the foreground execution was lost.
     if let Err(error) = &result {
         eprintln!("terminal execution cleanup unconfirmed: {error}");
         std::future::pending::<()>().await;
     }
-    connections.lock().await.drain().await;
+    let result = result?;
+    match &result {
+        Ok(mode) => connections.lock().await.drain_with(*mode).await,
+        Err(_) => connections.lock().await.drain().await,
+    }
     store.drain().await;
-    match result? {
-        Ok(()) => Ok(()),
+    match result {
+        Ok(_) => Ok(()),
         Err(error)
             if startup_errors.is_empty()
                 || startup_errors

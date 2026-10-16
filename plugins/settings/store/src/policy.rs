@@ -32,6 +32,17 @@ use maka_agent_facts::configuration::validation::revision;
 use sqlx::SqliteConnection;
 
 impl ConfigurationStore {
+    pub async fn set_compaction_prompt(
+        &self,
+        expected_revision: u64,
+        prompt: Option<String>,
+    ) -> Result<RuntimePolicyMutationResult> {
+        self.update_policy(expected_revision, move |policy| {
+            policy.compaction_prompt = prompt
+        })
+        .await
+    }
+
     pub async fn set_network_proxy(
         &self,
         expected_revision: u64,
@@ -89,6 +100,17 @@ impl ConfigurationStore {
     ) -> Result<RuntimePolicyMutationResult> {
         self.update_policy(expected_revision, move |policy| {
             policy.workspace_instructions = value
+        })
+        .await
+    }
+
+    pub async fn set_shell_titles(
+        &self,
+        expected_revision: u64,
+        enabled: bool,
+    ) -> Result<RuntimePolicyMutationResult> {
+        self.update_policy(expected_revision, move |policy| {
+            policy.shell.titles = enabled
         })
         .await
     }

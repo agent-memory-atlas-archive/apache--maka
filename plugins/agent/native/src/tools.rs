@@ -21,6 +21,7 @@
 mod approval;
 mod computer;
 pub(crate) mod image;
+mod shell;
 mod web;
 use crate::contract::{ServiceTool, ToolConfirmation, ToolInput, ToolResult};
 use futures_util::FutureExt;
@@ -73,6 +74,7 @@ pub(crate) struct Catalog {
 pub(crate) fn catalog(
     services: NativeServices,
     store: Arc<EventLog>,
+    configuration: Arc<maka_config::ConfigurationStore>,
     selected: &[ServiceTool],
     additional: Vec<ToolRegistration>,
     workers: tokio_util::task::TaskTracker,
@@ -104,6 +106,7 @@ pub(crate) fn catalog(
     let web_contract = maka_web_api::contract();
     let mut web_bindings = Vec::new();
     let mut computer_bindings = Vec::new();
+    let mut shell_bindings = Vec::new();
     let skill_contract = maka_skills_api::contract();
     let tool_names: Arc<Vec<(String, Option<EditingTools>)>> = Arc::new(
         selected
@@ -174,6 +177,15 @@ pub(crate) fn catalog(
                     .map_err(|_| "agent_tool_title_invalid".to_owned())?;
             }
             let input_schema = match selection.input {
+                ToolInput::Shell => {
+                    if binding.contract() != &maka_workspace_api::processes::contract()
+                        || selection.method != "execute"
+                        || selection.result != ToolResult::Json
+                    {
+                        return Err("agent_shell_tool_contract_invalid".into());
+                    }
+                    shell::schema(method.input.clone(), true)
+                }
                 ToolInput::Json => {
                     if binding.contract() == &maka_web_api::contract()
                         && maka_web_api::contract::model_input_schema(&selection.method).is_some()
@@ -240,6 +252,16 @@ pub(crate) fn catalog(
                     }),
                 ));
             }
+            if selection.input == ToolInput::Shell {
+                shell_bindings.push((
+                    selection.name.clone(),
+                    Arc::new(shell::Binding {
+                        service: service.clone(),
+                        configuration: configuration.clone(),
+                        input: method.input.clone(),
+                    }),
+                ));
+            }
             if selection.input == ToolInput::Web {
                 web_bindings.push((
                     selection.name.clone(),
@@ -287,6 +309,11 @@ pub(crate) fn catalog(
             .with_request_binding([name].into(), binding)
             .map_err(|_| "agent_computer_binding_invalid")?;
     }
+    for (name, binding) in shell_bindings {
+        catalog = catalog
+            .with_request_binding([name].into(), binding)
+            .map_err(|_| "agent_shell_binding_invalid")?;
+    }
     Ok(Catalog {
         tools: catalog,
         basis,
@@ -333,7 +360,9 @@ impl ToolPreparer for Service {
             }
             // No request or effect is admitted until the existing ToolJournal T1.
             let title = selection.title.clone().or_else(|| {
-                if selection.input == ToolInput::Skill {
+                if selection.input == ToolInput::Shell {
+                    shell::title(&input)
+                } else if selection.input == ToolInput::Skill {
                     maka_skills_api::model_title(&selection.method, &input)
                 } else {
                     (selection.result == ToolResult::Computer)
@@ -362,6 +391,13 @@ impl ToolPreparer for Service {
                     }
                     let input = match selection.input {
                         ToolInput::Json => input,
+                        ToolInput::Shell => {
+                            let mut input = input;
+                            if let Some(fields) = input.as_object_mut() {
+                                fields.remove("title");
+                            }
+                            input
+                        }
                         ToolInput::Web => {
                             let basis = web_basis.ok_or_else(|| {
                                 ToolError::Failed("Web tool has no request capture".into())

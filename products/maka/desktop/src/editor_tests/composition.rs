@@ -254,7 +254,13 @@ fn scene(
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(i);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     let contract = entry.exports["App"].contract.clone();
     entry.scene = None;
@@ -644,7 +650,12 @@ fn newly_created_hidden_popup_slots_cannot_steal_the_original_composer_focus(
         );
         let package = support::package(
             id,
-            old.manifest().application.clone().unwrap(),
+            old.manifest()
+                .application
+                .as_ref()
+                .unwrap()
+                .declaration()
+                .clone(),
             Some(source),
         );
         for node in input.instances.values_mut() {

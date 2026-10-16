@@ -416,7 +416,13 @@ fn ui_fixture() -> (
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let ui_contract = contract("test.Save", "save");
     declaration
         .entries

@@ -33,7 +33,7 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub localizations:
         std::collections::BTreeMap<String, maka_plugin_core::package::PackageDescription>,
-    pub application: Option<maka_plugin_core::package::Declaration>,
+    pub application: Option<maka_plugin_core::package::CheckedDeclaration>,
 }
 impl Manifest {
     pub fn presentation(&self) -> maka_plugin_core::package::PackagePresentation {
@@ -52,9 +52,6 @@ impl Manifest {
             .application
             .as_ref()
             .ok_or_else(|| Error::Invalid("application declaration is missing".into()))?;
-        application
-            .validate()
-            .map_err(|error| Error::Invalid(error.to_string()))?;
         for entry in application.entries.values() {
             if let maka_plugin_core::package::Implementation::JavaScript { module, .. } =
                 &entry.implementation

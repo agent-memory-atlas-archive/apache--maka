@@ -289,7 +289,7 @@ async fn interrupted_progress_renews_compaction_before_and_after_a_checkpoint() 
                     item["type"] == "function_call_output" && item["call_id"] == call),
                     "compaction must cover the settled effect before continuing");
                 if round == 2 {
-                    assert!(summary["input"].to_string().contains("Previous continuation summary"));
+                    assert!(summary["input"].to_string().contains("Continuation summary"));
                 }
                 let event = json!({"type":"response.completed", "response":{"id":format!("summary-{round}"), "output":[{"type":"message", "id":format!("summary-text-{round}"), "content":[{"type":"output_text", "text":SUMMARY}]}]}});
                 let body = format!("data: {event}\n\n");
@@ -460,8 +460,7 @@ async fn parallel_calls_overlap_while_the_model_stream_is_still_open() {
         let mut input = input(&base,"parallel");
         input.provider.kind = ProviderKind::OpenaiResponses;
         input.provider_options = json!({"openai":{"store":false}});
-        if let maka_agent_engine::RunWork::Message {tools,max_steps,..} = &mut input.work {
-            *max_steps=Some(2);
+        if let maka_agent_engine::RunWork::Message {tools,..} = &mut input.work {
             *tools = ToolCatalog::new([ToolRegistration {
                 definition:serde_json::from_value(json!({"name":"echo","description":"echo","inputSchema":{"type":"object"}})).unwrap(),
                 nesting:ToolNesting::Nestable,semantics:ToolSemantics::Parallel,

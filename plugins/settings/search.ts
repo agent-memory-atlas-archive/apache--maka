@@ -24,7 +24,7 @@ import type {
   EditorObservation,
   EditorTextRef,
   TextChunk,
-  SettingsProvider,
+  SettingsProviderSummary,
 } from '../../packages/plugin-sdk/src/index.js';
 import { sameValue } from '../shared/value.js';
 
@@ -97,18 +97,18 @@ export function matches(search: Search, ...values: string[]) {
     .every((part) => values.join(' ').toLocaleLowerCase().includes(part));
 }
 
-export function matchesProvider(search: Search, provider: SettingsProvider) {
+export function matchesProvider(search: Search, provider: SettingsProviderSummary) {
   return matches(
     search,
-    provider.descriptor.label,
+    provider.label,
     provider.identity.name,
-    ...provider.descriptor.authentication.map((method) =>
+    ...provider.authentication.map((method) =>
       method.interactive ? 'oauth ' + method.label : 'api key',
     ),
   );
 }
 
-export function providerGroup(provider: SettingsProvider): { key: string; label: string } {
+export function providerGroup(provider: SettingsProviderSummary): { key: string; label: string } {
   const name = provider.identity.name.toLowerCase();
   if (['openai-compatible', 'openai-responses-compatible', 'anthropic-compatible'].includes(name))
     return { key: 'custom', label: 'provider-custom' };
@@ -128,5 +128,5 @@ export function providerGroup(provider: SettingsProvider): { key: string; label:
   const family = families.find(([prefix]) => name === prefix || name.startsWith(prefix + '-'));
   return family
     ? { key: family[1], label: family[1] }
-    : { key: provider.descriptor.label, label: provider.descriptor.label };
+    : { key: provider.label, label: provider.label };
 }

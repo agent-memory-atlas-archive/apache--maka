@@ -34,6 +34,7 @@ mod operation;
 mod sandbox;
 mod serve;
 mod signals;
+mod startup;
 #[cfg(windows)]
 mod windows;
 

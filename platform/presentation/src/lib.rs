@@ -80,6 +80,7 @@ pub struct InvocationView {
     max_text_bytes: usize,
     tools: tools::Tools,
     summary_step: Option<String>,
+    summary_start: Option<compact::SummaryStart>,
 }
 
 impl InvocationView {
@@ -94,6 +95,7 @@ impl InvocationView {
             max_text_bytes,
             tools: tools::Tools::new(max_text_bytes),
             summary_step: None,
+            summary_start: None,
         })
     }
 
@@ -139,11 +141,18 @@ impl InvocationView {
         }
         let event = &stored.event;
         let ts = timestamp(event)?;
-        if self.compact(event)? {
-            self.last_sequence = stored.sequence;
-            return Ok(Vec::new());
-        }
         let base = watermark(stored.sequence)? - 255;
+        if let Some(messages) = self.compact(event, ts)? {
+            self.last_sequence = stored.sequence;
+            return Ok(messages
+                .into_iter()
+                .enumerate()
+                .map(|(index, message)| Row {
+                    sequence: base + index as u64,
+                    message,
+                })
+                .collect());
+        }
         let mut messages = Vec::new();
         match &event.fact {
             Fact::MessageImported { record, .. } => {

@@ -118,7 +118,13 @@ fn fixture() -> (
     let (mut input, mut packages) =
         support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
     let old = packages.pop().unwrap();
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     let contract = entry.exports["Counter"].contract.clone();
     entry.scene = None;
@@ -388,7 +394,13 @@ fn native_root_uses_explicit_surface_and_can_compose_an_imported_component() {
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.scene = None;
     entry.implementation = Implementation::Native {
@@ -561,7 +573,13 @@ fn native_parent_slots_share_js_child_events_rollback_identity_and_retirement() 
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(i);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.scene = None;
     entry.implementation = Implementation::Native {

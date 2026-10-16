@@ -423,15 +423,19 @@ fn variant_and_actual_export_checks_use_the_full_public_contract() {
     };
     assert!(declaration.validate().is_err());
     let entry = entry();
-    assert!(entry.check_exports(&BTreeMap::new()).is_err());
+    assert!(
+        entry
+            .check_exports(&BTreeMap::new(), |contract: &Contract| contract)
+            .is_err()
+    );
     let mut actual = BTreeMap::from([("Content".into(), contract())]);
-    entry.check_exports(&actual).unwrap();
+    entry.check_exports(&actual, |contract| contract).unwrap();
     actual.get_mut("Content").unwrap().interface = Interface::Value {
         schema: json!({"type":"object"}),
     };
-    assert!(entry.check_exports(&actual).is_err());
+    assert!(entry.check_exports(&actual, |contract| contract).is_err());
     actual.insert("undeclared".into(), contract());
-    assert!(entry.check_exports(&actual).is_err());
+    assert!(entry.check_exports(&actual, |contract| contract).is_err());
 }
 
 #[test]

@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -281,7 +281,7 @@ struct Evidence {
 #[derive(Default)]
 pub struct PeerPolicy {
     issuer: Issuer,
-    native: Vec<NativeGrant>,
+    native: RwLock<Vec<NativeGrant>>,
 }
 impl PeerPolicy {
     pub fn with_native_grants(native: Vec<NativeGrant>) -> Result<Self> {
@@ -292,9 +292,17 @@ impl PeerPolicy {
             grant.validate()?;
         }
         Ok(Self {
-            native,
+            native: RwLock::new(native),
             ..Self::default()
         })
+    }
+    /// New native admissions use the current trusted configuration. Already
+    /// accepted execution retains its original owner and is never cancelled here.
+    pub(crate) fn replace_native_grants(&self, native: Vec<NativeGrant>) {
+        *self.native.write().unwrap() = native;
+    }
+    pub(crate) fn native_grants(&self) -> Vec<NativeGrant> {
+        self.native.read().unwrap().clone()
     }
     pub fn issuer(&self) -> Issuer {
         self.issuer.clone()
@@ -357,6 +365,8 @@ impl Policy for PeerPolicy {
         if let Some(origin) = invocation.native_origin {
             return self
                 .native
+                .read()
+                .unwrap()
                 .iter()
                 .any(|grant| {
                     &grant.origin == origin.instance()
@@ -400,6 +410,8 @@ impl Policy for PeerPolicy {
         if let Some(origin) = invocation.native_origin {
             return self
                 .native
+                .read()
+                .unwrap()
                 .iter()
                 .any(|grant| {
                     grant.recovery

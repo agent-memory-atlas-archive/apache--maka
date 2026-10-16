@@ -33,6 +33,7 @@ interface Props {
   sessionId: string | null;
   dataSource: AgentDataSource | null;
   running: boolean;
+  compacting: boolean;
   metrics: AgentSessionMetrics | null;
 }
 interface State {
@@ -47,24 +48,48 @@ const tokens = (value: number) =>
 export function footer<N extends Node>(presentation: Presentation<N>): Component<State, Props, N> {
   const frame = (state: State, props: Props) => {
     const { metrics, theme, locale } = props;
-    const parts: string[] = [];
+    let context = '';
     const used = metrics?.contextTokens;
     const capacity = metrics?.contextWindow;
+    const last = metrics?.contextLastKnown ? ` (${tuiText(locale, 'chat-context-last')})` : '';
     if (used !== null && used !== undefined) {
       const amount = `${metrics?.approximate ? '≈' : ''}${tokens(used)}`;
-      parts.push(
-        `${tuiText(locale, 'chat-context')} ${amount}${capacity ? ` / ${tokens(capacity)} · ${Math.round((100 * used) / capacity)}%` : ''}`,
-      );
+      context = `${tuiText(locale, 'chat-context')} ${amount}${capacity ? ` / ${tokens(capacity)} · ${Math.round((100 * used) / capacity)}%` : ''}${last}`;
     }
+    if (props.compacting && !context) context = tuiText(locale, 'chat-compacting');
+    if (props.running && !context)
+      context = `${tuiText(locale, 'chat-context')} —${capacity ? ` / ${tokens(capacity)}` : ''}`;
     const rate = metrics?.outputTokensPerSecond;
-    if (rate !== null && rate !== undefined && Number.isFinite(rate))
-      parts.push(`${rate.toFixed(1)} tok/s`);
+    const speed = rate != null && Number.isFinite(rate) ? `${rate.toFixed(1)} tok/s` : '';
     const ui = presentation.paint(theme);
-    const hint = tuiText(locale, 'chat-metrics-hint');
-    const line = (key: string, text: string) =>
-      ui.text(key, text, 12, theme.muted, 400, { truncate: true }, hint);
-    if (presentation.target === 'desktop')
-      return output(state, line('session-metrics-text', parts.join(' · ')));
+    const hint = tuiText(
+      locale,
+      metrics?.contextLastKnown ? 'chat-context-last-hint' : 'chat-metrics-hint',
+    );
+    const contextColor = props.compacting ? theme.accent : theme.muted;
+    const line = (key: string, text: string, color = contextColor) =>
+      ui.text(key, text, 12, color, 400, { truncate: true }, hint);
+    const reducedLine = (key: string, text: string) =>
+      ui.box(
+        `${key}-row`,
+        [
+          ...(text ? [line(`${key}-text`, text)] : []),
+          ...(speed ? [line(`${key}-rate`, `${text ? ' · ' : ''}${speed}`, theme.muted)] : []),
+        ],
+        { row: true, gap: 0 },
+      );
+    const full = () =>
+      ui.box(
+        'session-metrics-text',
+        [
+          ...(context ? [line('session-context-text', context)] : []),
+          ...(speed
+            ? [line('session-rate-text', `${context ? ' · ' : ''}${speed}`, theme.muted)]
+            : []),
+        ],
+        { row: true, gap: 0 },
+      );
+    if (presentation.target === 'desktop') return output(state, full());
     const layout = (basis: number) => ({
       basis,
       grow: 0,
@@ -77,29 +102,23 @@ export function footer<N extends Node>(presentation: Presentation<N>): Component
     const compact =
       used != null
         ? capacity
-          ? `${metrics?.approximate ? '≈' : ''}${Math.round((100 * used) / capacity)}%`
-          : `${metrics?.approximate ? '≈' : ''}${tokens(used)}`
-        : '';
-    const context = parts[0] && used != null ? parts[0] : '';
+          ? `${metrics?.approximate ? '≈' : ''}${Math.round((100 * used) / capacity)}%${last}`
+          : `${tuiText(locale, 'chat-context')} ${metrics?.approximate ? '≈' : ''}${tokens(used)}${last}`
+        : props.compacting
+          ? tuiText(locale, 'chat-compacting')
+          : props.running
+            ? `${tuiText(locale, 'chat-context')} —`
+            : '';
     const reduced = ui.box(
       'metrics-reduced',
       [
-        ui.box('metrics-percent', [line('metrics-percent-text', compact)], {
-          terminal: layout(compact ? 1 : 0),
+        ui.box('metrics-percent', [reducedLine('metrics-percent', compact)], {
+          terminal: layout(compact || speed ? 1 : 0),
         }),
-        ui.box('metrics-context', [line('metrics-context-text', context)], { terminal: layout(0) }),
       ],
       {
         gap: 0,
         terminal: layout(1),
-        wide: {
-          min_width: 32,
-          direction: 'column',
-          children: {
-            'metrics-percent': layout(0),
-            'metrics-context': layout(context ? 1 : 0),
-          },
-        },
       },
     );
     return output(
@@ -108,18 +127,18 @@ export function footer<N extends Node>(presentation: Presentation<N>): Component
         'metrics-responsive',
         [
           reduced,
-          ui.box('metrics-full', [line('session-metrics-text', parts.join(' · '))], {
+          ui.box('metrics-full', [full()], {
             terminal: layout(0),
           }),
         ],
         {
           gap: 0,
           wide: {
-            min_width: 48,
+            min_width: 64,
             direction: 'column',
             children: {
               'metrics-reduced': layout(0),
-              'metrics-full': layout(parts.length ? 1 : 0),
+              'metrics-full': layout(context || speed ? 1 : 0),
             },
           },
         },

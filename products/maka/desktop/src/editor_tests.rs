@@ -110,7 +110,12 @@ impl Scene {
             let source=std::str::from_utf8(old.file("index.mjs").unwrap()).unwrap().replace(support::CHILD_UPDATE,"if(props.label==='Right 1')throw new Error('failed sibling');return frame({...state,label:props.label,revision:state.revision+1});");
             let counter = support::package(
                 "dynamic.counter",
-                old.manifest().application.clone().unwrap(),
+                old.manifest()
+                    .application
+                    .as_ref()
+                    .unwrap()
+                    .declaration()
+                    .clone(),
                 Some(source),
             );
             input.instances.get_mut("counter").unwrap().package = counter.application_ref().into();
@@ -294,6 +299,34 @@ impl Scene {
             assert!(
                 std::time::Instant::now() < until,
                 "original candidate did not finish"
+            );
+            std::thread::park_timeout(std::time::Duration::from_millis(1));
+        }
+    }
+    // Multi-scene fixtures must observe the previous application's foreground
+    // owner release before creating its successor in the same GPUI context.
+    fn close_and_drain(&self, cx: &mut TestAppContext) {
+        self.close(cx);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            cx.run_until_parked();
+            let drained = cx.update(|cx| {
+                actions::quit_when_drained(&self.app, cx);
+                !cx.has_global::<actions::Owner>()
+            });
+            let cleaned = match self.cleanup.borrow().as_ref() {
+                Some(result) => {
+                    result.as_ref().unwrap();
+                    true
+                }
+                None => false,
+            };
+            if cleaned && drained {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "original application owner did not finish cleanup"
             );
             std::thread::park_timeout(std::time::Duration::from_millis(1));
         }
@@ -970,7 +1003,13 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
             .position(|p| p.manifest().id == "dynamic.counter")
             .unwrap();
         let old = packages.remove(index);
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let contract = &mut declaration
             .entries
             .get_mut(&EntryTarget::Desktop)
@@ -1000,7 +1039,13 @@ fn public_editor_events_preserve_a_same_batch_command_until_receipt_and_do_not_l
             .position(|p| p.manifest().id == "dynamic.app")
             .unwrap();
         let old = packages.remove(index);
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Desktop)
@@ -1189,7 +1234,7 @@ fn real_composer_snapshot_precedes_reset_and_capture_conflict_does_not_fake_scen
         }
         assert_eq!(scene.app.borrow().accepted_action_count(), 0);
         drop(owner);
-        scene.close(cx);
+        scene.close_and_drain(cx);
     }
 }
 struct HeldRead {
@@ -1236,7 +1281,13 @@ fn application_owner_preserves_failed_and_panicked_work_after_real_window_cleanu
             .position(|p| p.manifest().id == "native.reader")
             .unwrap();
         let old = packages.remove(index);
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
@@ -1677,7 +1728,13 @@ fn host_query_scene(cx: &mut TestAppContext, fail_cleanup: bool) {
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let mut contract = maka_ui_runtime::text::reader_contract();
     contract.transport = maka_plugin_core::contract::Transport::Remote;
     declaration
@@ -2149,7 +2206,13 @@ fn committed_addition_preserves_actual_editor_entity_focus_selection_and_composi
         .iter()
         .find(|p| p.manifest().id == "dynamic.app")
         .unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     if let maka_plugin_core::package::Implementation::JavaScript { realm, .. } = &mut declaration
         .entries
         .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)

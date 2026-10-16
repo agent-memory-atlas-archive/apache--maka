@@ -1,0 +1,89 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use clap::Args;
+use maka_host_runtime::{
+    HostError,
+    application::{host::discovery, transport::wire},
+};
+use maka_transport::startup::{REQUEST_LIMIT, Ready, Request};
+use std::time::Duration;
+use tokio::io::AsyncReadExt;
+use tokio_util::sync::CancellationToken;
+
+/// Internal startup coordination for trusted TUI/Desktop launchers.
+#[derive(Args)]
+pub(crate) struct Ensure {}
+impl Ensure {
+    pub(crate) async fn run(self) -> Result<(), HostError> {
+        let maka_transport::stdio::Stdio {
+            input,
+            mut output,
+            output_done,
+        } = maka_transport::stdio::Stdio::open()?;
+        let mut input = wire::Reader::new(input);
+        let request: Request =
+            tokio::time::timeout(Duration::from_secs(5), input.read_bounded(REQUEST_LIMIT))
+                .await??;
+        request.validate()?;
+        let stop = CancellationToken::new();
+        let _signals = crate::signals::watch(stop.clone())?;
+        let client = tokio::select! {
+            result = crate::deployment::connect_application(&request) => result?,
+            _ = stop.cancelled() => return Ok(()),
+            byte = input.inner.read_u8() => {
+                if byte.is_ok() { return Err("unexpected Host startup owner input".into()); }
+                return Ok(());
+            }
+        };
+        let registered = discovery::read(&request.root)?;
+        if registered.source.deployment != request.deployment
+            || registered.host_epoch != client.epoch()
+        {
+            return Err("application Host changed during startup admission".into());
+        }
+        registered.verify(
+            &maka_host_runtime::application::host::Client::status(
+                &registered.endpoint,
+                Some(client.epoch()),
+            )
+            .await?,
+        )?;
+        wire::write_bounded(
+            &mut output,
+            &Ready {
+                root_id: registered.root_id,
+                epoch: client.epoch(),
+            },
+            4096,
+        )
+        .await?;
+        tokio::select! {
+            _ = stop.cancelled() => {},
+            byte = input.inner.read_u8() => {
+                if byte.is_ok() { return Err("unexpected Host startup owner input".into()); }
+            }
+        }
+        // This probe owns no UI operation or Root; EOF releases only residency.
+        drop(client);
+        drop(output);
+        tokio::time::timeout(Duration::from_secs(5), output_done).await???;
+        Ok(())
+    }
+}

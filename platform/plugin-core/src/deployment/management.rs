@@ -102,6 +102,28 @@ pub struct PackageSourceChunk {
     pub text: Option<String>,
     pub next: Option<usize>,
 }
+
+/// An immutable package from one committed revision, including binary files.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PackageBundleRead {
+    pub source: DeploymentRef,
+    pub package: PackageRef,
+}
+
+/// Bundle JSON already encodes file bytes; text chunks add no second base64 layer.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PackageBundleExport {
+    Chunk {
+        offset: usize,
+        #[serde(rename = "totalBytes")]
+        total_bytes: usize,
+        #[schemars(length(max = 16384))]
+        text: String,
+    },
+    Complete {},
+}
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeploymentSourceReplace {
@@ -231,6 +253,11 @@ pub fn deployment_manager_contract() -> Contract {
         "document".into(),
         crate::contract::text_resource_type().required(),
     );
+    // Optional JSON array of existing package bundle objects. The document's
+    // package references select the exact resulting set in the same CAS commit.
+    replace
+        .resources
+        .insert("packages".into(), binary_resource_type().optional());
     Contract {
         name: "maka.application.DeploymentManager".into(),
         version: 1,
@@ -257,6 +284,10 @@ pub fn deployment_manager_contract() -> Contract {
                 (
                     "readPackage".into(),
                     method::<PackageSourceRead, PackageSourceChunk>(MethodMode::Query),
+                ),
+                (
+                    "exportPackage".into(),
+                    method::<PackageBundleRead, PackageBundleExport>(MethodMode::Subscription),
                 ),
                 (
                     "replaceSource".into(),

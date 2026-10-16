@@ -38,8 +38,8 @@ pub struct SessionObservation<T> {
     pub root_turn: Option<turns::TurnBoundary>,
     pub through_sequence: u64,
     pub active_streams: Vec<AssistantStreamSeed>,
+    pub compacting: bool,
     pub pending_interactions: Vec<InteractionRecord>,
-    pub message_queue: crate::message_queue::MessageQueue,
 }
 
 /// Projection-only read: no stream offset aggregation on token wakeups.
@@ -48,7 +48,6 @@ pub struct SessionProjection<T> {
     pub root_turn: Option<turns::TurnBoundary>,
     pub through_sequence: u64,
     pub pending_interactions: Vec<InteractionRecord>,
-    pub message_queue: crate::message_queue::MessageQueue,
 }
 
 /// Cheap invalidation basis for an observer, not a delivery or replay cursor.
@@ -160,21 +159,22 @@ impl EventLog {
                         root_turn,
                         through_sequence,
                         pending_interactions,
-                        message_queue,
                     }) = read_projection(&mut transaction, &session_id).await?
                     else {
                         return Ok(None);
                     };
                     let active_streams =
                         streams::read(&mut transaction, root_turn.as_ref()).await?;
+                    let compacting =
+                        streams::compacting(&mut transaction, root_turn.as_ref()).await?;
                     transaction.commit().await?;
                     Ok(Some(SessionObservation {
                         session,
                         root_turn,
                         through_sequence,
                         active_streams,
+                        compacting,
                         pending_interactions,
-                        message_queue,
                     }))
                 })
             })
@@ -264,7 +264,6 @@ async fn read_projection<T: DeserializeOwned + Send>(
         root_turn: turns::read(connection, session_id, None).await?,
         through_sequence: high_water(connection).await?,
         pending_interactions: crate::interactions::pending(connection, session_id).await?,
-        message_queue: crate::message_queue::read(connection, session_id).await?,
     }))
 }
 

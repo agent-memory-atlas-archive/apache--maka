@@ -39,6 +39,10 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextareaProps {
     pub appearance: crate::appearance::TextareaAppearance,
+    /// Exact whitespace-delimited literals rendered and edited as atomic inline tokens.
+    #[serde(default)]
+    #[schemars(schema_with = "inline_tokens_schema")]
+    pub inline_tokens: Vec<String>,
     #[serde(default)]
     pub menu: Option<TextareaMenu>,
     #[schemars(length(min = 1, max = 512))]
@@ -53,6 +57,9 @@ pub struct TextareaProps {
     /// None preserves native multiline editing without a submit shortcut.
     #[serde(default)]
     pub submit: Option<SubmitKey>,
+    /// Yield suggestion navigation only for the original observed editor state.
+    #[serde(default)]
+    pub navigation: Option<EditorNavigation>,
     #[schemars(range(min = -1, max = 32767))]
     pub tab_index: i16,
     /// Offer native focus once when this original input becomes visible and
@@ -77,6 +84,48 @@ pub struct TextareaProps {
     pub file_command: Option<FilePasteCommand>,
     #[serde(default)]
     pub persistence: Option<crate::checkpoint::EditorPersistence>,
+}
+
+fn inline_tokens_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    serde_json::json!({"type":"array","maxItems":4096,"items":{
+        "type":"string","minLength":1,"maxLength":512,"pattern":r"^\S+$"
+    }})
+    .try_into()
+    .expect("inline token schema")
+}
+
+/// Source byte spans for exact whole-word literals; no prefix matching.
+pub fn inline_token_ranges(text: &str, literals: &[String]) -> Vec<std::ops::Range<usize>> {
+    if literals.is_empty() {
+        return Vec::new();
+    }
+    let literals: std::collections::BTreeSet<&str> = literals.iter().map(String::as_str).collect();
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for word in text.split_whitespace() {
+        let offset = text[start..].find(word).expect("word in source") + start;
+        if literals.contains(word) {
+            ranges.push(offset..offset + word.len());
+        }
+        start = offset + word.len();
+    }
+    if !ranges.is_empty() {
+        use unicode_segmentation::UnicodeSegmentation;
+        let mut boundaries = text
+            .grapheme_indices(true)
+            .map(|(offset, _)| offset)
+            .chain(std::iter::once(text.len()))
+            .peekable();
+        ranges.retain(|range| {
+            [range.start, range.end].into_iter().all(|offset| {
+                while boundaries.peek().is_some_and(|boundary| *boundary < offset) {
+                    boundaries.next();
+                }
+                boundaries.peek() == Some(&offset)
+            })
+        });
+    }
+    ranges
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -133,6 +182,10 @@ pub struct TerminalTextareaRows {
     pub min: u16,
     #[schemars(range(min = 1))]
     pub max: u16,
+    /// Allow dragging the lower-right grip to override preferred rows, up to
+    /// the containing viewport height. The minimum still applies.
+    #[serde(default)]
+    pub resizable: bool,
     /// Optional cap relative to the nearest declared layout viewport's height,
     /// or the surface when none is declared. The minimum still applies.
     #[serde(default)]
@@ -144,6 +197,7 @@ impl Default for TerminalTextareaRows {
         Self {
             min: 3,
             max: 8,
+            resizable: false,
             max_viewport_fraction: None,
         }
     }
@@ -186,6 +240,40 @@ pub enum SubmitKey {
     ControlEnter,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorNavigation {
+    #[schemars(length(min = 1, max = 128))]
+    pub owner: String,
+    #[schemars(range(max = 9007199254740991u64))]
+    pub based_on: u64,
+}
+impl EditorNavigation {
+    pub fn matches(&self, observation: &EditorObservation) -> bool {
+        self.owner == observation.snapshot.text.owner
+            && self.based_on == observation.revision
+            && observation.snapshot.marked.is_none()
+    }
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorNavigationKey {
+    Up,
+    Down,
+    Enter,
+    Tab,
+    Escape,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditorNavigated {
+    pub key: EditorNavigationKey,
+    pub observation: EditorObservation,
+}
+pub fn navigation_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(EditorNavigated)).expect("editor navigation schema")
+}
+
 /// Submit carries the same original editor observation as a change; it grants
 /// no text read and adds no second buffer or command owner.
 pub fn reduce(
@@ -206,7 +294,23 @@ pub fn reduce(
     };
     let mut files = None;
     let mut checkpoint = None;
+    let mut navigation = None;
     let call = match call {
+        crate::ComponentCall::Event {
+            state,
+            props,
+            key: "navigate",
+            input,
+            origin,
+        } => {
+            if !matches!(origin, crate::EventOrigin::Raw) {
+                return Err(crate::Error::Invalid(
+                    "editor navigation requires native origin".into(),
+                ));
+            }
+            navigation = Some(input.clone());
+            crate::ComponentCall::Update { state, props }
+        }
         crate::ComponentCall::Event {
             state,
             props,
@@ -270,6 +374,17 @@ pub fn reduce(
         ));
     }
     output.frame.state["persistence"] = identity;
+    if output.frame.view.inline_tokens.len() > 4096
+        || output.frame.view.inline_tokens.iter().any(|literal| {
+            literal.is_empty()
+                || literal.len() > 512
+                || literal.chars().any(|c| c.is_whitespace() || c.is_control())
+        })
+    {
+        return Err(crate::Error::Invalid(
+            "invalid inline token literals".into(),
+        ));
+    }
     let rows = output.frame.view.terminal_rows;
     if rows.min == 0
         || rows.min > rows.max
@@ -299,6 +414,12 @@ pub fn reduce(
             value,
         });
     }
+    if let Some(value) = navigation {
+        output.events.push(crate::Emission {
+            name: "navigated".into(),
+            value,
+        });
+    }
     Ok(output.map_view(|props| TextareaView {
         props,
         file_request,
@@ -316,6 +437,7 @@ pub fn textarea_contract() -> Contract {
             events: BTreeMap::from([
                 ("changed".into(), observation_schema()),
                 ("submitted".into(), observation_schema()),
+                ("navigated".into(), navigation_schema()),
                 ("files".into(), file_paste_schema()),
                 ("checkpoint".into(), crate::checkpoint::observation_schema()),
             ]),
@@ -353,4 +475,31 @@ pub fn native() -> maka_plugin_core::package::NativeDefinition {
         serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
         [("Textarea", textarea_contract())],
     )
+}
+
+#[cfg(test)]
+mod inline_token_tests {
+    use super::*;
+
+    #[test]
+    fn inline_literals_match_whole_unicode_words_only() {
+        let text = "🙂 /skill:foo /skill:foo-extra\n/skill:技能 後";
+        let literals = vec!["/skill:foo".into(), "/skill:技能".into()];
+        let spans = inline_token_ranges(text, &literals);
+        assert_eq!(
+            spans
+                .iter()
+                .map(|range| &text[range.clone()])
+                .collect::<Vec<_>>(),
+            vec!["/skill:foo", "/skill:技能"]
+        );
+        assert_eq!(spans[0].start, "🙂 ".len());
+        assert_eq!(
+            inline_token_ranges("/skill:foo /skill:foo", &literals),
+            vec![0..10, 11..21]
+        );
+        assert!(inline_token_ranges(text, &[]).is_empty());
+
+        assert!(inline_token_ranges(" \u{301}x", &["\u{301}x".into()]).is_empty());
+    }
 }

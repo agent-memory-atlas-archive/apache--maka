@@ -178,7 +178,6 @@ fn completed_and_interrupted_rows_keep_overlay_identity_time() {
                     successor_invocation_id: "successor-invocation".into(),
                     claim_id: "claim".into(),
                 },
-                remaining_steps: std::num::NonZeroU16::new(2),
                 execution: Box::new(maka_agent_facts::handoff::HandoffExecution {
                     replay: maka_agent_facts::continuation::ReplayEvidence {
                         version: maka_agent_facts::continuation::REPLAY_VERSION,

@@ -29,7 +29,6 @@ use maka_agent_facts::event::InvocationOutcome;
 use maka_agent_facts::event::RuntimeEvent;
 use maka_agent_facts::input::InvocationInput;
 use maka_agent_facts::tool_call::ToolCallIdentity;
-use maka_agent_facts::tool_output::DURABLE_TOOL_PROJECTION_FAILURE_MESSAGE;
 use maka_agent_facts::tool_output::ToolOutput;
 use maka_event_log::EventLog;
 use serde_json::json;
@@ -118,20 +117,15 @@ async fn reopened_history_uses_frozen_projection_without_raw_store_access() {
     let log = EventLog::open(&path).await.unwrap();
     let raw = ToolOutput::Text("raw-only-marker".repeat(800_000));
     settled(&log, &raw).await;
-    let original = log.prefix(100, 128 * 1024).await.unwrap();
+    let original = log.prefix(100, 16 * 1024 * 1024).await.unwrap();
     let expected = project_model_history(&original, "session").unwrap();
     assert_eq!(
         serde_json::to_value(&expected).unwrap()[2]["content"][0]["output"],
-        json!({"type":"error-text","value":DURABLE_TOOL_PROJECTION_FAILURE_MESSAGE})
-    );
-    assert!(
-        !serde_json::to_string(&expected)
-            .unwrap()
-            .contains("raw-only-marker")
+        json!({"type":"json","value":{"kind":"text","text":"raw-only-marker".repeat(800_000)}})
     );
     log.close().await.unwrap();
     let log = EventLog::open(&path).await.unwrap();
-    let reopened = log.prefix(100, 128 * 1024).await.unwrap();
+    let reopened = log.prefix(100, 16 * 1024 * 1024).await.unwrap();
     assert_eq!(
         serde_json::to_value(&reopened).unwrap(),
         serde_json::to_value(&original).unwrap()

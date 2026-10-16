@@ -124,14 +124,14 @@ async fn discovery_defers_direct_admission_but_only_defers_descriptions_in_code_
                     respond_tools(&mut socket, vec![call], 200).await;
                     let mut summaries = 0;
                     let mut main = None;
-                    while summaries < if compact { 1 } else { 2 } || main.is_none() {
+                    while summaries < 1 || main.is_none() {
                         let (mut socket, _) = listener.accept().await.unwrap();
                         let request = fixture::read_request(&mut socket).await;
                         if request["messages"].to_string().contains("Now write the structured summary") {
                             summaries += 1;
                             assert_eq!(request["max_tokens"], 8000);
-                            assert!(request.get("tools").is_none());
-                            fixture::respond(&mut socket, if compact { fixture::SUMMARY } else { "invalid summary" }, "stop").await;
+                            assert_eq!(request["tools"], second["tools"]);
+                            fixture::respond(&mut socket, if compact { fixture::SUMMARY } else { "incomplete summary" }, if compact { "stop" } else { "length" }).await;
                         } else {
                             assert!(main.is_none());
                             main = Some((socket, request));
@@ -162,7 +162,7 @@ async fn discovery_defers_direct_admission_but_only_defers_descriptions_in_code_
                 // Exercise measured-usage compaction, without making the
                 // discovery prompt itself exceed the provider input capacity.
                 input.context = Some(ModelRequestContext { provider_id:"openai".into(), context_window:Some(64_000), declared_window:Some(210), model_context_window:None });
-                input.work = RunWork::Message { allow_prior_unknown:false, source_messages:Vec::new(), message:"Use echo".into(), tools:catalog, max_steps:Some(4) };
+                input.work = RunWork::Message { allow_prior_unknown:false, source_messages:Vec::new(), message:"Use echo".into(), tools:catalog };
                 let engine = fixture::engine(log.clone());
                 engine.run(input, CancellationToken::new()).await.unwrap();
                 engine.drain().await;

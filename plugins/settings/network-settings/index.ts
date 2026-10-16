@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -205,6 +206,7 @@ export function networkSettings<N extends Node>(
             'network-' + name,
             'input',
             {
+              menu: editorMenu(props.theme, props.locale),
               accessibilityLabel: t('network-' + name),
               placeholder: '',
               autoFocus: name === 'host',
@@ -236,13 +238,12 @@ export function networkSettings<N extends Node>(
           ui.box(
             'network-settings-content',
             [
-              ui.text('network-help', t('network-help'), 13, props.theme.muted),
-              ui.button(
+              ui.toggle(
                 'enabled',
-                t('network-enabled') +
-                  ': ' +
-                  (state.draft?.enabled ? text.settingOn : text.settingOff),
+                t('network-enabled'),
+                state.draft?.enabled ?? false,
                 disabled,
+                t('network-help'),
               ),
               ui.box(
                 'network-protocols',
@@ -257,12 +258,12 @@ export function networkSettings<N extends Node>(
                 { row: true, gap: 1 },
               ),
               ...fields,
-              ui.button(
+              ui.toggle(
                 'auth',
-                t('network-auth') +
-                  ': ' +
-                  (state.draft?.authEnabled ? text.settingOn : text.settingOff),
+                t('network-auth'),
+                state.draft?.authEnabled ?? false,
                 disabled,
+                t('network-auth-help'),
               ),
               ui.text(
                 'network-credential-status',
@@ -290,6 +291,7 @@ export function networkSettings<N extends Node>(
                 'network-secret',
                 'secret',
                 {
+                  menu: editorMenu(props.theme, props.locale),
                   accessibilityLabel: t('network-password'),
                   placeholder: t('network-password'),
                   autoFocus: false,

@@ -40,6 +40,7 @@ fn default_product_plan_requires_review_and_restores_frozen_proposal_and_complet
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
+    let host_guard = HostRootGuard::new(&ui.join("host"));
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -104,6 +105,7 @@ fn default_product_plan_requires_review_and_restores_frozen_proposal_and_complet
     evidence(&tui, "plan-proposed");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
 
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
@@ -152,6 +154,7 @@ fn default_product_plan_requires_review_and_restores_frozen_proposal_and_complet
     tui.wait_for("Keep this independent draft.");
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     open(&mut tui);
@@ -161,5 +164,6 @@ fn default_product_plan_requires_review_and_restores_frozen_proposal_and_complet
     assert!(received.try_recv().is_err());
     tui.send(b"\x11");
     tui.finish();
+    host_guard.stop();
     server.join().unwrap();
 }

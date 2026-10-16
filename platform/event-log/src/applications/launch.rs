@@ -35,6 +35,33 @@ pub struct Launch {
     pub pending: Option<Vec<u8>>,
 }
 impl EventLog {
+    /// Trusted Host configuration changes are separate from source replacement.
+    /// Check both authorities in one transaction; the same desired value is an
+    /// idempotent retry only while the observed source is still exactly current.
+    pub async fn compare_and_set_application_launch_configuration(
+        &self,
+        source: maka_plugin_core::deployment::DeploymentRef,
+        expected: Value,
+        configuration: Value,
+    ) -> Result<bool, StoreError> {
+        source.validate().map_err(|error| invalid(&error))?;
+        if source.state_domain != self.application_domain()? {
+            return Err(invalid("foreign Host configuration source"));
+        }
+        let expected = encode(&expected, MAX_CONFIGURATION)?;
+        let configuration = encode(&configuration, MAX_CONFIGURATION)?;
+        self.connection.run(move |connection| Box::pin(async move {
+            let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+            let changed = sqlx::query("UPDATE application_launch SET configuration=? WHERE singleton=1 AND deployment=? AND pending IS NULL AND (configuration=? OR configuration=?) AND EXISTS(SELECT 1 FROM application_deployments WHERE id=? AND revision=?)")
+                .bind(&configuration).bind(source.deployment.to_string())
+                .bind(expected).bind(&configuration)
+                .bind(source.deployment.to_string()).bind(source.revision as i64)
+                .execute(&mut *tx).await?.rows_affected() == 1;
+            tx.commit().await.map_err(StoreError::CommitUnknown)?;
+            Ok(changed)
+        })).await
+    }
+
     /// Native product authoring inputs and the last installed default sources.
     pub async fn application_product(&self) -> Result<Option<Value>, StoreError> {
         self.application_domain()?;
@@ -101,6 +128,29 @@ impl EventLog {
                 return Err(invalid("invalid or oversized launcher preparation"));
             }
             Ok(Some(Launch { deployment, configuration: serde_json::from_str(&configuration)?, pending }))
+        })).await
+    }
+
+    /// Select an existing committed source without starting source preparation.
+    /// The observed source must still be current, and an existing selection is
+    /// never overwritten.
+    pub async fn select_committed_application_launch(
+        &self,
+        source: maka_plugin_core::deployment::DeploymentRef,
+        configuration: Value,
+    ) -> Result<(), StoreError> {
+        source.validate().map_err(|error| invalid(&error))?;
+        if source.state_domain != self.application_domain()? {
+            return Err(invalid("foreign launcher source"));
+        }
+        let configuration = encode(&configuration, MAX_CONFIGURATION)?;
+        self.connection.run(move |connection| Box::pin(async move {
+            let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+            let changed = sqlx::query("INSERT INTO application_launch (singleton,deployment,configuration,pending) SELECT 1,id,?,NULL FROM application_deployments WHERE id=? AND revision=?")
+                .bind(configuration).bind(source.deployment.to_string()).bind(source.revision as i64)
+                .execute(&mut *tx).await?.rows_affected();
+            if changed != 1 { return Err(invalid("committed launcher source changed or is missing")); }
+            tx.commit().await.map_err(StoreError::CommitUnknown)
         })).await
     }
 

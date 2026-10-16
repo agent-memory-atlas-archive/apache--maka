@@ -53,7 +53,7 @@ fn configured_input(
         }
     }
     let packages=packages.into_iter().map(|original|{
-  let mut decl=original.manifest().application.clone().unwrap();
+  let mut decl=original.manifest().application.as_ref().unwrap().declaration().clone();
   let entry=decl.entries.get_mut(&EntryTarget::Tui).unwrap();
   if let Some(import)=entry.imports.get_mut("editor"){import.contract=contract.clone();}
   let mut files=BTreeMap::new();
@@ -66,9 +66,9 @@ fn configured_input(
     let mut source=std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(&old,&new)
       .replace("initialText:'Start',", &format!("maxBytes:{max_bytes},terminalPaste:'{paste}',")).replace("menu:state.brand.menu,", "").replace("softWrap:true,", "")
       .replace("appearance:state.brand.textarea", "appearance:Object.fromEntries(Object.entries(state.brand.textarea).filter(([key])=>key!=='scrollbar'))")
-      .replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
+      .replace("on:{changed:'changed',submitted:'submitted',navigated:'navigated'}", "on:{changed:'changed',submitted:'submitted'}")
       .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
-      .replace("else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}", "else if(event.kind==='component'){if(event.name==='submitted')next.submits=(next.submits??0)+1;else next.observation=event.event;}");
+      .replace("else if(event.kind==='component'){if(event.name==='navigated'){next.navigation=event.event;next.navigations=(state.navigations??0)+1;}else next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}", "else if(event.kind==='component'){if(event.name==='submitted')next.submits=(next.submits??0)+1;else next.observation=event.event;}");
     if original.manifest().id=="dynamic.app" {
       source=source.replace("delete editor.props.readingViewport;", "delete editor.props.readingViewport;delete editor.props.submitVeto;delete editor.props.submitReject;");
       source.push_str("const submitEvent=app.event;app.event=(state,event,...rest)=>{const submitting=event.kind==='component'&&event.name==='submitted';if(submitting&&state.options?.submitReject)throw Error('submission rejected');const out=submitEvent(state,event,...rest);return out;};");
@@ -427,7 +427,7 @@ fn shortcut_presenter() -> (tokio::runtime::Runtime, Presenter) {
 fn reserved_shortcut_presenter(reserved: bool) -> (tokio::runtime::Runtime, Presenter) {
     let (runtime, mut input, packages) = textarea::editor_fixture();
     let packages = packages.into_iter().map(|original| {
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let mut files = BTreeMap::new();
         if let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation {
             let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap().to_owned();
@@ -1043,4 +1043,138 @@ fn closing_a_surface_waits_for_its_native_child_without_reporting_cleanup_failur
     tui.pump_settled().unwrap();
     assert!(tui.can_shutdown());
     tui.shutdown_settled().unwrap();
+}
+
+#[test]
+fn ordinary_inputs_ctrl_v_normalizes_text_and_keeps_secret_menu_private() {
+    for secret in [false, true] {
+        let (_runtime, mut tui) = input_presenter(secret, false);
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"menu":support::brand_appearance()["menu"],"terminalPaste":"spaces"}),
+        );
+        draw(&mut tui, 50, 24);
+        tui.input_settled(Event::Paste("replace me".into()))
+            .unwrap();
+        tui.input_settled(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        let target = tui.focus.clone().unwrap();
+        tui.resources
+            .owners
+            .get_mut(&target.mount.id())
+            .unwrap()
+            .state
+            .downcast_mut::<super::super::editor::Owner>()
+            .unwrap()
+            .clipboard
+            .as_mut()
+            .unwrap()
+            .set_clipboard_text("one\r\ntwo\t三".into());
+        tui.input_settled(Event::Key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            tui.pump_settled().unwrap();
+            let owner = tui.resources.owners[&target.mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap();
+            if owner.editor.text() == "one two 三" {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        tui.input_settled(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        draw(&mut tui, 50, 24);
+        let (_, _, enabled) = tui.resources.editing_menu(&target).unwrap().unwrap();
+        assert_eq!(enabled, [!secret, !secret, true, true]);
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"menu":support::brand_appearance()["menu"],"readOnly":true}),
+        );
+        draw(&mut tui, 50, 24);
+        let target = tui.focus.clone().unwrap();
+        let (_, _, enabled) = tui.resources.editing_menu(&target).unwrap().unwrap();
+        assert_eq!(enabled, [!secret, false, false, true]);
+        tui.input_settled(Event::Key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        assert_eq!(
+            tui.resources.owners[&target.mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap()
+                .editor
+                .text(),
+            "one two 三"
+        );
+        close(&mut tui);
+    }
+}
+
+#[test]
+fn physical_cursor_tracks_unicode_input_and_the_foreground_dialog() {
+    use ratatui::layout::Position;
+    for secret in [false, true] {
+        let (_runtime, mut tui) = input_presenter(secret, true);
+        draw(&mut tui, 50, 24);
+        tui.input_settled(Event::Paste("中🙂".into())).unwrap();
+        let focus = tui.focus.clone().unwrap();
+        let area = tui
+            .scene
+            .iter()
+            .find(|target| target.same(&focus))
+            .unwrap()
+            .area
+            .visible();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 50, 24));
+        let pending = tui.paint(buffer.area, &mut buffer).unwrap();
+        assert_eq!(
+            pending.cursor_position(),
+            Some(Position::new(
+                area.x + 1 + if secret { 2 } else { 4 },
+                area.y + 1
+            ))
+        );
+        tui.present(pending);
+        dispatch(&mut tui, "modalToggle", json!({"open":true}));
+        let pending = tui.paint(buffer.area, &mut buffer).unwrap();
+        assert_eq!(
+            pending.cursor_position(),
+            None,
+            "background editor must not anchor the new modal's IME"
+        );
+        tui.present(pending);
+        draw(&mut tui, 50, 24);
+        let query = tui.focus.clone().unwrap();
+        assert!(!query.same(&focus));
+        let area = tui
+            .scene
+            .iter()
+            .find(|target| target.same(&query))
+            .unwrap()
+            .area
+            .visible();
+        let pending = tui.paint(buffer.area, &mut buffer).unwrap();
+        assert_eq!(
+            pending.cursor_position(),
+            Some(Position::new(area.x + 1, area.y + 1))
+        );
+        close(&mut tui);
+    }
 }

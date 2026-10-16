@@ -272,6 +272,7 @@ export function handleEvent<N extends Node>(
             request.kind === 'respond' ||
             request.kind === 'markRead' ||
             request.kind === 'uploadAttachment' ||
+            request.kind === 'compact' ||
             request.kind === 'recapGenerate' ||
             request.kind === 'goalChange' ||
             request.kind === 'graphChange' ||

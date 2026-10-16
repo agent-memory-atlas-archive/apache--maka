@@ -39,3 +39,12 @@ node scripts/rust/notices.mjs check
 ```
 
 检查生成的清单和许可证文本。[notices-sources.json](notices-sources.json)记录已审查的上游例外。发布组装还包含实际 V8 构建与 Rust 标准库的 notices。TSV 清单不能替代完整许可证文本。
+
+在 macOS/Linux 上比较直接启动 TUI 的耗时：先构建并保留前后两个可执行文件，再运行：
+
+```sh
+python3 scripts/rust/benchmark-startup.py --binary target/debug/maka \
+  --baseline /tmp/maka-before --runs 5 --output /tmp/maka-startup
+```
+
+基准使用独立数据目录，首次安装单独计时，重开按前后版本交替执行。它等待首页出现并确认命令面板可用后退出。输出目录保留原始终端输出、失败次数及耗时中位数和范围。两版应使用相同构建配置，测量期间避免同时构建。

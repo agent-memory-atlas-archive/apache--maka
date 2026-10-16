@@ -67,12 +67,11 @@ async fn activate_worker_mode(
         let worker_package = if workers {
             let base = package(true);
             let mut manifest = base.manifest().clone();
+            let mut manifest_application =
+                manifest.application.as_ref().unwrap().declaration().clone();
             manifest.id = "worker".into();
             if external {
-                manifest
-                    .application
-                    .as_mut()
-                    .unwrap()
+                manifest_application
                     .entries
                     .get_mut(&EntryTarget::Host)
                     .unwrap()
@@ -91,10 +90,7 @@ async fn activate_worker_mode(
                     | WorkerBehavior::DeniedQuery(_)
                     | WorkerBehavior::External
             ) {
-                manifest
-                    .application
-                    .as_mut()
-                    .unwrap()
+                manifest_application
                     .entries
                     .get_mut(&EntryTarget::Host)
                     .unwrap()
@@ -103,10 +99,13 @@ async fn activate_worker_mode(
                 };
             }
             Some(
-                Package::new(BTreeMap::from([(
-                    MANIFEST_FILE.into(),
-                    serde_json::to_vec(&manifest).unwrap(),
-                )]))
+                Package::new(BTreeMap::from([(MANIFEST_FILE.into(), {
+                    manifest.application = Some(
+                        maka_plugin_core::package::CheckedDeclaration::new(manifest_application)
+                            .unwrap(),
+                    );
+                    serde_json::to_vec(&manifest).unwrap()
+                })]))
                 .unwrap(),
             )
         } else {
@@ -116,10 +115,6 @@ async fn activate_worker_mode(
             let mut node = composition.instances["provider"].clone();
             node.key = Uuid::from_u128(21);
             node.package = worker.application_ref().into();
-            // Permit the next model step to consume a genuinely promoted message.
-            node.configuration
-                .values
-                .insert("maxSteps".into(), json!(2));
             if external {
                 node.configuration.values.insert(
                     "executors".into(),
@@ -138,10 +133,9 @@ async fn activate_worker_mode(
         for package in &mut packages {
             let previous = package.application_ref();
             let mut manifest = package.manifest().clone();
-            let entry = manifest
-                .application
-                .as_mut()
-                .unwrap()
+            let mut manifest_application =
+                manifest.application.as_ref().unwrap().declaration().clone();
+            let entry = manifest_application
                 .entries
                 .get_mut(&EntryTarget::Host)
                 .unwrap();
@@ -178,7 +172,13 @@ async fn activate_worker_mode(
                 );
             }
             let mut files = package.files().clone();
-            files.insert(MANIFEST_FILE.into(), serde_json::to_vec(&manifest).unwrap());
+            files.insert(MANIFEST_FILE.into(), {
+                manifest.application = Some(
+                    maka_plugin_core::package::CheckedDeclaration::new(manifest_application)
+                        .unwrap(),
+                );
+                serde_json::to_vec(&manifest).unwrap()
+            });
             *package = Package::new(files).unwrap();
             for node in composition
                 .instances
@@ -189,15 +189,10 @@ async fn activate_worker_mode(
                 if manifest.id == "agent" {
                     node.configuration = NodeConfiguration {
                         values: BTreeMap::from([
-                            ("agent".into(), {
-                                let mut settings =
-                                    serde_json::to_value(&fixture.owner.settings).unwrap();
-                                if workers {
-                                    // Route, wait, then answer in this same invocation.
-                                    settings["maxSteps"] = json!(3);
-                                }
-                                settings
-                            }),
+                            (
+                                "agent".into(),
+                                serde_json::to_value(&fixture.owner.settings).unwrap(),
+                            ),
                             (
                                 "workers".into(),
                                 if workers {

@@ -200,13 +200,19 @@ async fn early_tool_results_and_retained_interrupted_items_invalidate_stale_usag
             .await
             .unwrap();
         }
-        assert!(
-            log.context_usage("s").await.unwrap().1.is_none(),
-            "provider usage must not undercount newly retained content"
+        assert_eq!(
+            log.context_usage("s").await.unwrap().1,
+            Some(maka_event_log::context::ContextUsage {
+                tokens: 10,
+                approximate: false,
+                last_known: true,
+            }),
+            "unknown additions retain an explicitly last-known baseline"
         );
         request(&log, "fresh", true).await;
         complete(&log, "fresh", StepBuilder::for_step("fresh").unwrap(), 200).await;
         assert_eq!(log.context_usage("s").await.unwrap().1.unwrap().tokens, 200);
+        assert!(!log.context_usage("s").await.unwrap().1.unwrap().last_known);
         log.append(&event(Fact::InvocationEnded {
             outcome: InvocationOutcome::Completed,
         }))

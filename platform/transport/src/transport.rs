@@ -17,11 +17,9 @@
  * under the License.
  */
 
-//! UI adapters and trusted process bootstrap for the shared Application transport.
+//! UI adapters for authenticated independent Host sessions.
 pub mod ipc;
 pub mod native;
-pub mod process;
-use maka_host_runtime::application::transport::wire;
 pub use maka_host_runtime::application::transport::{
     Call, Catalogue, Description, Endpoint, Endpoints, NativeGrant, Peer, PeerPolicy, Peers, Reply,
     Selection, Server, Source,

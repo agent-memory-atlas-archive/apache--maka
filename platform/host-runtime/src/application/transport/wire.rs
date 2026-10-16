@@ -31,17 +31,6 @@ use std::io::Write;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Hello {
-    pub nonce: Uuid,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Accepted {
-    pub nonce: Uuid,
-}
-
 pub const FRAME_LIMIT: usize = 2 * 1024 * 1024;
 /// Observations supplied by the caller adapter, never transport authentication.
 #[derive(Clone, Debug, Serialize, Deserialize)]

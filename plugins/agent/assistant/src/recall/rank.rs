@@ -259,6 +259,7 @@ mod tests {
                     turn_id: turn.into(),
                     timestamp: 1,
                     timing: None,
+                    compaction: None,
                     role,
                     sequence: 1,
                     offset: 0,

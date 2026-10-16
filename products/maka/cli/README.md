@@ -29,9 +29,11 @@ From the repository root, run `just run` or `just run --help`. Development build
 
 The first installation asks for workspace trust inside the TUI, before starting the Host or enabling project skills and tools. Tab or the arrow keys select an action; Enter confirms and Esc exits. The initial selection is Exit. Confirmation keeps the same terminal screen while the product initializes. Reopening uses the saved installation without asking again.
 
+Startup discovers the local Host and connects to it, or starts one automatically. TUI and Desktop can share that Host. By default, quitting a UI also stops the Host when no other client remains. Use Ctrl+Alt+Q in the TUI to close only the UI and keep accepted background tasks running; reconnect to observe their results.
+
 ## Product recovery and URL installation
 
-Close the product UI and its local Host before changing an owned Root from the CLI. Both commands default to `~/.maka/application`; select another installation with `--root DIRECTORY`.
+Close the product UI before recovery; restoration updates the independent Host through its management service. Direct package installation requires the selected Root to be inactive. Both commands default to `~/.maka/application`; select another installation with `--root DIRECTORY`.
 
 ```sh
 maka application restore-defaults
@@ -40,4 +42,4 @@ maka application install-url --url https://example.com/plugin.maka-plugin
 
 `restore-defaults` restores the Host, management and UI compositions from the original installation, with their exact packages and instance IDs. It keeps conversations, credentials, plugin data, connection authority and source history. It restores the installation baseline, not a newer executable's defaults. An interrupted restore resumes the same prepared revisions when reopened; later conflicting edits are rejected.
 
-`install-url` accepts a direct HTTP(S) `.maka-plugin` bundle URL. It validates package/file digests and bounded downloads, stores an immutable revision, and leaves activation to the Plugins composition editor. Add `--sha256 HEX` to verify a publisher-provided bundle digest, `--expected-revision N` for an explicit source comparison, or `--deployment UUID` for an independently committed deployment. Downloads use the process proxy environment. The live Plugins install page and Agent `UIRequest` also expose URL installation through the bound deployment manager.
+`install-url` accepts a direct HTTP(S) `.maka-plugin` bundle URL. It validates the package digest and bounded downloads, stores an immutable revision, and leaves activation to the Plugins composition editor. Add `--sha256 HEX` to verify a publisher-provided bundle digest, `--expected-revision N` for an explicit source comparison, or `--deployment UUID` for an independently committed deployment. Downloads use the process proxy environment. The live Plugins install page and Agent `UIRequest` also expose URL installation through the bound deployment manager.

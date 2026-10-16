@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -304,6 +305,7 @@ export function formEditor<N extends Node>(
                           `field-${index}`,
                           'editor',
                           {
+                            menu: editorMenu(props.theme, props.locale),
                             appearance: props.theme.textarea,
                             accessibilityLabel: field.label,
                             placeholder: field.label,

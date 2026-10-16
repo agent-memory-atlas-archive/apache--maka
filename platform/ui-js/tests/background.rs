@@ -231,7 +231,13 @@ fn a_slow_deployment_loads_modules_sequentially() {
         .unwrap();
     let (mut input, mut packages) = support::fixture("");
     let original = packages.pop().unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -300,7 +306,13 @@ fn shutdown_drains_a_large_composition_behind_its_original_busy_worker() {
         "const until=Date.now()+200;while(Date.now()<until){};return frame({...state,revision:state.revision+1});",
     );
     let original = packages.pop().unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)

@@ -366,7 +366,13 @@ fn fixture_data(
 ) {
     let (mut input, mut packages) = support::fixture("");
     let original = packages.pop().unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.scene = None;
     entry.implementation = Implementation::Native {
@@ -395,7 +401,13 @@ fn fixture_data(
     let service = native_package("native.stream", "test.stream", service_contract());
     let child = native_package("native.child", "test.child", child_contract.clone());
     let child = if matches!(mode, Mode::Burst) {
-        let mut declaration = child.manifest().application.clone().unwrap();
+        let mut declaration = child
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Desktop)

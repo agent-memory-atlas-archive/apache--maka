@@ -21,13 +21,10 @@ use crate::{Inner, RunContext, RunError, context_input, model_attempt};
 use maka_agent_facts::context::CheckpointMode;
 use maka_agent_facts::context::CompactOutcome;
 use maka_agent_facts::context::ContextCheckpoint;
-use maka_agent_facts::context::ModelPurpose;
-use maka_agent_facts::context::SUMMARY_FORMAT_TEMPLATE;
-use maka_agent_facts::context::SummaryDefect;
+use maka_agent_facts::context::DEFAULT_COMPACTION_PROMPT;
 use maka_agent_facts::context::TextSummary;
 use maka_agent_facts::event::Fact;
 use maka_agent_facts::event::RuntimeEvent;
-use maka_agent_facts::model::ModelFinishReason;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -38,7 +35,8 @@ pub(super) struct Job {
     source: model_attempt::RequestSource,
     mode: CheckpointMode,
     prompt: Vec<maka_model::prompt::Message>,
-    adapter: maka_agent_ports::model::Binding,
+    surface: Arc<crate::request_composition::Surface>,
+    definitions: Vec<maka_model::ToolDefinition>,
 }
 
 pub(super) async fn run(
@@ -94,7 +92,6 @@ pub(super) async fn capture(
         inner,
         input,
         &source,
-        ModelPurpose::Summary,
         cancellation,
         continuation_base,
         &input.invocation.invocation_id,
@@ -107,12 +104,74 @@ pub(super) async fn capture(
         return Ok(None);
     }
     let adapter = inner.model.binding(&input.provider)?;
+    let prior = match &source.latest_main {
+        maka_event_log::context::LatestMainContext::Selected(latest)
+            if latest.model_id == input.provider.model
+                && latest.route_identity == model_attempt::route_identity(input)?
+                && latest.connection_id.as_deref()
+                    == input
+                        .configuration
+                        .model
+                        .as_ref()
+                        .map(|model| model.connection_id.as_str()) =>
+        {
+            inner
+                .log
+                .completed_request_composition(&input.invocation.session_id, latest.sequence)
+                .await?
+        }
+        _ => None,
+    };
+    let mut composition =
+        prior.unwrap_or_else(|| maka_agent_facts::composition::RequestComposition {
+            system_prompt: input
+                .configuration
+                .system_prompt
+                .as_ref()
+                .map(|prompt| prompt.text.clone()),
+            dynamic_context: vec![],
+            tool_catalog_digest: maka_agent_facts::artifact::content_digest(b"[]"),
+            tools: vec![],
+            provider_options: Some(input.provider_options.clone()),
+            max_output_tokens: None,
+            sources: input
+                .configuration
+                .system_prompt
+                .as_ref()
+                .map(|prompt| prompt.sources.clone())
+                .unwrap_or_default(),
+        });
+    // The prompt/tool surface can be reused, while execution binds the currently
+    // captured adapter and model revision on this admitted route.
+    composition.sources.retain(|source| {
+        !matches!(
+            source.kind,
+            maka_agent_facts::composition::SourceKind::ModelAdapter
+                | maka_agent_facts::composition::SourceKind::ModelProvider
+        )
+    });
+    composition.sources.push(adapter.source().clone());
+    composition
+        .sources
+        .extend(input.model_revision.iter().cloned());
+    let definitions = composition.tools.clone();
+    let mut captured = input.clone();
+    if let Some(options) = &composition.provider_options {
+        captured.provider_options = options.clone();
+    }
+    let surface = Arc::new(crate::request_composition::Surface::summary(
+        adapter,
+        composition,
+        context_input::summary_output_budget(input),
+    )?);
+    let prompt = surface.apply(prompt);
     Ok(Some(Job {
-        input: input.clone(),
+        input: captured,
         source: model_attempt::RequestSource::from(&source),
         mode: mode.clone(),
         prompt,
-        adapter,
+        surface,
+        definitions,
     }))
 }
 
@@ -127,26 +186,35 @@ impl Job {
             source,
             mode,
             prompt,
-            adapter,
+            surface,
+            definitions,
         } = self;
-        let base = format!(
-            "You are a context summarization assistant.\nRead the conversation between a user and an AI assistant, then produce a structured summary another LLM will use to continue the same task.\nDo NOT continue the conversation. Do NOT answer questions in it. ONLY output the structured summary.\n\nUse this exact format:\n\n{SUMMARY_FORMAT_TEMPLATE}\n\nKeep each section concise. Preserve exact file paths, function names, commands, and error messages."
+        let instruction = maka_model::prompt::Message::user(
+            input
+                .configuration
+                .compaction_prompt
+                .clone()
+                .unwrap_or_else(|| DEFAULT_COMPACTION_PROMPT.into()),
         );
-        let mut instruction = base.clone();
-        let mut input_budget = context_input::summary_budget(&input);
-        let mut shortened = false;
-        let mut repair = None;
+        let mut input_budget = context_input::summary_budget(&input)
+            .saturating_sub(context_input::estimate(std::slice::from_ref(&instruction)))
+            .saturating_sub(context_input::json_tokens(&definitions));
+        let mut overflowed = false;
         loop {
-            let mut request = context_input::fit_summary(&prompt, input_budget);
-            request.push(maka_model::prompt::Message::user(format!("{instruction}\n\nNow write the structured summary of the conversation above. Output only the summary.")));
+            let mut request = if overflowed {
+                context_input::fit_summary(&prompt, input_budget)
+            } else {
+                prompt.clone()
+            };
+            request.push(instruction.clone());
             let result = model_attempt::execute_once(
                 inner,
                 &input,
                 &source,
                 request,
-                Vec::new(),
+                definitions.clone(),
                 model_attempt::Attempt::Summary {
-                    adapter: adapter.clone(),
+                    surface: surface.clone(),
                 },
                 cancellation,
                 &mut false,
@@ -159,40 +227,14 @@ impl Job {
                     observed_output: false,
                 })) if input_budget > 256 => {
                     input_budget = input_budget.min(context_input::estimate(&prompt)).max(1) / 2;
+                    overflowed = true;
                     continue;
                 }
                 Err(error) => return Err(error),
             };
-            if output.finish_reason == ModelFinishReason::Length {
-                if shortened || repair.is_some() {
-                    return Ok(failed("output_length"));
-                }
-                shortened = true;
-                instruction = format!(
-                    "{base}\n\nYour previous attempt was cut off at the output limit. Produce the same summary in well under half the length: keep every section, drop detail rather than sections."
-                );
-                continue;
-            }
-            let summary = match TextSummary::from_model_step(&output, source.checkpoint.is_none()) {
+            let summary = match TextSummary::from_model_step(&output) {
                 Ok(summary) => summary,
-                Err(defect) => {
-                    if let Some(original) = repair {
-                        return Ok(failed(&SummaryDefect::to_string(&original)));
-                    }
-                    if !matches!(
-                        defect,
-                        SummaryDefect::MissingSection
-                            | SummaryDefect::Truncated
-                            | SummaryDefect::TooSmallForFold
-                    ) {
-                        return Ok(failed(&defect.to_string()));
-                    }
-                    repair = Some(defect);
-                    instruction = format!(
-                        "{base}\n\nA prior attempt was rejected as {defect}.\nProduce one complete replacement summary from the source conversation.\nEvery required section must appear in order with substantive content. Do not discuss the repair."
-                    );
-                    continue;
-                }
+                Err(defect) => return Ok(failed(&defect.to_string())),
             };
             let checkpoint = RuntimeEvent::new(
                 input.invocation.clone(),

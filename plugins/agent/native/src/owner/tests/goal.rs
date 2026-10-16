@@ -24,7 +24,6 @@ async fn fixture(base: &str) -> Fixture {
     Fixture::configured(base, None, None, None, |settings| {
         settings.goals = true;
         settings.tool_discovery = true;
-        settings.max_steps = Some(4);
     })
     .await
 }

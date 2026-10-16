@@ -120,7 +120,6 @@ fn input(base: &str, suffix: &str, effect: Arc<Effect>) -> RunInput {
                 handler: ToolHandler::Immediate(effect),
             }])
             .unwrap(),
-            max_steps: Some(3),
         },
     }
 }
@@ -168,9 +167,7 @@ async fn aborted_caller_cancels_worker_but_retains_admission_until_effect_is_dur
             );
             let caller_token = CancellationToken::new();
             let running_engine = engine.clone();
-            let mut running_input = input(&base, "aborted", effect.clone());
-            let maka_agent_engine::RunWork::Message { max_steps, .. } = &mut running_input.work else { unreachable!() };
-            *max_steps = None;
+            let running_input = input(&base, "aborted", effect.clone());
             let running_token = caller_token.clone();
             let caller =
                 tokio::spawn(async move { running_engine.run(running_input, running_token).await });

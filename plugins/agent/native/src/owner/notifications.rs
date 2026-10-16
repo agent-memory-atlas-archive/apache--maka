@@ -93,6 +93,7 @@ impl Owner {
             return Ok(None);
         }
         let mut basis = MessageBasis {
+            compaction_prompt: Some(self.effective_compaction_prompt().await?),
             graph: None,
             collaboration_mode: session.configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,
@@ -107,7 +108,6 @@ impl Owner {
             internal_tools: self.internal_tools.clone(),
             internal_bindings: self.internal_bindings.clone(),
             behavior: self.capture_behavior(&route.workspace).await?,
-            max_steps: self.settings.max_steps,
         };
         self.prepare_plan_behavior(&source.session_id, &mut basis)
             .await?;

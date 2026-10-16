@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from './editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -518,6 +519,7 @@ export function appearanceView<N extends Node>(
       `appearance-${name}`,
       'input',
       {
+        menu: editorMenu(theme, locale),
         appearance: theme.input,
         accessibilityLabel: label,
         readOnly: false,

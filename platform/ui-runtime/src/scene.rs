@@ -76,11 +76,11 @@ mod tests {
         let node: terminal::Node = serde_json::from_value(value.clone()).unwrap();
         node.validate_root().unwrap();
         let mut inputs = std::collections::BTreeMap::new();
-        node.shortcut_inputs(&mut inputs, true).unwrap();
+        inputs = node.metadata(inputs).unwrap().inputs;
         assert_eq!(inputs.len(), 2);
         assert_eq!(inputs["next"], json!(true));
         inputs.insert("next".into(), json!({"type":"string"}));
-        assert!(node.shortcut_inputs(&mut inputs, true).is_err());
+        assert!(node.metadata(inputs).is_err());
         for (field, replacement) in [
             ("scroll", json!("none")),
             ("wheel", json!({"up":"","down":"next"})),
@@ -91,6 +91,55 @@ mod tests {
             let node: terminal::Node = serde_json::from_value(invalid).unwrap();
             assert!(node.validate_root().is_err());
         }
+    }
+
+    #[test]
+    fn parent_commands_check_native_inputs_in_later_descendants() {
+        let text = |key| json!({"kind":"text","key":key,"text":"Body","color":0});
+        let mut source = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,
+            "shortcuts":[{"key":"k","modifiers":["primary"],"input":"target","enabled":true}],
+            "children":[{"kind":"item","key":"target","content":text("body")}]});
+        let terminal = |source| {
+            let node: terminal::Node = serde_json::from_value(source).unwrap();
+            node.validate_root().unwrap();
+            node.metadata(Default::default())
+        };
+        assert_eq!(
+            terminal(source.clone()).err().unwrap(),
+            "shortcut collides with typed native input"
+        );
+        source["shortcuts"] = json!([]);
+        source["scroll"] = json!("manual");
+        source["wheel"] = json!({"up":"target","down":"next"});
+        assert_eq!(
+            terminal(source.clone()).err().unwrap(),
+            "wheel command collides with typed native input"
+        );
+        source["shortcuts"] =
+            json!([{"key":"k","modifiers":["primary"],"input":"target","enabled":true}]);
+        source.as_object_mut().unwrap().remove("wheel");
+        source["children"] = json!([{"kind":"dialog","key":"target","label":"Dialog","open":true,
+            "background":text("background"),"content":text("body")}]);
+        let desktop = |source| {
+            let node: desktop::Node = serde_json::from_value(source).unwrap();
+            node.validate_root().unwrap();
+            node.metadata(Default::default())
+        };
+        assert_eq!(
+            desktop(source.clone()).err().unwrap(),
+            "shortcut collides with typed native input"
+        );
+        source["children"][0]["open"] = json!(false);
+        assert_eq!(
+            desktop(source.clone()).unwrap().inputs["target"],
+            json!(true)
+        );
+        source["children"] = json!([{"kind":"button","key":"target","label":"Action"}]);
+        assert_eq!(
+            terminal(source.clone()).unwrap().inputs["target"],
+            json!(true)
+        );
+        assert_eq!(desktop(source).unwrap().inputs["target"], json!(true));
     }
 
     #[test]

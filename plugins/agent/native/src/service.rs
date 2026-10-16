@@ -89,6 +89,23 @@ impl Handler for Agent {
                         context.emit(encode(page)?).await?;
                     }
                 }
+                "globalInstructions" => {
+                    let _: GlobalInstructionsRead = decode(input)?;
+                    encode(owner.global_instructions(context.scope()).await?)
+                }
+                "updateGlobalInstructions" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(
+                        owner
+                            .update_global_instructions(decode(input)?, context.scope())
+                            .await?,
+                    )
+                }
+                "skillCandidates" => encode(
+                    owner
+                        .skill_candidates(decode(input)?, context.scope())
+                        .await?,
+                ),
                 "tools" => encode(owner.tool_names()),
                 "plan" => encode(owner.plan(decode(input)?).await?),
                 "planHistory" => encode(owner.plan_history(decode(input)?).await?),
@@ -302,6 +319,15 @@ impl Handler for Agent {
                             maka_event_log::context::LatestMainContext::Selected(basis),
                             usage,
                         )) => {
+                            let backend_matches = matches!(
+                                session.backend.as_ref().or(remembered_backend.as_ref()),
+                                Some(BackendPreference::Model { model_id, connection_id, .. })
+                                    if model_id == &basis.model_id
+                                        && basis.connection_id.as_ref() == Some(connection_id)
+                            );
+                            let usage = usage.filter(|usage| {
+                                !usage.last_known || (run.is_some() && backend_matches)
+                            });
                             let seconds = basis
                                 .requested_at
                                 .and_then(|at| basis.recorded_at.duration_since(at).ok())
@@ -316,6 +342,9 @@ impl Handler for Agent {
                                     .as_ref()
                                     .and_then(|context| context.model_context_window),
                                 approximate: usage.as_ref().is_some_and(|usage| usage.approximate),
+                                context_last_known: usage
+                                    .as_ref()
+                                    .is_some_and(|usage| usage.last_known),
                                 output_tokens_per_second: basis
                                     .usage
                                     .output_tokens
@@ -327,6 +356,7 @@ impl Handler for Agent {
                         _ => None,
                     };
                     let result = encode(Observation {
+                        compacting: observed.compacting,
                         session,
                         metrics,
                         remembered_backend,
@@ -409,6 +439,7 @@ impl Handler for Agent {
                             chunks: chunks
                                 .into_iter()
                                 .map(|chunk| HistoryChunk {
+                                    compaction: chunk.compaction,
                                     attachments: chunk
                                         .attachments
                                         .into_iter()
@@ -666,6 +697,11 @@ impl Handler for Agent {
                     )
                 }
                 "execution" => encode(owner.execution(decode(input)?).await?),
+                "compactionPrompt" => encode(owner.compaction_prompt(decode(input)?).await?),
+                "compact" => {
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.compact(decode(input)?, operation).await?)
+                }
                 "resume" => {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.resume(decode(input)?, operation).await?)
@@ -924,7 +960,8 @@ fn delivery(event: StoreStreamEvent) -> Delivery {
         }
         StreamFact::InvocationEnded { failed, .. } => DeliveryFact::Ended { failed },
         StreamFact::StepEnded { step_id, .. } => DeliveryFact::StepEnded { step_id },
-        StreamFact::MessageSteered
+        StreamFact::ContextChanged
+        | StreamFact::MessageSteered
         | StreamFact::ExecutorToolStart { .. }
         | StreamFact::ExecutorToolProgress { .. }
         | StreamFact::ExecutorToolResult { .. }

@@ -22,10 +22,19 @@ import { tui_chat_context, tui_chat_metrics_hint } from '../../shared/tui-messag
 
 // This feature owns this explicit message catalog; shared messages remain tree-shakeable.
 
+import type { Catalog } from '../../shared/locale.js';
+
 const terminalMessages = {
   'chat-context': tui_chat_context,
+  'chat-compacting': ['Compressing context', '正在压缩上下文', '正在壓縮上下文'],
+  'chat-context-last': ['last', '上次', '上次'],
+  'chat-context-last-hint': [
+    'Last known context usage; newer additions are not yet counted.',
+    '上次已知的上下文用量；尚未计入后续新增内容。',
+    '上次已知的上下文用量；尚未計入後續新增內容。',
+  ],
   'chat-metrics-hint': tui_chat_metrics_hint,
-};
+} satisfies Catalog;
 export function tuiText(
   locale: string,
   key: string,

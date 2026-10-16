@@ -36,7 +36,13 @@ fn fixture() -> (
         .iter()
         .find(|p| p.manifest().id == "native.editor")
         .unwrap();
-    let mut declaration = editor.manifest().application.clone().unwrap();
+    let mut declaration = editor
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.implementation = Implementation::Native {
         implementation: "maka.ui.input".into(),
@@ -55,7 +61,13 @@ fn fixture() -> (
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)

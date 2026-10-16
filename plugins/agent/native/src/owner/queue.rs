@@ -113,6 +113,7 @@ impl Owner {
         runs.controls.insert(
             running.invocation().session_id.clone(),
             Control {
+                compacting: false,
                 invocation: running.invocation().clone(),
                 basis,
                 cancellation: running.cancellation(),
@@ -324,6 +325,7 @@ impl Owner {
             .ok_or("agent_session_unavailable")?;
         let permissions = &session.configuration.permissions;
         let mut configuration = InvocationConfiguration {
+            compaction_prompt: basis.compaction_prompt.clone(),
             editing_tools: None,
             tool_discovery: basis.tool_discovery,
             cwd: basis.workspace.path.clone(),
@@ -382,7 +384,6 @@ impl Owner {
                         message: delivered.message.content.clone(),
                         source_messages: vec![delivered],
                         tools,
-                        max_steps: basis.max_steps,
                         allow_prior_unknown: false,
                     },
                 }))

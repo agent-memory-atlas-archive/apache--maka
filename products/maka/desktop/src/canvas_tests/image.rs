@@ -160,7 +160,13 @@ fn packaged_image_viewer_crosses_actual_guest_frame_queries_and_native_receipts(
         .unwrap();
     let (mut input, mut packages) = support::fixture("");
     let old = packages.pop().unwrap();
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.imports.insert(
         "viewer".into(),

@@ -184,6 +184,29 @@ async fn snapshot_precedence_preferences_and_capabilities_preserve_selected_iden
         0,
         "pinning does not create a match"
     );
+    let listing = pinned_catalog.search("", 1);
+    assert_eq!(listing.matches[0].skill.reference, "project:maka:large");
+    assert_eq!(listing.matched_count, pinned_catalog.available().count());
+    assert!(listing.truncated);
+    let disabled = Preferences::Available(BTreeMap::from([(
+        "project:maka:review".into(),
+        Preference {
+            enabled: false,
+            pinned: false,
+        },
+    )]));
+    let disabled_catalog = Catalog {
+        preferences: &disabled,
+        ..catalog
+    };
+    let listing = disabled_catalog.search("", 8);
+    assert_eq!(listing.matches.len(), disabled_catalog.available().count());
+    assert!(
+        listing
+            .matches
+            .iter()
+            .all(|entry| entry.skill.id != "review")
+    );
     let long_query = catalog.search(&"😀".repeat(300), 8);
     assert_eq!(long_query.query.encode_utf16().count(), 512);
     assert!(long_query.query_truncated);

@@ -18,7 +18,7 @@
  */
 
 use crate::support::context as fixture;
-use maka_agent_engine::{RunError, RunWork};
+use maka_agent_engine::RunError;
 use maka_agent_facts::context::ModelPurpose;
 use maka_agent_facts::context::ModelRequestContext;
 use maka_agent_facts::event::Fact;
@@ -48,9 +48,9 @@ async fn overflow(socket: &mut TcpStream, observed: bool) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn overflow_recovers_once_only_without_output_and_with_remaining_main_budget() {
-    for (observed, budget) in [(false, 2), (true, 2), (false, 1)] {
-        let recover = !observed && budget > 1;
+async fn overflow_recovers_once_only_without_observed_output() {
+    for observed in [false, true] {
+        let recover = !observed;
         let directory = tempfile::tempdir().unwrap();
         let log = Arc::new(
             EventLog::open(&directory.path().join("events.sqlite"))
@@ -93,9 +93,6 @@ async fn overflow_recovers_once_only_without_output_and_with_remaining_main_budg
             .unwrap();
         let mut next = fixture::input(&base, "overflow", false);
         next.main_output_limit = Some(128_000);
-        if let RunWork::Message { max_steps, .. } = &mut next.work {
-            *max_steps = Some(budget);
-        }
         let result = worker.run(next, CancellationToken::new()).await;
         if recover {
             result.unwrap();
@@ -164,7 +161,7 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
         fixture::respond(&mut old, "old-answer", "stop").await;
         let mut main = None;
         let mut summaries = 0;
-        while summaries < 2 || main.is_none() {
+        while summaries < 1 || main.is_none() {
             let (mut socket, _) = listener.accept().await.unwrap();
             let request = fixture::read_request(&mut socket).await;
             if request["messages"]
@@ -172,7 +169,7 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
                 .contains("Now write the structured summary")
             {
                 summaries += 1;
-                fixture::respond(&mut socket, "malformed", "stop").await;
+                fixture::respond(&mut socket, "incomplete", "length").await;
             } else {
                 assert!(main.is_none(), "only one main request before overflow");
                 assert!(request["messages"].to_string().contains("old-answer"));
@@ -199,9 +196,6 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
         declared_window: Some(70),
         model_context_window: None,
     });
-    if let RunWork::Message { max_steps, .. } = &mut next.work {
-        *max_steps = Some(3);
-    }
     assert!(matches!(
         worker.run(next, CancellationToken::new()).await,
         Err(RunError::Model(ModelError::ContextOverflow {
@@ -233,7 +227,7 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
                 }
             ))
             .count(),
-        2
+        1
     );
     assert_eq!(
         events

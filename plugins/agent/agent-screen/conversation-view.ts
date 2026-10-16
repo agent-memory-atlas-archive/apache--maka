@@ -29,6 +29,8 @@ import { draftReady } from '../../shared/drafts.js';
 
 import {
   canExecute,
+  composerCommands,
+  reviewTarget,
   selectedBackend,
   catalogPending,
   conversationRoute,
@@ -66,6 +68,7 @@ function readingProps(
       !mutationPending(state) &&
       conversationRoute(state) &&
       state.dialog === null &&
+      state.inspector === null &&
       !state.source &&
       !state.image,
     search:
@@ -258,6 +261,18 @@ export function conversationView<N extends Node>(
     'composer',
     'composer',
     {
+      approvalPending:
+        state.plan.page?.current.proposal?.status === 'pending_approval' ||
+        ['service_approval', 'permissions', 'client_capability'].includes(
+          reviewTarget(state)?.kind ?? '',
+        ),
+      commands: composerCommands(state, locale, target),
+      skillContext: JSON.stringify([
+        state.selected?.workspace,
+        state.selected?.tools,
+        state.selected?.collaborationMode,
+        state.selected?.boundaryRevision,
+      ]),
       backend: canExecute(state) ? selectedBackend(state) : null,
       context: state.selected?.id ?? null,
       dataSource: state.selected?.dataSource ?? null,
@@ -302,6 +317,7 @@ export function conversationView<N extends Node>(
       autoFocus: !state.searchOpen && state.browse === null,
     },
     {
+      command: 'command',
       sent: 'sent',
       submission: 'submission',
       setup: 'setup',
@@ -462,6 +478,7 @@ export function conversationView<N extends Node>(
       sessionId: state.selected?.id ?? null,
       dataSource: state.selected?.dataSource ?? null,
       running: !!state.run,
+      compacting: state.compacting,
       metrics,
       theme,
       locale,

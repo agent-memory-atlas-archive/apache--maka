@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 #[derive(Args)]
 pub(crate) struct Restore {
-    /// UI State Root (default: ~/.maka/application). Close its UI and local Host first.
+    /// UI State Root (default: ~/.maka/application). Close its UI first.
     #[arg(long)]
     root: Option<PathBuf>,
 }
@@ -65,16 +65,21 @@ async fn restore(store: &EventLog) -> Result<DeploymentRef, HostError> {
     }
     let connections = serde_json::from_value(record.configuration.clone())?;
     let (path, domain, host_id, management) = launch::targets(&connections)?;
-    let host = launch::open(path, false, Some(domain)).await?;
+    let host = super::public::Host::connect(path, domain, host_id).await?;
     let result = async {
         let mut revisions = BTreeMap::new();
-        let mut originals = Vec::new();
+        let current = host.read().await?;
+        revisions.insert(host_id, current.source.reference.revision);
+        let mut baseline = current.source.reference;
+        baseline.revision = 1;
+        let original = host.document(&baseline).await?;
         let mut packages = BTreeMap::new();
-        for (target, deployment) in [
-            (&host, host_id),
-            (store, management),
-            (store, record.deployment),
-        ] {
+        for package in host.packages(&baseline, &original.packages).await? {
+            packages.insert(package.application_ref(), package);
+        }
+        let mut originals = vec![original];
+        for deployment in [management, record.deployment] {
+            let target = store;
             let current = target
                 .read_application_metadata(deployment)
                 .await?
@@ -89,11 +94,21 @@ async fn restore(store: &EventLog) -> Result<DeploymentRef, HostError> {
             for package in original.packages() {
                 packages.insert(package.application_ref(), package.clone());
             }
-            originals.push(original);
+            originals.push(
+                maka_plugin_core::deployment::management::DeploymentDocument {
+                    input: original.source().input.clone(),
+                    remote_exports: original.source().remote_exports.clone(),
+                    packages: original
+                        .packages()
+                        .iter()
+                        .map(Package::application_ref)
+                        .collect(),
+                },
+            );
         }
-        let ui = originals.pop().unwrap().into_parts().0;
-        let management = originals.pop().unwrap().into_parts().0;
-        let host = originals.pop().unwrap().into_parts().0;
+        let ui = originals.pop().unwrap();
+        let management = originals.pop().unwrap();
+        let host = originals.pop().unwrap();
         let preparation = launch::Preparation {
             product: None,
             previous_connections: None,
@@ -122,8 +137,6 @@ async fn restore(store: &EventLog) -> Result<DeploymentRef, HostError> {
         Ok::<_, HostError>(())
     }
     .await;
-    host.drain().await;
-    drop(host);
     result?;
     launch::prepare(store, None, Product::Agent).await?;
     Ok(store
@@ -181,10 +194,12 @@ pub(super) async fn ensure(
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_public::PublishedHost;
     use super::*;
     use maka_event_log::applications::launch::Launch;
     use maka_plugin_core::composition::{Environment, ExecutionLocation};
     use serde_json::json;
+    use std::sync::Arc;
 
     fn input() -> Input {
         Input {
@@ -204,18 +219,18 @@ mod tests {
             .await
             .unwrap();
         let host_path = directory.path().join("host");
-        let host = launch::open(host_path.clone(), true, None).await.unwrap();
+        let host = Arc::new(launch::open(host_path.clone(), true, None).await.unwrap());
         let ui = Uuid::new_v4();
         let host_id = Uuid::new_v4();
         let manager = Uuid::new_v4();
         let owner = host.owned_root().unwrap();
         let endpoint = json!({"service":{"consumer":[Uuid::new_v4()],"import":"service","grant":{"methods":["read"],"recovery":true}}});
         let configuration = json!({"hosts":[
-            {"name":"local","location":{"kind":"process","root":owner.canonical_path(),"stateDomain":owner.root_id()},"deployment":host_id,"endpoints":endpoint},
+            {"name":"local","location":{"kind":"public","root":owner.canonical_path(),"stateDomain":owner.root_id()},"deployment":host_id,"endpoints":endpoint},
             {"name":"manager","location":{"kind":"cohost"},"deployment":manager,"endpoints":endpoint}
         ]});
         drop(owner);
-        for (target, id) in [(&host, host_id), (&store, manager), (&store, ui)] {
+        for (target, id) in [(host.as_ref(), host_id), (&store, manager), (&store, ui)] {
             target
                 .commit_application(id, 0, input(), vec![], vec![])
                 .await
@@ -253,8 +268,7 @@ mod tests {
             })
             .await
             .unwrap();
-        host.drain().await;
-        drop(host);
+        let serving = PublishedHost::start(host.clone(), host_id).await;
         let restored = restore(&store).await.unwrap();
         assert_eq!(restored.deployment, ui);
         assert_eq!(restored.revision, 3);
@@ -275,7 +289,6 @@ mod tests {
         );
         assert_eq!(restore(&store).await.unwrap(), restored); // Already restored: no new revision.
 
-        let host = launch::open(host_path.clone(), false, None).await.unwrap();
         let preparation = launch::Preparation {
             product: None,
             previous_connections: None,
@@ -297,10 +310,7 @@ mod tests {
         host.commit_application(host_id, 3, input(), vec![], vec![])
             .await
             .unwrap();
-        host.drain().await;
-        drop(host);
         assert_eq!(restore(&store).await.unwrap(), restored);
-        let host = launch::open(host_path, false, None).await.unwrap();
         assert_eq!(
             host.read_application_metadata(host_id)
                 .await
@@ -311,8 +321,60 @@ mod tests {
                 .revision,
             4
         );
-        assert!(ensure(&host, host_id, 2, &input(), &[], &[]).await.is_err());
-        host.drain().await;
+        let public = super::super::public::Host::connect(
+            host_path,
+            host.owned_root().unwrap().root_id().into(),
+            host_id,
+        )
+        .await
+        .unwrap();
+        assert!(
+            public
+                .ensure_restore(2, &input(), &[], &[], None)
+                .await
+                .is_err()
+        );
+        drop(public);
+        // A pending launcher restore must survive rejection of its first source.
+        let mut conflicting = preparation;
+        conflicting.restore.insert(host_id, 2);
+        store
+            .begin_application_restore(ui, serde_json::to_vec(&conflicting).unwrap())
+            .await
+            .unwrap();
+        let error = restore(&store).await.unwrap_err();
+        assert!(error.to_string().contains("conflicts"), "{error}");
+        assert!(
+            store
+                .application_launch()
+                .await
+                .unwrap()
+                .unwrap()
+                .pending
+                .is_some()
+        );
+        assert_eq!(
+            store
+                .read_application_metadata(ui)
+                .await
+                .unwrap()
+                .unwrap()
+                .source
+                .reference,
+            restored
+        );
+        assert_eq!(
+            host.read_application_metadata(host_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .source
+                .reference
+                .revision,
+            4
+        );
+        serving.stop().await;
+        drop(host);
         store.drain().await;
     }
 }

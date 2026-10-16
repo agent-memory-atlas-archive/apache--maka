@@ -110,6 +110,9 @@ impl SystemPrompt {
 /// Later Session mutations must not reinterpret relative paths or grants.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvocationConfiguration {
+    /// Frozen effective instructions for automatic and manual context compaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_prompt: Option<String>,
     /// Frozen file-editing policy. Older invocations retain their original unfiltered tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editing_tools: Option<EditingTools>,

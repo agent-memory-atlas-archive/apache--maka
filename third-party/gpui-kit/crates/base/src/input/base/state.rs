@@ -417,6 +417,7 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) display_map: DisplayMap,
     pub(super) undo_manager: UndoManager,
     pub(super) inline_tokens: Option<Box<super::inline_tokens::InlineTokenStore>>,
+    pub(super) literal_tokens: Option<Vec<super::InlineToken>>,
     pub(super) pending_token: Option<super::InlineToken>,
     pub(super) replaying_history: bool,
     pub(super) validated_token_edit: bool,
@@ -838,6 +839,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             blink_cursor,
             undo_manager,
             inline_tokens: None,
+            literal_tokens: None,
             pending_token: None,
             replaying_history: false,
             validated_token_edit: false,
@@ -3124,7 +3126,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         let Some(replay) = replay else {
             return;
         };
-        let token_aware = self.inline_tokens.is_some()
+        let token_aware = self.literal_tokens.is_some()
+            || self.inline_tokens.is_some()
             || replay
                 .changes
                 .iter()
@@ -4201,6 +4204,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         }
 
         self.ime_marked_range.take();
+        self.reconcile_literal_tokens();
         self.update_preferred_column();
         self.dismiss_touch_selection(cx);
         if self.is_multi_line() {
@@ -4311,9 +4315,11 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
             .map(|range| self.range_to_utf16(&range.into()))
     }
 
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.ime_marked_range = None;
+        self.reconcile_literal_tokens();
         self.undo_manager.commit_transaction();
+        cx.notify();
     }
 
     /// Replace text in range.
@@ -4536,6 +4542,7 @@ impl<M: InputModeKind> EntityInputHandler for InputBaseState<M> {
         M::refresh_language_features(self, window, cx);
         self.set_cursor_to(new_offset);
         self.ime_marked_range.take();
+        self.reconcile_literal_tokens();
         // A commit ends the IME composition: macOS delivers `insertText:` for
         // the confirmed candidate without a following `unmarkText`, so close
         // the transaction here. Leaving it open would keep merging every later
@@ -5819,6 +5826,95 @@ mod tests {
                     state.set_value(before.text().clone(), window, cx);
                     assert!(state.tokens().is_empty());
                     assert!(!state.undo_manager.has_undos());
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_literal_tokens_reconcile_and_delete_atomically(cx: &mut TestAppContext) {
+        use crate::input::InlineToken;
+        let view = InputView::build_textarea(cx, |state| state);
+        view.window_handle
+            .update(cx, |_, window, cx| {
+                view.input.update(cx, |state, cx| {
+                    state
+                        .set_literal_tokens(
+                            vec![InlineToken::new("/skill:技能", "/skill:技能")],
+                            cx,
+                        )
+                        .unwrap();
+                    let original = "🙂 /skill:技能 suffix";
+                    let start = "🙂 ".len();
+                    let end = start + "/skill:技能".len();
+                    for (cursor, backward) in [
+                        (end, true),
+                        (start, false),
+                        (start + 2, true),
+                        (start + 2, false),
+                    ] {
+                        state.set_value(original, window, cx);
+                        assert_eq!(state.tokens()[0].range(), start..end);
+                        state.set_selected_range(cursor..cursor, cx);
+                        // Installing a literal policy can encounter a previously
+                        // ordinary caret inside the newly recognized word.
+                        state.active_selection_mut().place_at(cursor, None);
+                        if backward {
+                            state.backspace(&Backspace, window, cx);
+                        } else {
+                            state.delete(&Delete, window, cx);
+                        }
+                        assert_eq!(state.value().as_ref(), "🙂  suffix");
+                        state.undo(&Undo, window, cx);
+                        assert_eq!(state.value().as_ref(), original);
+                        assert_eq!(state.tokens()[0].range(), start..end);
+                        assert!(!state.can_undo());
+                    }
+                    state.set_selected_range(start + 2..start + 5, cx);
+                    state.cut(&Cut, window, cx);
+                    assert_eq!(state.value().as_ref(), "🙂  suffix");
+                    state.undo(&Undo, window, cx);
+                    assert_eq!(state.value().as_ref(), original);
+                    state.set_value("/skill:技能-extra", window, cx);
+                    assert!(state.tokens().is_empty());
+                    state.set_value("/skill:", window, cx);
+                    state.set_selected_range(7..7, cx);
+                    state.replace("技能", window, cx);
+                    assert_eq!(
+                        state.tokens().len(),
+                        1,
+                        "completion is protected in the same native edit"
+                    );
+                    state.undo(&Undo, window, cx);
+                    assert_eq!(state.value().as_ref(), "/skill:");
+                    assert!(state.tokens().is_empty());
+                    state.redo(&Redo, window, cx);
+                    assert_eq!(state.tokens().len(), 1);
+                    state.set_value("/skill:技能 /skill:技能", window, cx);
+                    assert_eq!(state.tokens().len(), 2);
+                    state.set_selected_range(0..0, cx);
+                    state.delete(&Delete, window, cx);
+                    assert_eq!(state.value().as_ref(), " /skill:技能");
+                    assert_eq!(state.tokens().len(), 1);
+                    state.undo(&Undo, window, cx);
+                    assert_eq!(state.tokens().len(), 2);
+                    state.set_value("", window, cx);
+                    state.replace_and_mark_text_in_range(None, "/skill:技能", None, window, cx);
+                    assert!(state.tokens().is_empty(), "IME owns the provisional text");
+                    state.unmark_text(window, cx);
+                    assert_eq!(state.tokens().len(), 1);
+                    state.set_value("/skill:技能", window, cx);
+                    let end = state.text.len();
+                    state.set_selected_range(end..end, cx);
+                    state.backspace(&Backspace, window, cx);
+                    assert!(state.value().is_empty());
+                    state.set_literal_tokens(vec![], cx).unwrap();
+                    state.undo(&Undo, window, cx);
+                    assert_eq!(state.value().as_ref(), "/skill:技能");
+                    assert!(
+                        state.tokens().is_empty(),
+                        "cleared registry stays cleared on undo"
+                    );
                 });
             })
             .unwrap();

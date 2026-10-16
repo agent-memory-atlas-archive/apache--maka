@@ -40,13 +40,16 @@ pub(super) fn open_home(
         .transpose()
 }
 
-fn read(directory: &Dir) -> Vec<WorkspaceInstruction> {
+fn read(directory: &Dir, agents: bool) -> Vec<WorkspaceInstruction> {
     let mut sources = Vec::new();
     for name in [
         InstructionFile::Agents,
         InstructionFile::Claude,
         InstructionFile::Gemini,
-    ] {
+    ]
+    .into_iter()
+    .filter(|name| agents || *name != InstructionFile::Agents)
+    {
         let mut options = OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
@@ -102,13 +105,24 @@ impl Owner {
                     &workspace.identity,
                 )
                 .map_err(|_| "agent_workspace_unavailable")?;
-                let global = home
-                    .and_then(|home| home.open_dir(".maka").ok())
-                    .map(|directory| read(&directory))
-                    .unwrap_or_default();
+                let mut global = Vec::new();
+                if let Some(home) = home {
+                    if let Ok(source) = global_instructions::selected(&home)
+                        && let Ok(Some(text)) =
+                            global_instructions::read_selected(&home, source, 1024 * 1024)
+                    {
+                        global.extend(parse_instruction_files([(
+                            InstructionFile::Agents,
+                            String::from_utf8_lossy(&text).into_owned(),
+                        )]));
+                    }
+                    if let Ok(directory) = home.open_dir(".maka") {
+                        global.extend(read(&directory, false));
+                    }
+                }
                 Ok::<_, String>(maka_assistant::prompt::workspace::render(
                     global,
-                    read(&project),
+                    read(&project, true),
                 ))
             })
             .await

@@ -39,6 +39,7 @@ function props() {
         name: 'Read',
         title: null,
         presentation: 'maka.workspace.Files@1/readText',
+        ancestorToolUseIds: [],
         pending: false,
         dispatched: true,
       },

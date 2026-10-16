@@ -375,6 +375,7 @@ function settingsComposition(
         'assistant-preferences',
         {},
         {
+          agent: [remote('agent', 'agent')],
           settings: [remote('settings', 'Settings')],
           input: [local('input', 'TextInput')],
           editor: [local('editor', 'Textarea')],
@@ -441,6 +442,7 @@ function settingsComposition(
         {
           reading: [local('reading-area', 'ReadingArea')],
           settings: [remote('settings', 'Settings')],
+          authentication: [remote('settings-authentication', 'Authentication')],
           input: [local('input', 'TextInput')],
           editor: [local('editor', 'Textarea')],
           reader: [local('reader', 'Reader')],
@@ -556,6 +558,7 @@ function settingsComposition(
             'deployment-gateway',
             'management',
             [
+              'read',
               'instances',
               'setEnabled',
               'readSettings',
@@ -569,6 +572,7 @@ function settingsComposition(
               'installSource',
               'installUrl',
               'readPackage',
+              'exportPackage',
               'replaceSource',
             ],
             false,
@@ -578,13 +582,14 @@ function settingsComposition(
       },
       {
         name: 'local',
-        location: { kind: 'process', root: configuration.hostRoot },
+        location: { kind: 'public', root: configuration.hostRoot },
         deployment: configuration.hostDeployment,
         endpoints: {
           management: expose(
             'host-deployment-gateway',
             'management',
             [
+              'read',
               'instances',
               'setEnabled',
               'readSettings',
@@ -598,6 +603,7 @@ function settingsComposition(
               'installSource',
               'installUrl',
               'readPackage',
+              'exportPackage',
               'replaceSource',
             ],
             false,
@@ -701,7 +707,12 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
   ];
   if (configuration.agent.skillLibrary != null && configuration.agent.skillLibrary !== 'skills')
     throw new Error('Skill input preparation selects the skills Library import');
-  const skillCalls = [...skillMethods, ...(configuration.agent.skillLibrary ? ['prepare'] : [])];
+  const skillCalls = [
+    ...new Set([
+      ...skillMethods,
+      ...(configuration.agent.skillLibrary ? ['prepare', 'search'] : []),
+    ]),
+  ];
   if (skillCalls.length && !configuration.skills)
     throw new Error('Skill tools require explicitly selected skill collections');
   if (skillMethods.some((method) => method !== 'search' && method !== 'load'))
@@ -727,6 +738,8 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
       tools: configuration.agent.tools.map((tool) => {
         if (tool.import === 'web') return { ...tool, input: 'web' as const };
         if (tool.import === 'skills') return { ...tool, input: 'skill' as const };
+        if (tool.import === 'processes' && tool.method === 'execute')
+          tool = { ...tool, input: 'shell' };
         if (tool.presentation !== undefined) return tool;
         const contract =
           tool.import === 'files' &&

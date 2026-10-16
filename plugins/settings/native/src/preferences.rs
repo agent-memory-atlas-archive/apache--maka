@@ -34,6 +34,8 @@ pub struct Read {}
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "SettingsAssistantPreferences")]
 pub struct Preferences {
+    pub compaction_prompt: String,
+    pub default_compaction_prompt: String,
     pub revision: u64,
     #[schemars(length(max = 256))]
     pub display_name: String,
@@ -41,6 +43,7 @@ pub struct Preferences {
     pub assistant_tone: String,
     pub workspace_instructions: bool,
     pub incognito_active: bool,
+    pub shell_titles: bool,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -59,6 +62,9 @@ pub struct Update {
 )]
 #[schemars(rename = "SettingsPreferencesMutation")]
 pub enum Mutation {
+    CompactionPrompt {
+        prompt: Option<String>,
+    },
     Personalization {
         #[schemars(length(max = 256))]
         display_name: String,
@@ -70,6 +76,9 @@ pub enum Mutation {
     },
     Privacy {
         incognito_active: bool,
+    },
+    ShellTitles {
+        enabled: bool,
     },
 }
 #[derive(Serialize, JsonSchema)]
@@ -101,11 +110,17 @@ pub(crate) async fn read(
         .await
         .map_err(|_| "settings_store_unavailable")?;
     super::connections::encode(Preferences {
+        compaction_prompt: snapshot
+            .policy
+            .compaction_prompt
+            .unwrap_or_else(|| maka_agent_facts::context::DEFAULT_COMPACTION_PROMPT.into()),
+        default_compaction_prompt: maka_agent_facts::context::DEFAULT_COMPACTION_PROMPT.into(),
         revision: snapshot.revision,
         display_name: snapshot.policy.personalization.display_name,
         assistant_tone: snapshot.policy.personalization.assistant_tone,
         workspace_instructions: snapshot.policy.workspace_instructions.enabled,
         incognito_active: snapshot.policy.privacy.incognito_active,
+        shell_titles: snapshot.policy.shell.titles,
     })
 }
 pub(crate) async fn update(
@@ -116,6 +131,16 @@ pub(crate) async fn update(
         return super::connections::encode(Updated::Rejected);
     };
     let result = match input.mutation {
+        Mutation::CompactionPrompt { prompt } => {
+            store
+                .set_compaction_prompt(input.expected_revision, prompt)
+                .await
+        }
+        Mutation::ShellTitles { enabled } => {
+            store
+                .set_shell_titles(input.expected_revision, enabled)
+                .await
+        }
         Mutation::Privacy { incognito_active } => {
             store
                 .set_privacy(input.expected_revision, PrivacyPolicy { incognito_active })

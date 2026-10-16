@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from './editor-menu.js';
 import { scrollBoundary } from './scroll.js';
 import { tuiText, copy } from './locale-catalogs/components.js';
 import type {
@@ -33,7 +34,7 @@ import type {
 import {
   type NavigationProps,
   type TimelineProps,
-  type ToolFileContext,
+  type ToolDetailsContext,
   type TimelineFileContext,
 } from './contracts.js';
 import {
@@ -51,7 +52,7 @@ import {
   type MessageCopy,
 } from './message-copy.js';
 import { toolCards } from './tool-cards.js';
-import { filePresentation, toolPresentation } from '../agent/tool-details/index.js';
+import { filePresentation } from '../agent/tool-details/index.js';
 import { toolLabel, messageView, sourceFieldLabel } from './message-view.js';
 import { output, fill, pixels, compactLabel, type Presentation, type Node } from './view.js';
 import { sameValue } from './value.js';
@@ -109,8 +110,42 @@ interface Reading extends Revision {
   scrollRevision: number;
   command: ReadingCommand | null;
   landing: TimelineProps['landing'];
-  files: Record<string, ToolFileContext>;
+  details: Record<string, ToolDetailsContext>;
   fileContext: TimelineFileContext | null;
+}
+
+function timelineRows(props: TimelineProps) {
+  const positions = new Map(props.messages.map((message, index) => [message.contentKey, index]));
+  const rows = toolCards(props.messages).map((row) => ({
+    ...row,
+    timing: null as TimelineProps['timings'][number] | null,
+  }));
+  for (const timing of props.timings) {
+    const anchor = props.messages.findIndex((message) => message.id === timing.afterMessageId);
+    if (anchor < 0) continue;
+    // A late parent result is merged into its earlier call. Keep the turn clock
+    // after every visible row preceding that result, including nested children.
+    const row = rows.filter(({ message }) => positions.get(message.contentKey)! <= anchor).at(-1);
+    if (row) row.timing = timing;
+  }
+  return rows;
+}
+
+function hasToolEvidence(message: TimelineProps['messages'][number], props: TimelineProps) {
+  return !!props.toolContext && !!(message.tool?.call || message.tool?.result);
+}
+
+function expandable(
+  row: ReturnType<typeof toolCards>[number],
+  props: TimelineProps,
+  details: Reading['details'],
+) {
+  const { message, result } = row;
+  return (
+    (message.role === 'tool_call' || message.role === 'tool_result') &&
+    details[message.id]?.expandable !== false &&
+    (hasToolEvidence(message, props) || !!message.text.trim() || !!result?.text.trim())
+  );
 }
 export function navigation<N extends Node>(
   presentation: Presentation<N>,
@@ -153,34 +188,16 @@ export function navigation<N extends Node>(
                                 ui.box(
                                   `session-status-${index}-${at}`,
                                   [
-                                    ...(session.activity === 'working'
-                                      ? [
-                                          ui.activity(
-                                            `session-glyph-${index}-${at}`,
-                                            'orbit',
-                                            props.theme.accent,
-                                            '  ',
-                                            ' ',
-                                          ),
-                                        ]
-                                      : [
-                                          ui.text(
-                                            `session-glyph-${index}-${at}`,
-                                            session.activity === 'waiting'
-                                              ? props.theme.ascii
-                                                ? '  ! '
-                                                : '  ◇ '
-                                              : session.hasUnread
-                                                ? props.theme.ascii
-                                                  ? '  * '
-                                                  : '  ● '
-                                                : '    ',
-                                            13,
-                                            session.activity === 'waiting'
-                                              ? props.theme.warning
-                                              : props.theme.accent,
-                                          ),
-                                        ]),
+                                    ui.text(
+                                      `session-glyph-${index}-${at}`,
+                                      session.hasUnread
+                                        ? props.theme.ascii
+                                          ? '  * '
+                                          : '  ● '
+                                        : '    ',
+                                      13,
+                                      props.theme.accent,
+                                    ),
                                   ],
                                   { terminal: { basis: 4, shrink: false } },
                                 ),
@@ -446,7 +463,7 @@ export function timeline<N extends Node>(
       state.browse = null;
       return;
     }
-    const rows = toolCards(props.messages);
+    const rows = timelineRows(props).filter(({ message }) => message.role !== 'compaction');
     if (
       state.browse?.request === props.browse &&
       rows.some(({ message }) => message.id === state.browse!.id)
@@ -478,7 +495,7 @@ export function timeline<N extends Node>(
       text = copy(props.locale);
     const search = state.search?.closing ? null : state.search;
     syncBrowse(state, props);
-    const rows = toolCards(props.messages);
+    const rows = timelineRows(props);
     const browsing = state.browse;
     // Match Codex's reading context: pin only the prompt preceding the first
     // visible answer. Visible user messages already provide their own context.
@@ -541,37 +558,59 @@ export function timeline<N extends Node>(
           active.text.replace(/\s+/gu, ' ').trim()
       : '';
 
-    const validFile = (id: string, context: ToolFileContext) => {
+    const validDetails = (id: string, context: ToolDetailsContext) => {
       const message = rows.find(({ message }) => message.id === id)?.message;
       return (
         context.sessionId === props.toolContext?.sessionId &&
         context.through === props.toolContext.through &&
         context.toolUseId === message?.tool?.toolUseId &&
-        !!filePresentation(message.tool.call?.presentation) &&
         context.presentation === (message.tool.call?.presentation ?? null) &&
         context.call === (message.tool.call?.sequence ?? null) &&
         context.result === (message.tool.result?.sequence ?? null)
       );
     };
-    state.files = Object.fromEntries(
-      Object.entries(state.files).filter(([id, context]) => validFile(id, context)),
+    state.details = Object.fromEntries(
+      Object.entries(state.details).filter(([id, context]) => validDetails(id, context)),
     );
     const tools = rows
-      .map(({ message }) => message)
-      .filter(
-        (message) =>
-          (message.role === 'tool_call' || message.role === 'tool_result') &&
-          (message.source !== null || message.text.length > 0),
-      );
+      .filter((row) => expandable(row, props, state.details))
+      .map(({ message }) => message);
     state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
-    const messages: N[] = rows.flatMap(({ message, result }) => {
+    const messages: N[] = rows.flatMap((row, index) => {
+      const { message, result, depth, timing } = row;
+      if (message.role === 'compaction') {
+        if (!message.compaction) return [];
+        const seconds = (message.compaction.durationMs / 1000).toFixed(1).replace(/\.0$/, '');
+        const rule = (side: string) =>
+          ui.box(
+            'compact-rule-' + side + message.id,
+            ui.rule ? [ui.rule('compact-line-' + side + message.id, 'row')] : [],
+            {
+              terminal: { grow: 1, shrink: true },
+              style: { grow: 1, height: pixels(1) },
+              ...(target === 'desktop' ? { background: props.theme.border } : {}),
+            },
+          );
+        return [
+          ui.box(
+            'message-' + message.id,
+            [
+              rule('left'),
+              ui.text(
+                'compacted-label-' + message.id,
+                tuiText(props.locale, 'context-compacted', { seconds }),
+                12,
+                props.theme.muted,
+              ),
+              rule('right'),
+            ],
+            { row: true, gap: target === 'tui' ? 1 : 12, style: { width: fill, align: 'center' } },
+          ),
+        ];
+      }
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
-      const structured =
-        !!tool &&
-        !!props.toolContext &&
-        !!message.tool &&
-        !!toolPresentation(message.tool.call?.presentation);
+      const structured = tool && hasToolEvidence(message, props);
       const sourceAction = ui.button(
         'source-' + message.id + (message.role === 'thinking' ? '-thinking' : ''),
         text.readSource,
@@ -640,6 +679,19 @@ export function timeline<N extends Node>(
         : props.theme;
       const messageNode = messageView(presentation, target, messageTheme, props.locale, {
         ...message,
+        role: message.role,
+        traceDepth: depth,
+        detailStatus: state.details[message.id]?.status ?? null,
+        // The user/response gap belongs to the response, outside the user's colored band.
+        separateBefore:
+          index > 0 && message.role !== 'user' && rows[index - 1]!.message.role === 'user',
+        separate:
+          index < rows.length - 1 &&
+          !(tool && ['tool_call', 'tool_result'].includes(rows[index + 1]!.message.role)) &&
+          !(
+            message.role === 'user' &&
+            !['user', 'compaction'].includes(rows[index + 1]!.message.role)
+          ),
         browse: browsing
           ? { key: 'browse-' + message.id, current: browsing.id === message.id }
           : undefined,
@@ -647,7 +699,7 @@ export function timeline<N extends Node>(
         live: !!message.tool && props.liveTools.includes(message.tool.toolUseId),
         expanded,
         structured,
-        toggle: tool && (message.source !== null || message.text) ? 'toggle-' + message.id : null,
+        toggle: expandable(row, props, state.details) ? 'toggle-' + message.id : null,
         text: result ? [message.text, result.text].filter(Boolean).join(' · ') : message.text,
         continued: message.continued || !!result?.continued,
         body: structured
@@ -667,7 +719,7 @@ export function timeline<N extends Node>(
                 expanded,
                 focusOnPointer: !search,
               },
-              { fileContext: 'fileContext' },
+              { context: 'context' },
             )
           : tool
             ? ui.box(
@@ -692,7 +744,7 @@ export function timeline<N extends Node>(
                       ]
                     : []),
                 ],
-                { surface: true, style: { width: fill } },
+                { surface: target === 'desktop', style: { width: fill } },
               )
             : body,
         actions: [
@@ -756,14 +808,11 @@ export function timeline<N extends Node>(
               ]
             : [],
       });
-      const timing = props.timings.find(
-        (timing) => timing.afterMessageId === message.id || timing.afterMessageId === result?.id,
-      );
       if (!timing) return [messageNode];
       return [
         messageNode,
         presentation.slot(
-          'time-' + message.contentKey,
+          'time-' + timing.turnId,
           'label',
           {
             text: '',
@@ -805,7 +854,7 @@ export function timeline<N extends Node>(
           : []),
       ],
       {
-        gap: target === 'desktop' ? 24 : 1,
+        gap: target === 'desktop' ? 24 : 0,
         style: {
           width: fill,
           height: fill,
@@ -900,6 +949,7 @@ export function timeline<N extends Node>(
                           search.key,
                           'input',
                           {
+                            menu: editorMenu(props.theme, props.locale),
                             appearance: { ...props.theme.input, borderWidth: 0 },
                             accessibilityLabel: text.findConversation,
                             readOnly: false,
@@ -1173,16 +1223,21 @@ export function timeline<N extends Node>(
       state.observation?.selectedChildKey ??
       (browsing ? 'message-' + browsing.id : state.observation?.viewport?.visibleChildKeys[0]);
     const row = rows.find(
-      ({ message }) =>
-        'message-' + message.id === selected || 'time-' + message.contentKey === selected,
+      ({ message, timing }) =>
+        'message-' + message.id === selected || 'time-' + timing?.turnId === selected,
     );
     const context: TimelineFileContext | null = props.toolContext
       ? {
           ...props.toolContext,
           landing: props.landing.sequence,
           path:
-            target === 'tui' && !props.source && !search && !props.loading && row
-              ? (state.files[row.message.id]?.path ?? null)
+            target === 'tui' &&
+            !props.source &&
+            !search &&
+            !props.loading &&
+            row &&
+            filePresentation(row.message.tool?.call?.presentation)
+              ? (state.details[row.message.id]?.path ?? null)
               : null,
         }
       : null;
@@ -1213,7 +1268,7 @@ export function timeline<N extends Node>(
         browse: null,
         search: null,
         expanded: [],
-        files: {},
+        details: {},
         fileContext: null,
         observation: null,
         scrollRevision: 0,
@@ -1251,7 +1306,7 @@ export function timeline<N extends Node>(
       if (state.browse && state.browse.request === props.browse && !next.browse) {
         // A page split within one message replaces the bounded window. Follow
         // its existing landing edge instead of restarting at the first row.
-        const rows = toolCards(props.messages);
+        const rows = timelineRows(props).filter(({ message }) => message.role !== 'compaction');
         const row = props.landing.edge === 'end' ? rows.at(-1) : rows[0];
         if (row) {
           next.browse = { ...state.browse };
@@ -1278,12 +1333,12 @@ export function timeline<N extends Node>(
       }
       if (
         input.kind === 'component' &&
-        input.name === 'fileContext' &&
+        input.name === 'context' &&
         input.child.startsWith('tool-details-')
       ) {
-        next.files = {
-          ...state.files,
-          [input.child.slice('tool-details-'.length)]: input.event as ToolFileContext,
+        next.details = {
+          ...state.details,
+          [input.child.slice('tool-details-'.length)]: input.event as ToolDetailsContext,
         };
       }
       if (
@@ -1294,7 +1349,8 @@ export function timeline<N extends Node>(
         !props.loading &&
         input.kind === 'raw'
       ) {
-        const rows = toolCards(props.messages).map(({ message }) => message);
+        const cards = timelineRows(props).filter(({ message }) => message.role !== 'compaction');
+        const rows = cards.map(({ message }) => message);
         const selected = rows.find((message) => input.key === 'browse-' + message.id);
         const at = rows.findIndex((message) => message.id === next.browse!.id);
         let toggle = false;
@@ -1320,8 +1376,7 @@ export function timeline<N extends Node>(
         const row = rows.find((message) => message.id === next.browse!.id);
         if (
           row &&
-          (row.role === 'tool_call' || row.role === 'tool_result') &&
-          (row.source !== null || row.text)
+          cards.some((card) => card.message.id === row.id && expandable(card, props, next.details))
         ) {
           const expanded = next.expanded.includes(row.id);
           const open = input.key === 'browse-expand' || (toggle && !expanded);
@@ -1381,14 +1436,29 @@ export function timeline<N extends Node>(
         return out;
       }
       if (input.kind === 'raw' && !props.source) {
-        const tool = toolCards(props.messages)
-          .map(({ message }) => message)
-          .find(
-            (message) =>
-              (message.role === 'tool_call' || message.role === 'tool_result') &&
-              (message.source !== null || message.text.length > 0) &&
-              input.key === 'toggle-' + message.id,
-          );
+        const collapsed = timelineRows(props).find(
+          ({ message }) =>
+            next.expanded.includes(message.id) && input.key === 'collapse-' + message.id,
+        )?.message;
+        if (collapsed) {
+          next.expanded = next.expanded.filter((id) => id !== collapsed.id);
+          if (next.browse) focusMessage(next, collapsed.id);
+          else
+            next.command = {
+              sequence: (next.command?.sequence ?? 0) + 1,
+              target: { kind: 'reveal_child', key: 'message-' + collapsed.id },
+            };
+          const out = timelineFrame(next, props, messageCopyObservation(state));
+          out.events.push({
+            name: 'detached',
+            value: { landing: props.landing.sequence, value: true },
+          });
+          return out;
+        }
+        const tool = timelineRows(props).find(
+          (row) =>
+            expandable(row, props, state.details) && input.key === 'toggle-' + row.message.id,
+        )?.message;
         if (tool)
           next.expanded = next.expanded.includes(tool.id)
             ? next.expanded.filter((id) => id !== tool.id)
@@ -1428,11 +1498,11 @@ export function timeline<N extends Node>(
         observed.pendingCommand == null
       ) {
         next.scrollRevision = observed.scroll.readingRevision;
-        const rows = toolCards(props.messages);
+        const rows = timelineRows(props);
         const edgeRows = Math.max(1, Math.min(2, Math.floor(rows.length / 2)));
         const visible = new Set(observed.viewport.visibleChildKeys);
-        const visibleRow = ({ message }: (typeof rows)[number]) =>
-          visible.has('message-' + message.id) || visible.has('time-' + message.contentKey);
+        const visibleRow = ({ message, timing }: (typeof rows)[number]) =>
+          visible.has('message-' + message.id) || visible.has('time-' + timing?.turnId);
         if (
           observed.scroll.direction === 'up' &&
           props.older &&
@@ -1478,7 +1548,7 @@ export function timeline<N extends Node>(
         next.observation.viewport.readingRevision === next.observation.readingRevision &&
         next.observation.pendingCommand == null &&
         (!next.command || next.observation.receipt?.sequence === next.command.sequence)
-      )
+      ) {
         out.events.push({
           name: 'tailReady',
           value: {
@@ -1486,6 +1556,27 @@ export function timeline<N extends Node>(
             readingRevision: next.observation.readingRevision,
           },
         });
+        const tail = props.messages.at(-1);
+        if (
+          props.markReadEnabled &&
+          props.toolContext &&
+          !props.loading &&
+          !props.latest &&
+          !props.newer &&
+          tail?.source !== null &&
+          tail?.source !== undefined &&
+          next.observation.viewport.visibleChildKeys.includes('message-' + tail.id) &&
+          (tail.role === 'user' || tail.role === 'assistant')
+        )
+          out.events.push({
+            name: 'markRead',
+            value: {
+              sessionId: props.toolContext.sessionId,
+              sequence: tail.source,
+              field: 'body',
+            },
+          });
+      }
       const sourceDirection = scrollBoundary(next, input, 'source-reading');
       if (sourceDirection && props.source && !props.source.loading && !props.source.failed) {
         if (sourceDirection === 'up' && !props.source.atStart)

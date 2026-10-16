@@ -46,7 +46,13 @@ pub(super) fn fixture(
     let (mut input, mut packages) = support::composed_fixture(update, receive);
     let old_counter = packages.pop().unwrap();
     let old_root = packages.pop().unwrap();
-    let mut declaration = old_counter.manifest().application.clone().unwrap();
+    let mut declaration = old_counter
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let contract = &mut declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -71,7 +77,13 @@ pub(super) fn fixture(
         .replace("mount(props){return frame({count:props.initial,label:props.label,revision:0});}", &format!("mount(props){{{mount}}}"))
         .replace("event(state,event){return frame({...state,count:state.count+1,revision:state.revision+1});}", &format!("event(state,event,props){{{event}}}"));
     let counter = support::package("dynamic.counter", declaration, Some(source));
-    let mut declaration = old_root.manifest().application.clone().unwrap();
+    let mut declaration = old_root
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -278,14 +290,25 @@ fn mount_emission_can_remove_a_whole_private_subtree_without_renderer_ack() {
     let old = packages.pop().unwrap();
     let leaf = support::package(
         "dynamic.leaf",
-        old.manifest().application.clone().unwrap(),
+        old.manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(
             std::str::from_utf8(old.file("index.mjs").unwrap())
                 .unwrap()
                 .to_owned(),
         ),
     );
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -398,7 +421,13 @@ fn native_application(
     timer: &tokio::runtime::Runtime,
 ) -> Application {
     let old = packages.pop().unwrap();
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.scene = None;
     entry.implementation = Implementation::Native {
@@ -408,7 +437,13 @@ fn native_application(
     let native = support::package("native.counter", declaration, None);
     input.instances.get_mut("counter").unwrap().package = native.application_ref().into();
     let old = packages.pop().unwrap();
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -565,7 +600,13 @@ fn presentation_change_updates_a_wide_retained_tree_atomically() {
         support::composed_fixture(support::CHILD_UPDATE, support::PARENT_EVENT);
     let original = packages.pop().unwrap();
     let source = std::str::from_utf8(original.file("index.mjs").unwrap()).unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let leaf = support::package("dynamic.leaf", declaration.clone(), Some(source.into()));
     let contract = declaration.entries[&EntryTarget::Desktop].exports["Counter"]
         .contract

@@ -25,6 +25,7 @@ use maka_agent_facts::execution::ToolMode;
 
 pub fn configuration(tool_mode: ToolMode) -> InvocationConfiguration {
     InvocationConfiguration {
+        compaction_prompt: None,
         workspace_origin: maka_agent_facts::execution::WorkspaceOrigin::Selected,
         approval_policy: maka_agent_facts::execution::ApprovalPolicy::OnRequest,
         boundary_revision: 0,

@@ -240,14 +240,6 @@ export const configurations = {
         },
         default: [],
       },
-      maxSteps: {
-        description: 'Optional model-step limit per invocation; omitted or null means unlimited.',
-        type: ['integer', 'null'],
-        format: 'uint',
-        minimum: 1,
-        maximum: 256,
-        default: null,
-      },
       tools: {
         description:
           'Explicitly selected, frozen application service tools, alongside configured native tools.',
@@ -264,7 +256,7 @@ export const configurations = {
         type: 'object',
         properties: {
           home: {
-            description: "Read only the three instruction files in this home's .maka directory.",
+            description: 'Select this home for global instructions and explicit AGENTS.md editing.',
             type: ['string', 'null'],
             minLength: 1,
             maxLength: 4096,
@@ -427,8 +419,18 @@ export const configurations = {
         required: ['result', 'confirmation', 'name', 'description', 'import', 'method'],
       },
       AgentToolInput: {
-        type: 'string',
-        enum: ['json', 'skill', 'web'],
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['json', 'skill', 'web'],
+          },
+          {
+            description:
+              'Display-only command title; recorded in history, not forwarded to the process service.',
+            type: 'string',
+            const: 'shell',
+          },
+        ],
       },
       DisplayText: {
         description: 'Presentation text is distinct from the stable identity used for navigation.',
@@ -737,15 +739,6 @@ export const configurations = {
             description: 'Explicit read-only roots for user-selected conversation sources.',
             default: [],
           },
-          maxSteps: {
-            type: ['integer', 'null'],
-            format: 'uint',
-            minimum: 1,
-            description:
-              'Optional model-step limit per invocation; omitted or null means unlimited.',
-            maximum: 256,
-            default: null,
-          },
           tools: {
             type: 'array',
             items: {
@@ -763,7 +756,7 @@ export const configurations = {
         properties: {
           home: {
             type: ['string', 'null'],
-            description: "Read only the three instruction files in this home's .maka directory.",
+            description: 'Select this home for global instructions and explicit AGENTS.md editing.',
             minLength: 1,
             maxLength: 4096,
             default: null,
@@ -924,8 +917,18 @@ export const configurations = {
         required: ['result', 'confirmation', 'name', 'description', 'import', 'method'],
       },
       AgentToolInput: {
-        type: 'string',
-        enum: ['json', 'skill', 'web'],
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['json', 'skill', 'web'],
+          },
+          {
+            type: 'string',
+            const: 'shell',
+            description:
+              'Display-only command title; recorded in history, not forwarded to the process service.',
+          },
+        ],
       },
       DisplayText: {
         type: 'object',

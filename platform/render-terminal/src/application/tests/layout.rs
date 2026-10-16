@@ -247,7 +247,13 @@ pub(super) fn native(view: View, accept: Rc<Cell<bool>>) -> (tokio::runtime::Run
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let original = packages.remove(index);
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Tui).unwrap();
     entry.scene = None;
     entry.implementation = Implementation::Native {
@@ -1069,8 +1075,13 @@ fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
         disabled[(0, 0)].modifier.contains(Modifier::DIM),
         "original Surface dims disabled controls even with an explicit role color"
     );
-    assert_eq!(presenter.scene.len(), 1);
-    assert_eq!(presenter.focus.as_ref().unwrap().key, "back");
+    assert_eq!(presenter.tab_stops().len(), 1);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "save");
+    presenter.input_settled(key(KeyCode::Char(' '))).unwrap();
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["count"],
+        count
+    );
     presenter
         .input_settled(Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -1102,13 +1113,28 @@ fn disabled_buttons_retain_layout_but_revoke_click_dispatch_and_tab_targets() {
         presenter.application.frame(&presenter.root).unwrap().state["count"],
         before + 1
     );
+    // A save that temporarily disables its own control must not send the next
+    // Space to an unrelated button when the original control becomes ready.
+    source.borrow_mut()["children"][0]["disabled"] = json!(true);
+    refresh(&mut presenter);
+    flushed(&mut presenter, 20, 3);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "save");
+    source.borrow_mut()["children"][0]["disabled"] = json!(false);
+    refresh(&mut presenter);
+    flushed(&mut presenter, 20, 3);
+    assert_eq!(presenter.focus.as_ref().unwrap().key, "save");
+    presenter.input_settled(key(KeyCode::Char(' '))).unwrap();
+    assert_eq!(
+        presenter.application.frame(&presenter.root).unwrap().state["last_input"]["key"],
+        "save"
+    );
     source.borrow_mut()["children"][1]["disabled"] = json!(true);
     refresh(&mut presenter);
     let default_disabled = flushed(&mut presenter, 20, 3);
     assert_eq!(default_disabled[(0, 1)].fg, Color::Reset);
     assert!(default_disabled[(0, 1)].modifier.contains(Modifier::DIM));
-    assert_eq!(presenter.scene.len(), 1);
-    assert_eq!(presenter.scene[0].key, "save");
+    assert_eq!(presenter.tab_stops().len(), 1);
+    assert_eq!(presenter.tab_stops()[0].key, "save");
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();
@@ -1618,6 +1644,48 @@ fn passive_text_hint_hover_never_steals_focus_or_activation() {
     let buffer = flushed(&mut presenter, 24, 4);
     let row: String = (0..24).map(|x| buffer[(x, 1)].symbol()).collect();
     assert!(!row.contains("Succeeded"));
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown_settled().unwrap();
+}
+
+#[test]
+fn long_tooltip_wraps_above_a_low_anchor_without_hiding_its_explanation() {
+    let source = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
+        {"kind":"text","key":"space","text":"\n\n","color":0xffffff},
+        {"kind":"text","key":"status","text":"Privacy","color":0xffffff,
+         "hint":"Chats are still saved. Model requests still use your provider."}
+    ]});
+    let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
+    flushed(&mut presenter, 26, 6);
+    presenter
+        .input_settled(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 0,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    let buffer = flushed(&mut presenter, 26, 6);
+    let rows: Vec<String> = (0..3)
+        .map(|y| {
+            (0..26)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        rows.join(" "),
+        "Chats are still saved. Model requests still use your provider."
+    );
+    assert_eq!(
+        buffer[(0, 3)].symbol(),
+        "P",
+        "tooltip stays above its anchor"
+    );
     presenter
         .surface_closed(&presenter.surface(), Ok(()))
         .unwrap();

@@ -32,7 +32,6 @@ use std::sync::Arc;
 
 pub(super) struct ModelWork {
     pub tools: maka_tools::ToolCatalog,
-    pub max_steps: Option<usize>,
     pub restored: Option<(
         maka_agent_facts::handoff::HandoffTools,
         maka_agent_facts::handoff::CompactionBudget,
@@ -108,7 +107,6 @@ pub async fn run(
         RunWork::Handoff { pause, tools, .. } => {
             let work = ModelWork {
                 tools,
-                max_steps: pause.remaining_steps.map(|steps| usize::from(steps.get())),
                 restored: Some((pause.execution.tools.clone(), pause.execution.compaction)),
             };
             (
@@ -119,9 +117,7 @@ pub async fn run(
                 Some(work),
             )
         }
-        RunWork::Continuation {
-            tools, max_steps, ..
-        } => (
+        RunWork::Continuation { tools, .. } => (
             InvocationInput::Continuation {
                 claim: Box::new(claim.expect("prepared continuation")),
                 request_fingerprint: input
@@ -131,7 +127,6 @@ pub async fn run(
             },
             Some(ModelWork {
                 tools,
-                max_steps,
                 restored: None,
             }),
         ),
@@ -139,7 +134,6 @@ pub async fn run(
             message,
             source_messages,
             tools,
-            max_steps,
             ..
         } => (
             InvocationInput::Message {
@@ -149,7 +143,6 @@ pub async fn run(
             },
             Some(ModelWork {
                 tools,
-                max_steps,
                 restored: None,
             }),
         ),
@@ -284,7 +277,6 @@ fn failure_class(error: &RunError) -> &'static str {
         RunError::ReconciliationRequired(_) => "reconciliation_required",
         RunError::InvalidInput(_) => "invalid_input",
         RunError::Cancelled | RunError::Model(maka_model::ModelError::Cancelled) => "cancelled",
-        RunError::StepLimit => "step_limit",
         RunError::ModelIncomplete => "model_incomplete",
         RunError::Commit(_) => "event_commit",
         RunError::Store(_) => "event_store",

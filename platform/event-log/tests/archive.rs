@@ -232,7 +232,8 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
         log.context_usage("session").await.unwrap().1,
         Some(maka_event_log::context::ContextUsage {
             tokens: 10,
-            approximate: false
+            approximate: false,
+            last_known: false,
         })
     );
     assert!(
@@ -764,7 +765,7 @@ async fn inherited_results_prune_and_compact_without_changing_siblings_or_frozen
                 covered_through: source.source_evidence.high_water,
                 source_digest: source.source_evidence.digest,
                 previous_checkpoint_id: None,
-                summary: TextSummary::from_model_step(&output, false).unwrap(),
+                summary: TextSummary::from_model_step(&output).unwrap(),
                 summary_step_id: "summary".into(),
             },
         },
@@ -1020,5 +1021,59 @@ async fn read_prefixes_keep_literal_archive_ids_and_session_scope() {
                 .is_none()
         );
     }
+    log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn oversized_tool_result_archives_alone_and_remains_readable() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = EventLog::open(&directory.path().join("large.sqlite"))
+        .await
+        .unwrap();
+    open(&log, "writer", false).await;
+    let text = "x".repeat(5 * 1024 * 1024);
+    let large = tool(&log, "writer", "large", text.clone()).await;
+    let small = tool(&log, "writer", "small", "next".into()).await;
+    let batch = log
+        .prepare_prune_candidates("session", Some("writer"), 10, 1024 * 1024, None)
+        .await
+        .unwrap();
+    assert_eq!(batch.candidates.len(), 1);
+    assert_eq!(batch.candidates[0].event_id, large.event().id);
+    assert_eq!(
+        batch.candidates[0].projection,
+        maka_agent_facts::tool_output::DurableToolProjection::Text { text: text.clone() }
+    );
+    let next = log
+        .prepare_prune_candidates(
+            "session",
+            Some("writer"),
+            10,
+            1024 * 1024,
+            batch.next.as_ref(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.candidates.len(), 1);
+    assert_eq!(next.candidates[0].event_id, small.event().id);
+    let archived = archive("writer", &large);
+    log.append(&archived).await.unwrap();
+    let Fact::ToolResultArchived { placeholder } = &archived.event().fact else {
+        panic!()
+    };
+    let body = log
+        .read_archive("session", &placeholder.identity)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(serde_json::from_slice::<String>(&body).unwrap(), text);
+    assert_eq!(placeholder.identity.original_bytes, 5 * 1024 * 1024 + 2);
+    assert!(placeholder.page.next.is_some());
+    let resource = log
+        .read_tool_result("session", &large.event().id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resource.serialized_result.as_bytes(), body);
     log.close().await.unwrap();
 }

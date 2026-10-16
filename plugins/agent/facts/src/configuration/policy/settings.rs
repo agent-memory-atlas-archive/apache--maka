@@ -73,6 +73,7 @@ pub enum ShellPreference {
 pub struct ShellPolicy {
     pub preference: ShellPreference,
     pub executable: String,
+    pub titles: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

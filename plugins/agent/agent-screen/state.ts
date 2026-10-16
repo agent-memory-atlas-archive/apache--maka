@@ -65,6 +65,8 @@ import { type AttachmentDrafts } from '../../shared/attachments.js';
 
 import { type ComposerReadiness } from '../../shared/drafts.js';
 
+import type { CompactState, CompactRequest } from './compact.js';
+
 import type { GoalState, GoalRequest } from './goal.js';
 import type { PlanState, PlanRequest } from './plan.js';
 import type { GraphState, GraphRequest } from './graph.js';
@@ -74,6 +76,7 @@ type BackendPreference = import('../../../packages/plugin-sdk/src/index.js').Age
 type Notice = keyof Copy | null;
 
 export type Request =
+  | CompactRequest
   | { kind: 'sandboxChange'; epoch: number; sessionId: string }
   | GoalRequest
   | PlanRequest
@@ -144,6 +147,7 @@ export type Mutation =
           | 'respond'
           | 'markRead'
           | 'uploadAttachment'
+          | 'compact'
           | 'recapGenerate'
           | 'goalChange'
           | 'planChange'
@@ -309,7 +313,10 @@ export interface State {
   skills: boolean;
   place: string;
   sessionChange: AgentSession | null;
+  compact: CompactState | null;
+  compacting: boolean;
   dialog:
+    | 'compact'
     | 'sandbox'
     | 'session-change'
     | 'attachments'
@@ -413,6 +420,7 @@ export type RootCommand =
   | 'appearance-open'
   | 'model-setup'
   | 'terminal-open'
+  | 'compact-open'
   | 'skills-open'
   | 'checklist-open'
   | 'recap-open'

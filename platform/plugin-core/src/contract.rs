@@ -59,7 +59,7 @@ pub enum Transport {
     Remote,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Interface {
     Service {
@@ -77,6 +77,101 @@ pub enum Interface {
         resource: String,
         schema: Value,
     },
+}
+
+// Deserialize the fields directly instead of buffering the entire tagged enum
+// as serde Content, which copies every nested schema before building its Value.
+impl<'de> Deserialize<'de> for Interface {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Kind {
+            Service,
+            Component,
+            Value,
+            Resource,
+        }
+
+        // A present JSON null must remain present for Value fields and must fail
+        // for typed fields. Ordinary Option deserialization would lose both rules.
+        fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+            T: Deserialize<'de>,
+        {
+            T::deserialize(deserializer).map(Some)
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            kind: Kind,
+            #[serde(default, deserialize_with = "present")]
+            methods: Option<BTreeMap<String, Method>>,
+            #[serde(default, deserialize_with = "present")]
+            props: Option<Value>,
+            #[serde(default, deserialize_with = "present")]
+            events: Option<BTreeMap<String, Value>>,
+            #[serde(default, deserialize_with = "present")]
+            captures: Option<BTreeMap<String, Capture>>,
+            #[serde(default, deserialize_with = "present")]
+            schema: Option<Value>,
+            #[serde(default, deserialize_with = "present")]
+            resource: Option<String>,
+        }
+
+        struct FieldsVisitor;
+        impl<'de> serde::de::Visitor<'de> for FieldsVisitor {
+            type Value = Fields;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an interface object")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(self, map: M) -> Result<Fields, M::Error> {
+                Fields::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+            }
+        }
+        let fields = deserializer.deserialize_map(FieldsVisitor)?;
+        let allowed: &'static [&'static str] = match fields.kind {
+            Kind::Service => &["kind", "methods"],
+            Kind::Component => &["kind", "props", "events", "captures"],
+            Kind::Value => &["kind", "schema"],
+            Kind::Resource => &["kind", "resource", "schema"],
+        };
+        for (name, present) in [
+            ("methods", fields.methods.is_some()),
+            ("props", fields.props.is_some()),
+            ("events", fields.events.is_some()),
+            ("captures", fields.captures.is_some()),
+            ("schema", fields.schema.is_some()),
+            ("resource", fields.resource.is_some()),
+        ] {
+            if present && !allowed.contains(&name) {
+                return Err(serde::de::Error::unknown_field(name, allowed));
+            }
+        }
+        fn required<T, E: serde::de::Error>(value: Option<T>, name: &'static str) -> Result<T, E> {
+            value.ok_or_else(|| E::missing_field(name))
+        }
+        Ok(match fields.kind {
+            Kind::Service => Self::Service {
+                methods: required(fields.methods, "methods")?,
+            },
+            Kind::Component => Self::Component {
+                props: required(fields.props, "props")?,
+                events: required(fields.events, "events")?,
+                captures: required(fields.captures, "captures")?,
+            },
+            Kind::Value => Self::Value {
+                schema: required(fields.schema, "schema")?,
+            },
+            Kind::Resource => Self::Resource {
+                resource: required(fields.resource, "resource")?,
+                schema: required(fields.schema, "schema")?,
+            },
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -262,6 +357,95 @@ impl Cardinality {
             Self::One => total == 1 && guaranteed == 1,
             Self::Optional => total <= 1,
             Self::Many { min, max } => guaranteed >= min && total <= max,
+        }
+    }
+}
+
+#[cfg(test)]
+mod interface_deserialization_tests {
+    use super::Interface;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn interfaces_round_trip_with_the_tag_before_or_after_fields() {
+        for value in [
+            json!({"kind": "service", "methods": {"read": {
+                "mode": "query", "input": {"type": "object"},
+                "output": {"type": "string"}, "resources": {}
+            }}}),
+            json!({"kind": "component", "props": {}, "events": {"change": true}, "captures": {}}),
+            json!({"kind": "value", "schema": true}),
+            json!({"kind": "resource", "resource": "text", "schema": {}}),
+        ] {
+            let fields = value.as_object().unwrap();
+            let tag = serde_json::to_string(&fields["kind"]).unwrap();
+            let rest = fields
+                .iter()
+                .filter(|(name, _)| *name != "kind")
+                .map(|(name, value)| format!("{name:?}:{value}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            for text in [
+                format!("{{\"kind\":{tag},{rest}}}"),
+                format!("{{{rest},\"kind\":{tag}}}"),
+            ] {
+                let interface: Interface = serde_json::from_str(&text).unwrap();
+                assert_eq!(serde_json::to_value(&interface).unwrap(), value);
+                assert_eq!(
+                    serde_json::from_value::<Interface>(value.clone()).unwrap(),
+                    interface
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn null_schema_values_are_present_but_typed_fields_require_their_types() {
+        for text in [
+            r#"{"kind":"value","schema":null}"#,
+            r#"{"kind":"resource","resource":"text","schema":null}"#,
+            r#"{"kind":"component","props":null,"events":{},"captures":{}}"#,
+        ] {
+            let interface: Interface = serde_json::from_str(text).unwrap();
+            assert_eq!(
+                serde_json::to_value(interface).unwrap(),
+                serde_json::from_str::<Value>(text).unwrap()
+            );
+        }
+        for text in [
+            r#"{"kind":"service","methods":null}"#,
+            r#"{"kind":"component","props":{},"events":null,"captures":{}}"#,
+            r#"{"kind":"component","props":{},"events":{},"captures":null}"#,
+            r#"{"kind":"resource","resource":null,"schema":{}}"#,
+            r#"{"kind":null,"schema":{}}"#,
+        ] {
+            assert!(serde_json::from_str::<Interface>(text).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn malformed_or_cross_variant_fields_are_rejected() {
+        for text in [
+            r#"{"kind":"service"}"#,
+            r#"{"kind":"component","props":{},"events":{}}"#,
+            r#"{"kind":"component","props":{},"captures":{}}"#,
+            r#"{"kind":"component","events":{},"captures":{}}"#,
+            r#"{"kind":"value"}"#,
+            r#"{"kind":"resource","schema":{}}"#,
+            r#"{"kind":"resource","resource":"text"}"#,
+            r#"{"schema":{}}"#,
+            r#"{"kind":"unknown","schema":{}}"#,
+            r#"{"kind":"value","schema":{},"extra":true}"#,
+            r#"{"kind":"value","kind":"value","schema":{}}"#,
+            r#"{"kind":"value","schema":null,"schema":{}}"#,
+            r#"{"kind":"component","props":null,"props":{},"events":{},"captures":{}}"#,
+            r#"{"kind":"service","methods":{},"schema":null}"#,
+            r#"{"kind":"component","props":{},"events":{},"captures":{},"methods":{}}"#,
+            r#"{"kind":"value","schema":{},"resource":"text"}"#,
+            r#"{"kind":"resource","resource":"text","schema":{},"events":{}}"#,
+            r#"["value",null,null,null,null,{},null]"#,
+        ] {
+            assert!(serde_json::from_str::<Interface>(text).is_err(), "{text}");
         }
     }
 }

@@ -666,7 +666,13 @@ fn retired_textarea_menu_does_not_blur_focus_that_has_moved_to_another_editor(
     );
     let root = support::package(
         "dynamic.app",
-        original.manifest().application.clone().unwrap(),
+        original
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     input.instances.get_mut("app").unwrap().package = root.application_ref().into();

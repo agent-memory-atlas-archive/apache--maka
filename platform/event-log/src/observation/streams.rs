@@ -138,3 +138,28 @@ pub(super) async fn read(
     }
     Ok(result)
 }
+
+/// Display status from the same committed snapshot as the session observation.
+pub(super) async fn compacting(
+    connection: &mut sqlx::SqliteConnection,
+    root: Option<&TurnBoundary>,
+) -> Result<bool, StoreError> {
+    let Some(root) = root else {
+        return Ok(false);
+    };
+    if matches!(root.state, InvocationState::Ended { .. }) {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM runtime_events request
+         WHERE request.invocation_id = ?1 AND request.kind = 'model_requested'
+         AND json_extract(request.event_json, '$.fact.purpose') = 'summary'
+         AND NOT EXISTS(SELECT 1 FROM runtime_events done
+             WHERE done.invocation_id = request.invocation_id
+             AND done.operation_id = request.operation_id
+             AND done.kind IN ('model_completed', 'model_interrupted')))",
+    )
+    .bind(&root.invocation.invocation_id)
+    .fetch_one(connection)
+    .await?)
+}

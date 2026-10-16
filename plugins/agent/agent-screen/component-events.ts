@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { compactComponent } from './compact.js';
 import type {
   Action,
   AgentDirectorySelection,
@@ -104,6 +105,21 @@ export function handleComponent<N extends Node>(
   locale: string,
 ) {
   const target = presentation.target;
+  if (input.child === 'composer' && input.name === 'command') {
+    const command = input.event as Pick<ComposerSent, 'context' | 'dataSource'> & { id: string };
+    if (
+      command.context === state.selected?.id &&
+      sameValue(command.dataSource, state.selected.dataSource)
+    ) {
+      const available = rootCommands(state, locale, target).find(
+        (item) => item.id === command.id && !item.disabled,
+      );
+      if (available) rootCommand(state, actions, locale, available.kind, target);
+    }
+    return frame(presentation, configuredLocale, state, values, actions);
+  }
+  if (compactComponent(state, input))
+    return frame(presentation, configuredLocale, state, values, actions);
   if (goalComponent(state, input))
     return frame(presentation, configuredLocale, state, values, actions);
   if (input.name === 'chrome' && state.openedPages.includes(input.child as Page)) {
@@ -722,6 +738,8 @@ export function handleComponent<N extends Node>(
       !mutationPending(state) &&
       conversationRoute(state) &&
       state.dialog === null &&
+      state.inspector === null &&
+      !state.source &&
       !state.image &&
       !state.searchOpen
     ) {

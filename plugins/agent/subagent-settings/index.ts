@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -217,6 +218,7 @@ export function subagentSettings<N extends Node>(
             'subagent-' + name,
             'input',
             {
+              menu: editorMenu(props.theme, props.locale),
               accessibilityLabel: t('subagents-' + name),
               placeholder: '',
               autoFocus: name === 'name',
@@ -267,28 +269,20 @@ export function subagentSettings<N extends Node>(
               12,
               props.theme.muted,
             ),
-            ui.button(
+            ui.toggle(
               'enabled',
-              t('subagents-enabled') + ': ' + (draft?.enabled ? text.settingOn : text.settingOff),
+              t('subagents-enabled'),
+              draft?.enabled ?? false,
               disabled,
+              t('subagents-enabled-help'),
             ),
-            ui.button(
+            ui.toggle(
               'isolated',
-              t('subagents-isolated') +
-                ': ' +
-                (draft?.isolatedWorkspace ? text.settingOn : text.settingOff),
+              t('subagents-isolated'),
+              draft?.isolatedWorkspace ?? false,
               disabled,
+              t('subagents-isolated-help'),
             ),
-            ...(draft?.isolatedWorkspace
-              ? [
-                  ui.text(
-                    'subagents-isolated-help',
-                    t('subagents-isolated-help'),
-                    13,
-                    props.theme.muted,
-                  ),
-                ]
-              : []),
             ui.text(
               'subagent-current-model',
               t('subagents-model') +

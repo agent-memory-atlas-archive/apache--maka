@@ -55,6 +55,9 @@ pub use projects::*;
 #[path = "contract_execution.rs"]
 mod execution;
 pub use execution::*;
+#[path = "contract_compaction.rs"]
+mod compaction;
+pub use compaction::*;
 
 #[path = "contract_interactions.rs"]
 mod interaction;
@@ -113,10 +116,6 @@ pub struct Configuration {
     /// Explicit read-only roots for user-selected conversation sources.
     #[serde(default)]
     pub import_roots: Vec<maka_host_runtime::DirectoryRootSpec>,
-    /// Optional model-step limit per invocation; omitted or null means unlimited.
-    #[serde(default)]
-    #[schemars(range(min = 1, max = 256))]
-    pub max_steps: Option<usize>,
     /// Explicitly selected, frozen application service tools, alongside configured native tools.
     pub tools: Vec<ServiceTool>,
 }
@@ -124,7 +123,7 @@ pub struct Configuration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentAssistantConfiguration")]
 pub struct AssistantConfiguration {
-    /// Read only the three instruction files in this home's .maka directory.
+    /// Select this home for global instructions and explicit AGENTS.md editing.
     #[serde(default)]
     #[schemars(length(min = 1, max = 4096))]
     pub home: Option<String>,
@@ -169,6 +168,8 @@ pub enum ToolInput {
     Json,
     Skill,
     Web,
+    /// Display-only command title; recorded in history, not forwarded to the process service.
+    Shell,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -408,6 +409,91 @@ pub enum SessionChanged {
     Rejected {
         reason: Rejection,
     },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentGlobalInstructionSource")]
+pub enum GlobalInstructionSource {
+    Maka,
+    Agents,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentGlobalInstructionsView")]
+pub enum GlobalInstructionsView {
+    Available {
+        source: GlobalInstructionSource,
+        path: String,
+        revision: String,
+        content: String,
+        exists: bool,
+    },
+    Unavailable,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentGlobalInstructionsRead")]
+pub struct GlobalInstructionsRead {}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentGlobalInstructionsUpdate")]
+pub struct GlobalInstructionsUpdate {
+    pub source: GlobalInstructionSource,
+    pub revision: String,
+    #[schemars(length(max = 65536))]
+    pub content: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentGlobalInstructionsUpdated")]
+pub enum GlobalInstructionsUpdated {
+    Saved,
+    Changed,
+    Unavailable,
+    Rejected,
+}
+
+/// Read-only suggestions resolved against the session's actual skill context.
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentSkillCandidatesRead")]
+pub struct SkillCandidatesRead {
+    pub session_id: String,
+    pub backend: SkillCandidatesBackend,
+    #[schemars(length(max = 4096))]
+    pub query: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentSkillCandidatesBackend")]
+pub enum SkillCandidatesBackend {
+    Model {
+        model: ModelSelection,
+        thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,
+    },
+    Executor {
+        selection: crate::executor::Selection,
+    },
+}
+#[derive(Serialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
+#[schemars(rename = "AgentSkillCandidates")]
+pub struct SkillCandidates {
+    pub revision: Option<String>,
+    pub skills: Vec<SkillCandidate>,
+}
+#[derive(Serialize, JsonSchema)]
+#[schemars(rename = "AgentSkillCandidate")]
+pub struct SkillCandidate {
+    pub reference: String,
+    pub name: String,
+    pub description: String,
+    pub invocation: String,
 }
 /// The next turn's choice, independent of an already admitted execution.
 /// Model revisions are resolved afresh; preferences never grant execution authority.
@@ -742,6 +828,8 @@ pub struct SessionRead {
 #[schemars(rename = "AgentObservation")]
 pub struct Observation {
     pub session: Session,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub compacting: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remembered_backend: Option<BackendPreference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -760,6 +848,8 @@ pub struct SessionMetrics {
     pub context_tokens: Option<u64>,
     pub context_window: Option<u64>,
     pub approximate: bool,
+    /// The context count is the last completed request's baseline; newer additions are unknown.
+    pub context_last_known: bool,
     /// Provider output tokens divided by the model request's wall time.
     /// Includes reasoning and time to first token; excludes tool/user waits.
     pub output_tokens_per_second: Option<f64>,
@@ -940,6 +1030,8 @@ pub struct HistoryAttachment {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentHistoryChunk")]
 pub struct HistoryChunk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<maka_agent_ports::session::history::Compaction>,
     /// Display metadata only, on the first user-message fragment; no storage capability.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 8))]
@@ -1182,6 +1274,20 @@ pub fn contract() -> Contract {
         interface: Interface::Service {
             methods: BTreeMap::from([
                 (
+                    "globalInstructions".into(),
+                    method::<GlobalInstructionsRead, GlobalInstructionsView>(MethodMode::Query),
+                ),
+                (
+                    "updateGlobalInstructions".into(),
+                    method::<GlobalInstructionsUpdate, GlobalInstructionsUpdated>(
+                        MethodMode::Mutation,
+                    ),
+                ),
+                (
+                    "skillCandidates".into(),
+                    method::<SkillCandidatesRead, SkillCandidates>(MethodMode::Query),
+                ),
+                (
                     "tools".into(),
                     Method {
                         progress: None,
@@ -1386,6 +1492,14 @@ pub fn contract() -> Contract {
                 ),
                 ("work".into(), method::<WorkRead, Work>(MethodMode::Query)),
                 (
+                    "compactionPrompt".into(),
+                    method::<SessionRead, CompactionPrompt>(MethodMode::Query),
+                ),
+                (
+                    "compact".into(),
+                    method::<Compact, CompactResult>(MethodMode::Mutation),
+                ),
+                (
                     "resume".into(),
                     method::<Resume, ResumeResult>(MethodMode::Mutation),
                 ),
@@ -1433,36 +1547,6 @@ pub fn contract() -> Contract {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn step_limit_is_optional_and_explicit_limits_are_positive_and_bounded() {
-        let validator = jsonschema::validator_for(&configuration_schema()).unwrap();
-        let mut input = json!({
-            "permissions":{"access":"read_only","requestPermissions":false},
-            "workspaceRoots":[],"tools":[]
-        });
-        assert!(validator.is_valid(&input));
-        assert_eq!(
-            serde_json::from_value::<Configuration>(input.clone())
-                .unwrap()
-                .max_steps,
-            None
-        );
-        for limit in [json!(null), json!(1), json!(256)] {
-            input["maxSteps"] = limit.clone();
-            assert!(validator.is_valid(&input), "{limit}");
-            assert_eq!(
-                serde_json::from_value::<Configuration>(input.clone())
-                    .unwrap()
-                    .max_steps,
-                limit.as_u64().map(|steps| steps as usize)
-            );
-        }
-        for limit in [json!(0), json!(-1), json!(1.5), json!(257)] {
-            input["maxSteps"] = limit.clone();
-            assert!(!validator.is_valid(&input), "{limit}");
-        }
-    }
 
     #[test]
     fn history_window_contract_distinguishes_end_from_missing_boundaries() {

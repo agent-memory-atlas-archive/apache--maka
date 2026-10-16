@@ -649,7 +649,11 @@ async fn large_import_fits_summary_recovers_overflow_and_continues_after_restart
     let first = requests[0].to_string();
     let second = requests[1].to_string();
     assert!(first.contains("original-goal-marker") && first.contains("Historical update 7599"));
-    assert!(first.len() < 200_000, "{}", first.len());
+    assert!(
+        first.len() > large_bytes,
+        "first summary preserves the complete prefix"
+    );
+    assert!(second.len() < 200_000, "overflow retry fits excerpts");
     assert!(
         second.len() < first.len() * 3 / 4,
         "overflow must shrink the actual request"

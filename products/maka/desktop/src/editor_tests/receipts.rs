@@ -77,7 +77,13 @@ async fn reader_source(store: &EventLog, original: &DeploymentRef) {
     let mut input = loaded_source.input;
     let mut packages = Vec::new();
     for old in loaded_packages {
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let entry = declaration.entries.get_mut(&EntryTarget::Host).unwrap();
         let node = if old.manifest().id == "host.reader" {
             entry.implementation = Implementation::Native {
@@ -173,7 +179,13 @@ async fn recovery_source(
             .position(|p| p.manifest().id == "dynamic.app")
             .unwrap(),
     );
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
     entry.imports.insert(
         "history".into(),

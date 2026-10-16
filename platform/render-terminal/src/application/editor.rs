@@ -24,6 +24,8 @@ use serde_json::{Value, json};
 use std::{ops::Range, sync::Arc};
 pub(super) struct Owner {
     pub editor: Editor,
+    pub redraw: bool,
+    pub clipboard: Option<super::textarea::paste::Paste>,
     pub presented: Option<Geometry>,
     pub focus: maka_ui_runtime::focus::FocusOnReveal,
     id: String,
@@ -38,8 +40,29 @@ pub(super) struct Owner {
 }
 impl Owner {
     pub fn invalidate_geometry(&mut self) {
+        self.cancel_paste();
         self.editor.invalidate_geometry();
         self.presented = None;
+    }
+    pub fn clipboard(&mut self, context: super::NativeContext) {
+        self.clipboard = Some(super::textarea::paste::Paste::new(context));
+    }
+    pub fn paste(&mut self, spaces: bool) {
+        if let Some(paste) = &mut self.clipboard {
+            paste.text(&self.editor, spaces);
+        }
+    }
+    pub fn cancel_paste(&mut self) {
+        if let Some(paste) = &mut self.clipboard {
+            paste.cancel_text();
+        }
+    }
+    pub fn poll_paste(&mut self, enabled: bool) {
+        let before = self.editor.error;
+        if let Some(paste) = &mut self.clipboard {
+            paste.poll_text(&mut self.editor, enabled);
+        }
+        self.redraw |= before != self.editor.error;
     }
     pub fn new(mut editor: Editor, initial_text: &str) -> Self {
         editor.insert(initial_text);
@@ -48,6 +71,8 @@ impl Owner {
         let last_selection = (editor.selection_range(), editor.selection_reversed());
         Self {
             editor,
+            clipboard: None,
+            redraw: false,
             presented: None,
             focus: Default::default(),
             id: uuid::Uuid::new_v4().to_string(),
@@ -91,12 +116,15 @@ impl Owner {
             marked: None,
         }
     }
-    pub fn observation(&mut self) -> NativeInput {
-        let observation = EditorObservation {
+    pub fn current_observation(&self) -> EditorObservation {
+        EditorObservation {
             revision: self.revision,
             snapshot: self.snapshot(),
             receipt: self.receipt.clone(),
-        };
+        }
+    }
+    pub fn observation(&mut self) -> NativeInput {
+        let observation = self.current_observation();
         let replaceable = self.receipt == self.observed_receipt;
         self.observed_receipt.clone_from(&self.receipt);
         NativeInput {
@@ -131,20 +159,23 @@ impl Owner {
                     reason: EditorConflict::Revision,
                 }
             } else {
-                let (EditorEdit::Replace { text }
-                | EditorEdit::Reset { text }
-                | EditorEdit::Append { text }) = &command.edit;
-                let value = if matches!(command.edit, EditorEdit::Append { .. }) {
-                    format!("{}{text}", self.editor.text())
-                } else {
-                    text.clone()
-                };
-                if !representable(text) || !self.editor.accepts_text(&value) {
+                let value = command.edit.replacement(self.editor.text());
+                if value
+                    .as_ref()
+                    .is_none_or(|value| !self.editor.accepts_text(value))
+                {
                     EditorOutcome::Conflict {
                         reason: EditorConflict::Representation,
                     }
                 } else {
+                    let value = value.expect("validated editor replacement");
                     match &command.edit {
+                        EditorEdit::ReplaceRange { range, text } => {
+                            let range = range
+                                .utf8_range(self.editor.text())
+                                .expect("validated range");
+                            self.editor.replace_range(range, text);
+                        }
                         EditorEdit::Replace { text } => {
                             self.editor.select_all();
                             self.editor.insert(text);
@@ -195,11 +226,13 @@ impl Owner {
     }
 }
 
-fn representable(text: &str) -> bool {
-    text.len() <= 65536
-        && !text
-            .chars()
-            .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+pub(super) fn error_message(error: &str) -> &str {
+    match error {
+        "input-too-large" | "composer-too-large" => "Text exceeds the input limit",
+        "input-control" => "This input requires a single line of text",
+        "composer-control" => "Text contains unsupported control characters",
+        other => other,
+    }
 }
 
 pub(super) struct Snapshot {
@@ -238,6 +271,55 @@ impl maka_capabilities::call::ReadResource for Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn range_command_preserves_unicode_suffix_caret_and_one_undo_step() {
+        let original = "🙂e\u{301}/old suffix";
+        let mut owner = Owner::new(Editor::bounded(256, "too-large"), original);
+        let command = EditorCommand {
+            owner: owner.id.clone(),
+            sequence: 1,
+            based_on: owner.revision,
+            edit: EditorEdit::ReplaceRange {
+                range: TextRange { start: 5, end: 8 },
+                text: "new技能".into(),
+            },
+        };
+        owner.apply(&command);
+        assert_eq!(
+            owner.receipt.as_ref().unwrap().outcome,
+            EditorOutcome::Applied
+        );
+        assert_eq!(owner.editor.text(), "🙂e\u{301}/new技能 suffix");
+        assert_eq!(owner.snapshot().selection, TextRange { start: 10, end: 10 });
+        let mut rejected = command.clone();
+        rejected.sequence = 2;
+        owner.apply(&rejected);
+        assert_eq!(
+            owner.receipt.as_ref().unwrap().outcome,
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Revision,
+            }
+        );
+        rejected.sequence = 3;
+        rejected.based_on = owner.revision;
+        rejected.edit = EditorEdit::ReplaceRange {
+            range: TextRange { start: 2, end: 3 },
+            text: "bad".into(),
+        };
+        owner.apply(&rejected);
+        assert_eq!(
+            owner.receipt.as_ref().unwrap().outcome,
+            EditorOutcome::Conflict {
+                reason: EditorConflict::Representation,
+            }
+        );
+        owner.editor.key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('z'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        assert_eq!(owner.editor.text(), original);
+    }
+
     #[test]
     fn initialization_chunks_keep_one_native_owner_and_reject_stale_or_over_budget_append() {
         let mut owner = Owner::new(

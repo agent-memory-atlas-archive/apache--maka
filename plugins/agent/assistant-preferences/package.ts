@@ -26,6 +26,7 @@ const entries = uiEntries({
   export: 'AssistantPreferences',
   imports: {
     settings: one(sdk.contracts.settings),
+    agent: one(sdk.contracts.agent),
     input: one(sdk.contracts.textInput),
     editor: one(sdk.contracts.textarea),
     reader: one(sdk.contracts.textReader),

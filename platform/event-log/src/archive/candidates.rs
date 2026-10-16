@@ -100,7 +100,6 @@ async fn scan(
          WHERE t.kind='tool_settled' AND t.sequence>?1 AND t.sequence<=?3 AND t.owner_session_id=?2
            AND {filter} AND json_extract(d.event_json,'$.fact.call.origin.kind')='provider'
            AND NOT EXISTS(SELECT 1 FROM runtime_events a WHERE a.kind='tool_result_archived' AND json_extract(a.event_json,'$.fact.placeholder.identity.runtime_event_id')=t.event_id AND {archive_filter})
-           AND (json_extract(t.event_json,'$.fact.outcome.kind')='succeeded' OR length(CAST(json_extract(t.event_json,'$.fact.outcome.message') AS BLOB))<=262144)
          ORDER BY t.sequence LIMIT 1"
     );
     let mut after = cursor.after_sequence as i64;
@@ -116,11 +115,8 @@ async fn scan(
         let Some((sequence, id, bytes)) = row else {
             break;
         };
-        if bytes as usize > max_bytes && output.candidates.is_empty() {
-            return Err(StoreError::PrefixTooLarge);
-        }
         if output.candidates.len() >= max_candidates
-            || bytes as usize > max_bytes.saturating_sub(used)
+            || (!output.candidates.is_empty() && bytes as usize > max_bytes.saturating_sub(used))
         {
             output.next = Some(PruneCursor {
                 through: cursor.through,
@@ -145,10 +141,9 @@ async fn scan(
         ))?
         .len()
             + 128;
-        if measured > max_bytes && output.candidates.is_empty() {
-            return Err(StoreError::PrefixTooLarge);
-        }
-        if measured > max_bytes.saturating_sub(used) {
+        // A batch budget must not prevent an individual large result from ever
+        // being archived. Admit it alone and resume the scan on the next call.
+        if !output.candidates.is_empty() && measured > max_bytes.saturating_sub(used) {
             output.next = Some(PruneCursor {
                 through: cursor.through,
                 after_sequence: after as u64,

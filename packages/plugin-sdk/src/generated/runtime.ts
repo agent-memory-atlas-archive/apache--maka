@@ -114,6 +114,10 @@ export type RuntimeProtocol =
   | WebProbe
   | WebEndpoint
   | AgentExecute
+  | AgentGlobalInstructionsRead
+  | AgentGlobalInstructionsView
+  | AgentGlobalInstructionsUpdate
+  | AgentGlobalInstructionsUpdated
   | AgentExecutorsRead
   | AgentExecutors
   | ExecutorExecute
@@ -184,6 +188,7 @@ export type RuntimeProtocol =
   | SettingsConnectionDetail
   | SettingsProvidersRead
   | SettingsProvidersPage
+  | SettingsProvider
   | SettingsCredentialLogin
   | SettingsLoginPrompt
   | SettingsCredentialLoginResult
@@ -1184,6 +1189,11 @@ export type ScrollbarEntrance = 'fade' | 'slide_and_fade';
 export type SubmitKey = 'enter' | 'primary_enter' | 'control_enter';
 export type EditorEdit =
   | {
+      range: TextRange;
+      text: string;
+      kind: 'replace_range';
+    }
+  | {
       text: string;
       kind: 'replace';
     }
@@ -1458,7 +1468,7 @@ export type EditorCapture =
  * Session sandbox policy. Full access explicitly disables filesystem and process isolation.
  */
 export type AgentWorkspaceAccess = 'read_only' | 'workspace_write' | 'danger_full_access';
-export type AgentToolInput = 'json' | 'skill' | 'web';
+export type AgentToolInput = ('json' | 'skill' | 'web') | 'shell';
 export type AgentToolResult = ('json' | 'image') | 'computer';
 export type AgentToolConfirmation = 'required' | 'preapproved';
 export type Network =
@@ -1600,6 +1610,32 @@ export type ThinkingLevel =
   | 'xhigh'
   | 'max'
   | 'ultra';
+export type AgentGlobalInstructionsView =
+  | {
+      source: AgentGlobalInstructionSource;
+      path: string;
+      revision: string;
+      content: string;
+      exists: boolean;
+      kind: 'available';
+    }
+  | {
+      kind: 'unavailable';
+    };
+export type AgentGlobalInstructionSource = 'maka' | 'agents';
+export type AgentGlobalInstructionsUpdated =
+  | {
+      kind: 'saved';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'rejected';
+    };
 export type ExecutorSetupAction =
   | {
       kind: 'check';
@@ -2357,6 +2393,10 @@ export type NetworkProxyUpdateResult =
     };
 export type SettingsPreferencesMutation =
   | {
+      prompt?: string | null;
+      kind: 'compaction_prompt';
+    }
+  | {
       displayName: string;
       assistantTone: string;
       kind: 'personalization';
@@ -2368,6 +2408,10 @@ export type SettingsPreferencesMutation =
   | {
       incognitoActive: boolean;
       kind: 'privacy';
+    }
+  | {
+      enabled: boolean;
+      kind: 'shell_titles';
     };
 export type SettingsPreferencesUpdated =
   | {
@@ -4562,7 +4606,7 @@ export type HistoryTurnOutcome = 'completed' | 'failed' | 'aborted';
  * Canonical message author/kind; the field identifies body versus thinking.
  * Tool body JSON contributes string values, never its keys.
  */
-export type Role = 'user' | 'assistant' | 'tool_call' | 'tool_result';
+export type Role = 'compaction' | 'user' | 'assistant' | 'tool_call' | 'tool_result';
 /**
  * Recorded Host settlement for presentation; returned is not business success.
  * Foreign/provider results do not establish this Host evidence.
@@ -6045,6 +6089,12 @@ export interface Elapsed {
 }
 export interface TextareaProps {
   appearance: TextareaAppearance;
+  /**
+   * Exact whitespace-delimited literals rendered and edited as atomic inline tokens.
+   *
+   * @maxItems 4096
+   */
+  inlineTokens?: string[];
   menu?: TextareaMenu | null;
   accessibilityLabel: string;
   readOnly: boolean;
@@ -6059,6 +6109,10 @@ export interface TextareaProps {
    * None preserves native multiline editing without a submit shortcut.
    */
   submit?: SubmitKey | null;
+  /**
+   * Yield suggestion navigation only for the original observed editor state.
+   */
+  navigation?: EditorNavigation | null;
   tabIndex: number;
   /**
    * Offer native focus once when this original input becomes visible and
@@ -6191,10 +6245,19 @@ export interface TerminalTextareaRows {
   min: number;
   max: number;
   /**
+   * Allow dragging the lower-right grip to override preferred rows, up to
+   * the containing viewport height. The minimum still applies.
+   */
+  resizable?: boolean;
+  /**
    * Optional cap relative to the nearest declared layout viewport's height,
    * or the surface when none is declared. The minimum still applies.
    */
   maxViewportFraction?: number | null;
+}
+export interface EditorNavigation {
+  owner: string;
+  basedOn: number;
 }
 export interface EditorCommand {
   /**
@@ -6204,6 +6267,13 @@ export interface EditorCommand {
   sequence: number;
   basedOn: number;
   edit: EditorEdit;
+}
+/**
+ * Ordered UTF-16 code-unit offsets, shared by selections and range edits.
+ */
+export interface TextRange {
+  start: number;
+  end: number;
 }
 export interface FilePastePolicy {
   context: string;
@@ -6675,6 +6745,7 @@ export interface RowActivated {
 }
 export interface InputProps {
   appearance: InputAppearance;
+  menu?: TextareaMenu | null;
   accessibilityLabel: string;
   readOnly: boolean;
   disabled: boolean;
@@ -6719,10 +6790,6 @@ export interface EditorSnapshot {
   selection: TextRange;
   reversed: boolean;
   marked: TextRange | null;
-}
-export interface TextRange {
-  start: number;
-  end: number;
 }
 export interface EditorReceipt {
   owner: string;
@@ -6806,17 +6873,13 @@ export interface AgentConfiguration {
    */
   importRoots?: DirectoryRootSpec[];
   /**
-   * Optional model-step limit per invocation; omitted or null means unlimited.
-   */
-  maxSteps?: number | null;
-  /**
    * Explicitly selected, frozen application service tools, alongside configured native tools.
    */
   tools: AgentServiceTool[];
 }
 export interface AgentAssistantConfiguration {
   /**
-   * Read only the three instruction files in this home's .maka directory.
+   * Select this home for global instructions and explicit AGENTS.md editing.
    */
   home?: string | null;
 }
@@ -7023,6 +7086,12 @@ export interface AgentExecutorSelection {
 export interface ExecutorSettings {
   model?: string | null;
   thinkingLevel?: ThinkingLevel | null;
+}
+export interface AgentGlobalInstructionsRead {}
+export interface AgentGlobalInstructionsUpdate {
+  source: AgentGlobalInstructionSource;
+  revision: string;
+  content: string;
 }
 export interface AgentExecutorsRead {}
 export interface AgentExecutors {
@@ -8195,11 +8264,14 @@ export interface PricingUpdate {
   mutation: PricingMutation;
 }
 export interface SettingsAssistantPreferences {
+  compactionPrompt: string;
+  defaultCompactionPrompt: string;
   revision: number;
   displayName: string;
   assistantTone: string;
   workspaceInstructions: boolean;
   incognitoActive: boolean;
+  shellTitles: boolean;
 }
 export interface SettingsNetworkSnapshot {
   revision: number;
@@ -8348,44 +8420,17 @@ export interface SettingsProvidersRead {
   offset: number;
 }
 export interface SettingsProvidersPage {
-  /**
-   * @maxItems 8
-   */
-  providers:
-    | []
-    | [SettingsProvider]
-    | [SettingsProvider, SettingsProvider]
-    | [SettingsProvider, SettingsProvider, SettingsProvider]
-    | [SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider]
-    | [SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider, SettingsProvider]
-    | [
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-      ]
-    | [
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-      ]
-    | [
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-        SettingsProvider,
-      ];
+  providers: SettingsProviderSummary[];
   next: number | null;
+}
+export interface SettingsProviderSummary {
+  identity: Identity;
+  label: string;
+  authentication: SettingsProviderAuthenticationSummary[];
+}
+export interface SettingsProviderAuthenticationSummary {
+  label: string;
+  interactive: boolean;
 }
 export interface SettingsProvider {
   identity: Identity;
@@ -9852,6 +9897,7 @@ export interface AgentDelivery {
 }
 export interface AgentObservation {
   session: AgentSession;
+  compacting?: boolean;
   rememberedBackend?: AgentBackendPreference | null;
   metrics?: AgentSessionMetrics | null;
   through: number;
@@ -9867,6 +9913,10 @@ export interface AgentSessionMetrics {
   contextTokens?: number | null;
   contextWindow?: number | null;
   approximate: boolean;
+  /**
+   * The context count is the last completed request's baseline; newer additions are unknown.
+   */
+  contextLastKnown: boolean;
   /**
    * Provider output tokens divided by the model request's wall time.
    * Includes reasoning and time to first token; excludes tool/user waits.
@@ -9938,6 +9988,7 @@ export interface AgentQueueMutation {
   edit: AgentQueueAction;
 }
 export interface AgentHistoryChunk {
+  compaction?: HistoryCompaction | null;
   /**
    * Display metadata only, on the first user-message fragment; no storage capability.
    *
@@ -10000,6 +10051,12 @@ export interface AgentHistoryChunk {
   text: string;
   tool: HistoryTool | null;
 }
+/**
+ * Duration of a successfully adopted context checkpoint, in recorded milliseconds.
+ */
+export interface HistoryCompaction {
+  durationMs: number;
+}
 export interface AgentHistoryAttachment {
   name: string;
   mimeType: string;
@@ -10029,6 +10086,12 @@ export interface HistoryTool {
   result: HistoryToolResult | null;
 }
 export interface HistoryToolCall {
+  /**
+   * Recorded ancestors in this Turn, nearest first; display references only.
+   *
+   * @maxItems 32
+   */
+  ancestorToolUseIds: string[];
   /**
    * Opaque display contract captured at dispatch; no execution authority.
    */

@@ -25,13 +25,19 @@ Exposes Agent execution as native application services. `provide` registers fact
 
 The service owns its activation and delegates runs to `maka-agent-engine`. Session history, controls and tool calls use admitted scopes and original operation receipts. Files, processes, skills and other services are explicit dependencies selected by composition.
 
-Omitting `maxSteps` or setting it to `null` leaves model steps per invocation unlimited, as in the default product. Explicit limits accept integers from 1 to 256. Admission captures this policy, and queued work and Host handoff retain the original budget; later deployment settings do not replenish accepted runs. An explicit continuation receives a new budget from the settings at its own admission. Cancellation, natural completion and existing error handling still apply.
+The [independent public-client acceptance](../../../products/maka/cli/src/acp/tests/public_client.rs) runs the real Agent in a public Host with a controlled HTTP model, without an ACP, TUI or GPUI adapter. It verifies fenced history pagination, watch continuation, a pending question across complete client detachment and reconnect, and response followed by an exact invocation stop. The existing fixture supplies the original endpoint and epoch; reconnect does not resend the message. See the [client contract entrypoint](../api/README.md) for integration.
+
+```sh
+cargo nextest run -p maka-cli --bin maka -E 'test(independent_public_agent_client_reconnects_history_watch_and_pending_interaction)'
+```
 
 The Agent captures the model's Code Mode default or explicit `codeMode` override when it accepts a message. Queued work and resumed runs retain their original mode. A service tool can opt into Code Mode with `nestable: true`; nested calls use the same permissions, operation receipts and cleanup as direct calls. JavaScript receives the declared business result; the durable journal retains the original native receipt. Omitted `nestable` keeps the tool callable only directly. The Maka default composition enables nesting for files, processes, Web and Skills.
 
 The default Maka composition enables `toolDiscovery`: optional tool schemas load through `tool_search`, with loaded schemas retained across turns in the same active Host session. Code Mode can still call authorized nested tools before their descriptions are loaded. Discovery policy is captured when a message is accepted and retained on continuation. Loaded schemas and Code Mode `store`/`load` values are session-local, in-memory state; restarting the Host clears them. Committed context compaction resets the loaded schema set.
 
 The independent `applyPatch` model override selects either patch editing or structured Write/Edit tools. Like Code Mode, it defaults on for GPT and DeepSeek models and the DeepSeek endpoint, and is frozen for queued work and continuations. Selection follows the bound Files contract and method even when a composition renames its tools. Read tools remain available, and all file operations retain their live permission checks. The connection settings model-overrides JSON accepts `codeMode` and `applyPatch` separately.
+
+Shell tools accept an optional model-authored `title`, enabled by default. Assistant preferences can disable it for subsequent model requests; existing calls retain their complete arguments in model history. The title is recorded for display and removed only from the process-service request. Missing titles use the command as their display label.
 
 The default Maka composition enables `todo`: `todo_read` and `todo_write` maintain a persistent checklist for the current session, including in Code Mode and read-only workspaces. Writes replace the whole list with revision checks. The UI shows reported progress and a read-only Checklist panel, with bounded pages covering up to 200 items. Checklist completion is model-reported progress, not proof that an operation succeeded.
 

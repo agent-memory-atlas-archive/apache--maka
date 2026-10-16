@@ -25,6 +25,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Default)]
+pub struct Metadata {
+    pub slots: Vec<ComponentSlot>,
+    pub inputs: BTreeMap<String, Value>,
+    pub hidden_slots: BTreeSet<String>,
+}
+
 /// Semantic terminal colors for rich text and editors, supplied by the product.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -807,71 +814,42 @@ impl Node {
             _ => None,
         }
     }
-    pub fn shortcut_inputs(
-        &self,
-        inputs: &mut BTreeMap<String, Value>,
-        visible: bool,
-    ) -> Result<(), String> {
-        if let Self::Item { content, .. } = self {
-            content.shortcut_inputs(inputs, visible)?;
-        }
-        if let Self::Dialog {
-            background,
-            content,
-            open,
-            ..
-        } = self
-        {
-            background.shortcut_inputs(inputs, visible)?;
-            content.shortcut_inputs(inputs, visible && *open)?;
-        }
-        if let Self::ContextMenu {
-            background,
-            content,
-            ..
-        }
-        | Self::AdaptivePane {
-            background,
-            content,
-            ..
-        } = self
-        {
-            background.shortcut_inputs(inputs, visible)?;
-            content.shortcut_inputs(inputs, visible)?;
-        }
-        if let Self::Stack {
-            children,
-            shortcuts,
-            wheel,
-            visible: local,
-            ..
-        } = self
-        {
-            if visible && *local {
-                crate::shortcut::inputs(shortcuts, inputs)?;
+    pub fn metadata(&self, inputs: BTreeMap<String, Value>) -> Result<Metadata, String> {
+        let mut metadata = Metadata {
+            inputs,
+            ..Metadata::default()
+        };
+        let mut commands = Vec::new();
+        self.collect_metadata(&mut metadata, &mut commands, true)?;
+        // Native schemas must all exist before commands can merge or reject collisions.
+        self.validate_focus_targets(&metadata.slots)?;
+        for command in commands {
+            if let Self::Stack {
+                shortcuts, wheel, ..
+            } = command
+            {
+                crate::shortcut::inputs(shortcuts, &mut metadata.inputs)?;
                 if let Some(wheel) = wheel {
                     for key in [&wheel.up, &wheel.down] {
-                        if inputs
+                        if metadata
+                            .inputs
                             .get(key)
                             .is_some_and(|schema| schema != &Value::Bool(true))
                         {
                             return Err("wheel command collides with typed native input".into());
                         }
-                        inputs.insert(key.clone(), Value::Bool(true));
+                        metadata.inputs.insert(key.clone(), Value::Bool(true));
                     }
                 }
             }
-            for child in children {
-                child.shortcut_inputs(inputs, visible && *local)?;
-            }
         }
-        Ok(())
+        Ok(metadata)
     }
-    pub fn metadata(
-        &self,
-        slots: &mut Vec<ComponentSlot>,
-        inputs: &mut BTreeMap<String, Value>,
-        hidden_slots: &mut BTreeSet<String>,
+
+    fn collect_metadata<'a>(
+        &'a self,
+        metadata: &mut Metadata,
+        commands: &mut Vec<&'a Self>,
         visible: bool,
     ) -> Result<(), String> {
         match self {
@@ -889,11 +867,11 @@ impl Node {
                     } else {
                         vec!["activate"]
                     };
-                    if inputs.insert(key.clone(), json!({"type":"object","properties":{"kind":{"enum":kinds}},"required":["kind"],"additionalProperties":false})).is_some() {
+                    if metadata.inputs.insert(key.clone(), json!({"type":"object","properties":{"kind":{"enum":kinds}},"required":["kind"],"additionalProperties":false})).is_some() {
                         return Err("reserved scene input identity".into());
                     }
                 }
-                content.metadata(slots, inputs, hidden_slots, visible)?;
+                content.collect_metadata(metadata, commands, visible)?;
             }
             Self::Choice(choice) => {
                 if visible && !choice.disabled && !choice.options.is_empty() {
@@ -903,7 +881,7 @@ impl Node {
                             "key":{"enum":choice.options.iter().map(|option| &option.key).collect::<Vec<_>>()}
                         }, "required":["kind","key"], "additionalProperties":false
                     });
-                    if inputs.insert(choice.key.clone(), schema).is_some() {
+                    if metadata.inputs.insert(choice.key.clone(), schema).is_some() {
                         return Err("reserved scene input identity".into());
                     }
                 }
@@ -917,7 +895,8 @@ impl Node {
             } => {
                 if visible
                     && *open
-                    && inputs
+                    && metadata
+                        .inputs
                         .insert(
                             key.clone(),
                             serde_json::to_value(schemars::schema_for!(crate::dismiss::Input))
@@ -927,8 +906,8 @@ impl Node {
                 {
                     return Err("reserved scene input identity".into());
                 }
-                background.metadata(slots, inputs, hidden_slots, visible)?;
-                content.metadata(slots, inputs, hidden_slots, visible && *open)?;
+                background.collect_metadata(metadata, commands, visible)?;
+                content.collect_metadata(metadata, commands, visible && *open)?;
             }
             Self::ContextMenu {
                 background,
@@ -942,13 +921,13 @@ impl Node {
             } => {
                 // Native visibility is local layout; both declarations keep
                 // their original component owners and input schemas.
-                background.metadata(slots, inputs, hidden_slots, visible)?;
-                content.metadata(slots, inputs, hidden_slots, visible)?;
+                background.collect_metadata(metadata, commands, visible)?;
+                content.collect_metadata(metadata, commands, visible)?;
             }
             Self::Component(slot) => {
-                slots.push(slot.clone());
+                metadata.slots.push(slot.clone());
                 if !visible {
-                    hidden_slots.insert(slot.key.clone());
+                    metadata.hidden_slots.insert(slot.key.clone());
                 }
             }
             Self::Button {
@@ -960,7 +939,7 @@ impl Node {
                 if visible
                     && !disabled
                     && focus_child.is_none()
-                    && inputs.insert(key.clone(), json!(true)).is_some()
+                    && metadata.inputs.insert(key.clone(), json!(true)).is_some()
                 {
                     return Err("reserved scene input identity".into());
                 }
@@ -968,10 +947,15 @@ impl Node {
             Self::Stack {
                 children,
                 visible: local,
+                shortcuts,
+                wheel,
                 ..
             } => {
+                if visible && *local && (!shortcuts.is_empty() || wheel.is_some()) {
+                    commands.push(self);
+                }
                 for child in children {
-                    child.metadata(slots, inputs, hidden_slots, visible && *local)?;
+                    child.collect_metadata(metadata, commands, visible && *local)?;
                 }
             }
             _ => {}

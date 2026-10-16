@@ -67,7 +67,7 @@ impl Host {
             .map_err(|error| error.to_string())?
             .filter(|value| {
                 value.principal_kind == ManagedPrincipalKind::RemoteOwner
-                    && value.grants.contains(&self.access_grant)
+                    && value.grants.contains(&*self.access_grant.lock().unwrap())
             })
             .ok_or("credential does not grant this application source".into())
     }
@@ -128,7 +128,7 @@ impl Host {
             principal_id: principal,
             principal_kind: ManagedPrincipalKind::RemoteOwner,
             grants: vec![
-                self.access_grant.clone(),
+                self.access_grant.lock().unwrap().clone(),
                 "access.credential.finalize".into(),
             ],
             can_publish_client_capabilities: false,

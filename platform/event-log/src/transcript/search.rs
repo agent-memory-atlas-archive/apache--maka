@@ -147,7 +147,7 @@ async fn internal(
     };
     Ok(matches!(
         call,
-        (Some("provider"), Some("exec" | "wait" | "tool_search"))
+        (Some("provider"), Some("wait" | "tool_search"))
             | (Some("code_mode"), Some("code_cell" | "tool_search"))
     ))
 }

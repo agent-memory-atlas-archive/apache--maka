@@ -243,7 +243,12 @@ fn untrusted_metadata_or_native_plan_cannot_manufacture_resource_authority() {
         );
     let composer = support::package(
         "dynamic.composer",
-        old.manifest().application.clone().unwrap(),
+        old.manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     let mut input = input;
@@ -365,7 +370,12 @@ fn failed_or_lost_result_handlers_do_not_hold_accepted_work_or_healthy_pending_m
             );
         let root_pkg = support::package(
             "dynamic.app",
-            old.manifest().application.clone().unwrap(),
+            old.manifest()
+                .application
+                .as_ref()
+                .unwrap()
+                .declaration()
+                .clone(),
             Some(source),
         );
         let mut input = input;
@@ -434,7 +444,13 @@ fn service_fixture(
             .position(|p| p.manifest().id == name)
             .unwrap();
         let old = packages.remove(i);
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let entry = declaration
             .entries
             .get_mut(&maka_plugin_core::package::EntryTarget::Desktop)
@@ -612,7 +628,13 @@ fn actual_native_query_preserves_exact_integer_while_javascript_fails_without_re
     for is_native in [true, false] {
         let (mut input, mut packages) = support::fixture("");
         let old = packages.pop().unwrap();
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         let entry = declaration.entries.get_mut(&EntryTarget::Desktop).unwrap();
         let component = entry.exports["App"].contract.clone();
         let contract = Contract {
@@ -814,7 +836,13 @@ fn remote_fixture(
         unreachable!()
     };
     methods.get_mut("read").unwrap().mode = mode;
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let import = declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -1040,7 +1068,12 @@ fn guarded_application_with(
     );
     let package = support::package(
         "dynamic.app",
-        old.manifest().application.clone().unwrap(),
+        old.manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some(source),
     );
     input.instances.get_mut("app").unwrap().package = package.application_ref().into();

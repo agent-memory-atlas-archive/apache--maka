@@ -34,7 +34,7 @@ use maka_plugin_core::{
     plan::RemoteCapability,
     runtime::Published,
 };
-use maka_transport::{Connections, HostExecutable};
+use maka_transport::Connections;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 struct CloseWrites {
@@ -116,7 +116,13 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
             host_packages.push(old);
             continue;
         }
-        let mut declaration = old.manifest().application.clone().unwrap();
+        let mut declaration = old
+            .manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone();
         declaration
             .entries
             .get_mut(&EntryTarget::Host)
@@ -139,7 +145,13 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
         .position(|package| package.manifest().id == "dynamic.app")
         .unwrap();
     let old = packages.remove(index);
-    let mut declaration = old.manifest().application.clone().unwrap();
+    let mut declaration = old
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Desktop)
@@ -239,7 +251,7 @@ fn actual_quit_drains_cohost_native_sql_write_before_shared_store_close(cx: &mut
             PresentationTarget::Desktop,
             configuration,
             namespaces.clone(),
-            HostExecutable::new("absent-cohost-executable".into(), vec![]).unwrap(),
+            std::path::PathBuf::from("unused-cohost-startup-helper"),
             native,
             Some(maka_host_js::factory(Default::default())),
         ))

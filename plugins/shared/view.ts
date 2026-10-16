@@ -56,6 +56,7 @@ interface BoxOptions {
   autoFocus?: boolean;
   wheel?: { up: string; down: string };
   border?: boolean;
+  borderColor?: number;
   busy?: boolean;
   shortcuts?: Shortcut[];
   focusShortcuts?: FocusShortcut[];
@@ -86,6 +87,7 @@ interface Painter<N extends Node> {
     copyText?: string,
     hint?: string,
   ): N;
+  toggle(key: string, label: string, checked: boolean, disabled?: boolean, hint?: string): N;
   contextMenu?(
     key: string,
     label: string,
@@ -150,6 +152,9 @@ export interface Presentation<N extends Node> {
   ) => N;
 }
 const rgba = (n: number) => n >>> 8;
+function toggleSymbol(checked: boolean, ascii: boolean): string {
+  return ascii ? (checked ? '[x]' : '[ ]') : checked ? '━●' : '○─';
+}
 function font(theme: Theme, size: number, weight = 400, color = theme.text): TextAppearance {
   return {
     font: { family: '.SystemUIFont', fallbacks: [], size, lineHeight: 1.55, weight },
@@ -158,6 +163,41 @@ function font(theme: Theme, size: number, weight = 400, color = theme.text): Tex
 }
 function desktopPaint(theme: Theme): Painter<DesktopNode> {
   return {
+    toggle: (key, label, checked, disabled = false) =>
+      ui.desktop.stack({
+        key: key + '-row',
+        direction: 'row',
+        gap: 16,
+        padding: 0,
+        background: rgba(theme.background),
+        style: { width: fill, maxWidth: 520, align: 'center' },
+        children: [
+          ui.desktop.text({
+            key: key + '-label',
+            text: label,
+            color: rgba(theme.text),
+            style: { text: font(theme, 14), grow: 1 },
+          }),
+          ui.desktop.button({
+            key,
+            label: toggleSymbol(checked, theme.ascii),
+            disabled,
+            style: {
+              text: font(
+                theme,
+                14,
+                500,
+                disabled ? theme.muted : checked ? theme.accent : theme.subtle,
+              ),
+              background: 0,
+              padding: { top: 4, right: 4, bottom: 4, left: 4 },
+              radius: 8,
+            },
+            hover: disabled ? {} : { background: theme.selected },
+            focus: { border: theme.accent, borderWidth: 2 },
+          }),
+        ],
+      }),
     activity: (key, kind, foreground = theme.accent, prefix = '', suffix = '') =>
       ui.desktop.text({
         key,
@@ -257,6 +297,56 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
     return rgba(value);
   };
   return {
+    toggle: (key, label, checked, disabled = false, hint = '') =>
+      ui.terminal.stack({
+        key: key + '-row',
+        direction: 'row',
+        gap: 0,
+        padding: 0,
+        children: [
+          ui.terminal.stack({
+            key: key + '-content',
+            direction: 'row',
+            gap: 2,
+            padding: 0,
+            layout: { basis_fraction: { numerator: 1, denominator: 1, max: 52 }, shrink: true },
+            children: [
+              ui.terminal.stack({
+                key: key + '-label-area',
+                direction: 'column',
+                gap: 0,
+                padding: 0,
+                layout: { grow: 1, shrink: true },
+                children: [
+                  ui.terminal.text({
+                    key: key + '-label',
+                    text: label,
+                    color: color(theme.text),
+                    truncate: true,
+                    hint,
+                  }),
+                ],
+              }),
+              ui.terminal.stack({
+                key: key + '-switch-area',
+                direction: 'column',
+                gap: 0,
+                padding: 0,
+                layout: { basis: theme.ascii ? 3 : 2 },
+                children: [
+                  ui.terminal.button({
+                    key,
+                    label: toggleSymbol(checked, theme.ascii),
+                    disabled,
+                    color: color(checked ? theme.accent : theme.subtle),
+                    hint,
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
     activity: (key, kind, foreground = theme.accent, prefix = '', suffix = '') => {
       const frames = animation(kind, theme.ascii, theme.motion, prefix, suffix);
       return ui.terminal.text({
@@ -379,7 +469,11 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         disabled,
         copy_text: copyText,
         hint,
-        color: color(disabled ? theme.muted : primary ? theme.accent : theme.text),
+        color: color(
+          disabled
+            ? theme.muted
+            : (style.text?.foreground ?? (primary ? theme.accent : theme.text)),
+        ),
         align:
           (style.align ?? style.justify) === 'start'
             ? 'start'
@@ -431,8 +525,8 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         border: options.border
           ? {
               breathing: options.busy === true && theme.motion,
-              color: color(options.busy ? theme.accent : theme.border),
-              focused_color: color(theme.accent),
+              color: color(options.borderColor ?? (options.busy ? theme.accent : theme.border)),
+              focused_color: color(options.borderColor ?? theme.accent),
               style: theme.ascii ? 'ascii' : 'rounded',
             }
           : null,

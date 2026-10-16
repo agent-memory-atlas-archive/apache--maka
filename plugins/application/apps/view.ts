@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type { AppsConfiguration } from '../../shared/contracts.js';
 
 import type {
@@ -288,6 +289,7 @@ export function frame<N extends Node>(
             'apps-name',
             'input',
             {
+              menu: editorMenu(props.theme, props.locale),
               appearance: props.theme.input,
               accessibilityLabel: text.appsName,
               placeholder: text.appsName,
@@ -499,6 +501,7 @@ export function frame<N extends Node>(
         'apps-setting',
         'editor',
         {
+          menu: editorMenu(props.theme, props.locale),
           appearance: props.theme.textarea,
           accessibilityLabel: setting?.descriptor.label ?? text.instanceConfiguration,
           placeholder: '',

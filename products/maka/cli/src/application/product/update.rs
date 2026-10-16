@@ -44,7 +44,7 @@ pub(super) struct Baseline {
 
 #[derive(Args)]
 pub(crate) struct Update {
-    /// UI State Root (default: ~/.maka/application). Close its UI and local Host first.
+    /// UI State Root (default: ~/.maka/application). Close its UI first.
     #[arg(long)]
     root: Option<PathBuf>,
     /// Apply the previewed merge only when there are no conflicts.
@@ -112,15 +112,14 @@ async fn synchronize_version(
     let mut baseline: Baseline = serde_json::from_value(original.clone())?;
     let connections = serde_json::from_value(record.configuration.clone())?;
     let (path, domain, host_id, management) = launch::targets(&connections)?;
-    let host = launch::open(path, false, Some(domain.clone())).await?;
-    let result = async {
+    let host = super::public::Host::connect(path, domain.clone(), host_id).await?;
+    async {
         let mut revisions = BTreeMap::new();
-        let mut current = Vec::new();
-        for (target, deployment) in [
-            (&host, host_id),
-            (store, management),
-            (store, record.deployment),
-        ] {
+        let head = host.read().await?;
+        revisions.insert(host_id, head.source.reference.revision);
+        let mut current = vec![head];
+        for deployment in [management, record.deployment] {
+            let target = store;
             let head = target
                 .read_application_metadata(deployment)
                 .await?
@@ -163,14 +162,14 @@ async fn synchronize_version(
             }
             None => baseline.installation.clone(),
         };
-        let (mut next, installation) =
+        let (mut next, installation, _) =
             super::author_with_source(baseline.product, configuration, &packages, &authoring)
                 .await?;
         for endpoint in next.connections["hosts"]
             .as_array_mut()
             .ok_or("product connections missing")?
         {
-            if endpoint["location"]["kind"] == "process" {
+            if endpoint["location"]["kind"] == "public" {
                 endpoint["location"]["stateDomain"] = Value::String(domain.clone());
             }
         }
@@ -206,11 +205,14 @@ async fn synchronize_version(
         // Unchanged defaults only need source metadata. Read and validate old
         // package bytes when an actual merge needs to retain user-selected code.
         let mut available = BTreeMap::new();
-        for (target, head) in [
-            (&host, &current[0]),
-            (store, &current[1]),
-            (store, &current[2]),
-        ] {
+        for package in host
+            .packages(&current[0].source.reference, &current[0].packages)
+            .await?
+        {
+            available.insert(package.application_ref(), package);
+        }
+        for head in [&current[1], &current[2]] {
+            let target = store;
             let loaded = target
                 .load_application_at(&head.source.reference)
                 .await?
@@ -268,9 +270,7 @@ async fn synchronize_version(
         }
         Ok::<_, HostError>(outcome)
     }
-    .await;
-    host.drain().await;
-    result
+    .await
 }
 
 /// Objects merge by field. Ordered lists and scalar values remain atomic; an

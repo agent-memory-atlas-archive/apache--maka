@@ -63,7 +63,13 @@ fn fixture(
         .position(|p| p.manifest().id == "dynamic.app")
         .unwrap();
     let original = packages.remove(index);
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let history = Contract {
         name: "test.History".into(),
         version: 1,
@@ -306,8 +312,7 @@ fn actual_reading_tail_checks_wheel_and_completed_selection_before_whole_scene_p
             }
             assert!(!scene.app.borrow().is_retiring(&scene.root));
             assert_eq!(scene.app.borrow().accepted_action_count(), 0);
-            scene.close(cx);
-            scene.app.borrow_mut().shutdown().unwrap();
+            scene.close_and_drain(cx);
         }
     });
 }
@@ -332,7 +337,13 @@ fn committed_addition_preserves_original_reading_selection_copy_and_viewport(
                 .replace("scroll:'follow_end'", "scroll:'manual'");
             let package = support::package(
                 "dynamic.app",
-                original.manifest().application.clone().unwrap(),
+                original
+                    .manifest()
+                    .application
+                    .as_ref()
+                    .unwrap()
+                    .declaration()
+                    .clone(),
                 Some(source),
             );
             input.instances.get_mut("app").unwrap().package = package.application_ref().into();

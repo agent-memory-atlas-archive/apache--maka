@@ -29,6 +29,8 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InputProps {
     pub appearance: crate::appearance::InputAppearance,
+    #[serde(default)]
+    pub menu: Option<crate::textarea::TextareaMenu>,
     #[schemars(length(min = 1, max = 512))]
     pub accessibility_label: String,
     pub read_only: bool,

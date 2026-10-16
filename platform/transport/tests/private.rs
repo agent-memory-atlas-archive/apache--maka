@@ -90,7 +90,13 @@ impl Fixture {
                 .find(|p| p.manifest().id == "local.business")
                 .unwrap();
             let old_ref = old.application_ref();
-            let mut declaration = old.manifest().application.clone().unwrap();
+            let mut declaration = old
+                .manifest()
+                .application
+                .as_ref()
+                .unwrap()
+                .declaration()
+                .clone();
             declaration
                 .entries
                 .get_mut(&maka_plugin_core::package::EntryTarget::Host)
@@ -484,9 +490,20 @@ async fn native_ui(
     Arc<std::sync::Mutex<Option<maka_ui_runtime::actions::ServiceSource>>>,
     Arc<dyn maka_ui_runtime::actions::NativeService>,
 ) {
+    native_ui_at(f, connector, f.server.catalogue()).await
+}
+async fn native_ui_at(
+    f: &Fixture,
+    connector: Arc<dyn maka_transport::transport::native::Connector>,
+    catalogue: maka_transport::transport::Catalogue,
+) -> (
+    maka_ui_runtime::Application,
+    Arc<maka_transport::transport::native::Connection>,
+    Arc<std::sync::Mutex<Option<maka_ui_runtime::actions::ServiceSource>>>,
+    Arc<dyn maka_ui_runtime::actions::NativeService>,
+) {
     use maka_transport::transport::native::{Connection, Service};
     let connection = Connection::new(connector);
-    let catalogue = f.server.catalogue();
     let source = Arc::new(std::sync::Mutex::new(None));
     let business = Arc::new(
         Service::new(
@@ -639,36 +656,75 @@ async fn stop_ui(mut ui: maka_ui_runtime::Application, root: &maka_plugin_core::
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_adapter_runs_checked_ui_actions_actual_caller_sql_and_original_recovery() {
+    use maka_host_runtime::application::{
+        host::{Client, Host},
+        transport::HostEndpoint,
+    };
     let f = Fixture::new().await;
-    let nonce = Uuid::new_v4();
+    let deployment = f.app.source().unwrap().deployment;
+    f.server.close().await.unwrap();
+    f.app.shutdown().await.unwrap();
+    let selections = BTreeMap::from([
+        (
+            "business".into(),
+            HostEndpoint {
+                consumer: support::identity(13),
+                import: "business".into(),
+                grant: Grant {
+                    methods: ["read".into(), "write".into()].into(),
+                    recovery: false,
+                },
+            },
+        ),
+        (
+            "receipts".into(),
+            HostEndpoint {
+                consumer: support::identity(13),
+                import: "receipts".into(),
+                grant: Grant {
+                    methods: ["read".into()].into(),
+                    recovery: true,
+                },
+            },
+        ),
+    ]);
+    let host = Host::open(
+        f.store.clone(),
+        deployment,
+        NativeRegistry::default(),
+        Some(maka_host_js::factory(Default::default())),
+        selections.clone(),
+        vec![],
+    )
+    .await
+    .unwrap();
     #[cfg(unix)]
     let path = f._directory.path().join("native.sock");
     #[cfg(windows)]
-    let path = std::path::PathBuf::from(format!(r"\\.\pipe\maka-native-test-{nonce}"));
-    let mut listener = maka_host_runtime::ipc::LocalListener::bind(&path).unwrap();
-    let stop = tokio_util::sync::CancellationToken::new();
-    let accept_stop = stop.clone();
-    let server = f.server.clone();
-    let peer = f.peer.clone();
-    let acceptance = tokio::spawn(async move {
-        loop {
-            let stream = tokio::select! {
-                biased;
-                ()=accept_stop.cancelled()=>break,
-                stream=listener.accept()=>stream.unwrap(),
-            };
-            let (reader, writer) = tokio::io::split(stream);
-            drop(
-                server
-                    .serve_private(reader, writer, peer.clone(), nonce)
-                    .unwrap(),
-            );
+    let path = std::path::PathBuf::from(format!(r"\\.\pipe\maka-native-test-{}", Uuid::new_v4()));
+    let listener = maka_host_runtime::ipc::LocalListener::bind(&path).unwrap();
+    let serving = tokio::spawn({
+        let host = host.clone();
+        async move {
+            host.serve_local(listener, tokio_util::sync::CancellationToken::new())
+                .await
         }
-        drop(listener);
     });
-    let (mut ui, connection, _, _) = native_ui(
+    let anchor = Client::connect_peer(
+        &path,
+        Some(host.epoch()),
+        f.source.clone(),
+        [support::identity(2)].into(),
+        selections,
+    )
+    .await
+    .unwrap();
+    let (mut ui, connection, _, _) = native_ui_at(
         &f,
-        Arc::new(maka_transport::transport::ipc::Connector::new(path, nonce).unwrap()),
+        Arc::new(maka_transport::transport::ipc::Connector::new(
+            anchor.call_channel_opener().unwrap(),
+        )),
+        anchor.catalogue().clone(),
     )
     .await;
     let root = ui.mount_launch(serde_json::json!({})).unwrap();
@@ -702,9 +758,26 @@ async fn native_adapter_runs_checked_ui_actions_actual_caller_sql_and_original_r
     stop_ui(ui, &root).await;
     connection.close().await.unwrap();
     drop(connection);
-    stop.cancel();
-    acceptance.await.unwrap();
-    f.server.close().await.unwrap();
+    drop(anchor);
+    // Detaching the UI does not stop the independent business Host.
+    let mut observer = Client::connect(&path, Some(host.epoch())).await.unwrap();
+    let mut read = observer
+        .call(
+            "business",
+            "read".into(),
+            serde_json::Value::Null,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    read.start().await.unwrap();
+    assert!(
+        matches!(read.receive().await.unwrap(), Reply::Finished { result: Ok(ref value), cleanup: Ok(()) } if value["effects"] == 1)
+    );
+    observer.close().await.unwrap();
+    assert!(Client::retire(&path, host.epoch()).await.unwrap());
+    serving.await.unwrap().unwrap();
+    drop(host);
     f.cleanup().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1613,14 +1686,13 @@ async fn lost_close_before_dispatch_poll_keeps_the_actual_confirmed_sql_token() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn private_hello_accepts_bursts_and_close_cancels_partial_handshakes() {
+async fn application_close_cancels_bursts_of_partial_open_frames() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let f = Fixture::new().await;
-    let nonce = Uuid::new_v4();
     #[cfg(unix)]
     let path = f._directory.path().join("hello.sock");
     #[cfg(windows)]
-    let path = std::path::PathBuf::from(format!(r"\\.\pipe\maka-hello-test-{nonce}"));
+    let path = std::path::PathBuf::from(format!(r"\\.\pipe\maka-open-test-{}", Uuid::new_v4()));
     let mut listener = maka_host_runtime::ipc::LocalListener::bind(&path).unwrap();
     let mut clients = Vec::new();
     let mut observers = Vec::new();
@@ -1628,37 +1700,11 @@ async fn private_hello_accepts_bursts_and_close_cancels_partial_handshakes() {
         let mut client = maka_host_runtime::ipc::connect(&path).await.unwrap();
         let accepted = listener.accept().await.unwrap();
         let (reader, writer) = tokio::io::split(accepted);
-        observers.push(
-            f.server
-                .serve_private(reader, writer, f.peer.clone(), nonce)
-                .unwrap(),
-        );
+        observers.push(f.server.serve(reader, writer, f.peer.clone()).unwrap());
         // Leave a real physical header incomplete. No Scope/Open is admitted.
         client.write_all(&[0]).await.unwrap();
         clients.push(client);
     }
-    // A foreign nonce still fails before Scope admission and without an Open.
-    let mut foreign = maka_host_runtime::ipc::connect(&path).await.unwrap();
-    let accepted = listener.accept().await.unwrap();
-    let (reader, writer) = tokio::io::split(accepted);
-    let observer = f
-        .server
-        .serve_private(reader, writer, f.peer.clone(), nonce)
-        .unwrap();
-    let hello = serde_json::to_vec(&serde_json::json!({"nonce":Uuid::new_v4()})).unwrap();
-    foreign
-        .write_all(&(hello.len() as u32).to_be_bytes())
-        .await
-        .unwrap();
-    foreign.write_all(&hello).await.unwrap();
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_secs(2), observer)
-            .await
-            .unwrap()
-            .unwrap_err()
-            .contains("different Host incarnation")
-    );
-    drop(foreign);
     drop(listener);
     tokio::time::timeout(std::time::Duration::from_secs(2), f.server.close())
         .await

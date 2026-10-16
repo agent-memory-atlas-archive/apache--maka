@@ -29,6 +29,7 @@ pub(super) fn opening(id: &str, claim: Option<ContinuationClaim>) -> RuntimeEven
         },
         Fact::InvocationOpened {
             configuration: Some(Box::new(InvocationConfiguration {
+                compaction_prompt: None,
                 workspace_origin: maka_agent_facts::execution::WorkspaceOrigin::Selected,
                 approval_policy: maka_agent_facts::execution::ApprovalPolicy::OnRequest,
                 boundary_revision: 0,

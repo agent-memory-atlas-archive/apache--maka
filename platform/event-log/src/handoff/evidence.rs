@@ -117,18 +117,9 @@ pub(crate) async fn validate(
                 pause: previous, ..
             },
             configuration: Some(_),
-        } if match (previous.remaining_steps, pause.remaining_steps) {
-            (None, _) => true,
-            (Some(previous), Some(remaining)) => remaining <= previous,
-            (Some(_), None) => false,
-        } =>
-        {
-            &previous.intent.root_run_id
-        }
+        } => &previous.intent.root_run_id,
         _ => {
-            return Err(invalid(
-                "handoff requires an admitted model Run with remaining budget",
-            ));
+            return Err(invalid("handoff requires an admitted model Run"));
         }
     };
     let replay_base = match input {

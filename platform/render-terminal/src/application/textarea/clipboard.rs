@@ -73,6 +73,29 @@ pub(super) fn admit_paths(
     })
 }
 
+/// Text-only controls never inspect files or decode clipboard images.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub(super) fn read_text(budget: &NativeBudget) -> Result<Content, FileError> {
+    use clipboard_rs::{Clipboard, ClipboardContext};
+    let mut memory = budget.reserve(Kind::Encoded, maka_ui_runtime::textarea::MAX_BUFFER_BYTES)?;
+    let clipboard = ClipboardContext::new().map_err(|_| FileError::ClipboardUnavailable)?;
+    let value = clipboard
+        .get_text()
+        .map_err(|_| FileError::ClipboardUnavailable)?;
+    if value.capacity() > maka_ui_runtime::textarea::MAX_BUFFER_BYTES {
+        return Err(FileError::LimitExceeded);
+    }
+    memory.shrink_to(value.capacity());
+    Ok(Content::Text(Text {
+        value,
+        _memory: memory,
+    }))
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+pub(super) fn read_text(_: &NativeBudget) -> Result<Content, FileError> {
+    Err(FileError::ClipboardUnavailable)
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) fn read(maximum: usize, budget: &NativeBudget) -> Result<Content, FileError> {
     use clipboard_rs::{Clipboard, ClipboardContext, ContentFormat};

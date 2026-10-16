@@ -30,7 +30,7 @@ pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>)
     let (mut input, packages) = support::resource_fixture();
     input.environment.presentation = Some(PresentationTarget::Tui);
     let packages = packages.into_iter().map(|original| {
-        let mut declaration = original.manifest().application.clone().unwrap();
+        let mut declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let mut entry = declaration.entries.remove(&EntryTarget::Desktop).unwrap();
         let mut files = BTreeMap::new();
         match &mut entry.implementation {
@@ -52,9 +52,9 @@ pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>)
                         .replace("{kind:'button',key:'remove'", "{kind:'button',key:'reject',label:'Reject observation'},{kind:'button',key:'configure',label:'Configure editor'},{kind:'button',key:'remove'");
                     source.push_str("const normalFrame=frame;frame=(state)=>{const out=normalFrame(state);const editor=out.frame.view.children.find(node=>node.key==='editor');if(editor){editor.props={...editor.props,...state.options};delete editor.props.visible;delete editor.props.prefix;delete editor.props.readingViewport;}out.frame.view.children=out.frame.view.children.map(node=>node.key==='editor'?{kind:'stack',key:'presentation',direction:'column',gap:0,padding:0,background:out.frame.view.background,visible:state.options?.visible!==false,children:[node]}:node);if(state.options?.prefix)out.frame.view.children.unshift({kind:'text',key:'prefix',text:state.options.prefix,color:0xffffff});if(state.options?.readingViewport){const pane=out.frame.view.children.find(node=>node.key==='presentation');pane.scroll='manual';pane.layout={basis:6};pane.children.push({kind:'text',key:'long-tail',text:'tail\\n'.repeat(30),color:0xffffff});}if(state.reject&&state.observation)out.frame.view={kind:'invalid'};return out;};");
                 }
-                source = source.replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
+                source = source.replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted',navigated:'navigated'}")
                     .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
-                    .replace("else if(event.kind==='component')next.observation=event.event;", "else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}");
+                    .replace("else if(event.kind==='component')next.observation=event.event;", "else if(event.kind==='component'){if(event.name==='navigated'){next.navigation=event.event;next.navigations=(state.navigations??0)+1;}else next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}");
                 files.insert(module.clone(), source.into_bytes());
             }
             _ => {}
@@ -1002,6 +1002,66 @@ fn completely_clipped_editor_cannot_receive_focus_or_physical_input() {
     close(&mut tui);
 }
 #[test]
+fn overflowing_editor_keeps_boundary_wheels_inside_its_scrollable_parent() {
+    let (_runtime, mut tui) = presenter();
+    dispatch(&mut tui, "configure", json!({"readingViewport":true}));
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Paste(
+        (0..20).map(|i| format!("\nrow {i:02}")).collect(),
+    ))
+    .unwrap();
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    let target = tui
+        .scene
+        .iter()
+        .find(|target| target.mount == mount)
+        .unwrap();
+    let point = target.area.visible();
+    let before = observation(&tui);
+    for direction in [MouseEventKind::ScrollUp, MouseEventKind::ScrollDown] {
+        for _ in 0..25 {
+            click(&mut tui, direction, point.x + 1, point.y + 1);
+            draw(&mut tui, 50, 20);
+            let state = tui.resources.owners[&tui.root.id()]
+                .state
+                .downcast_ref::<super::super::scroll::SceneState>()
+                .unwrap();
+            assert_eq!(state.scrolls["presentation"].offset, 0);
+        }
+    }
+    assert_eq!(observation(&tui), before);
+    close(&mut tui);
+}
+
+#[test]
+fn fitting_editor_leaves_wheel_scrolling_to_its_parent() {
+    let (_runtime, mut tui) = presenter();
+    dispatch(&mut tui, "configure", json!({"readingViewport":true}));
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    let point = tui
+        .scene
+        .iter()
+        .find(|target| target.mount == mount)
+        .unwrap()
+        .area
+        .visible();
+    click(
+        &mut tui,
+        MouseEventKind::ScrollDown,
+        point.x + 1,
+        point.y + 1,
+    );
+    let state = tui.resources.owners[&tui.root.id()]
+        .state
+        .downcast_ref::<super::super::scroll::SceneState>()
+        .unwrap();
+    assert!(state.scrolls["presentation"].offset > 0);
+    close(&mut tui);
+}
+
+#[test]
 fn unhandled_editor_page_key_reaches_its_original_scene_scroll_ancestor() {
     let (_runtime, mut tui) = presenter();
     dispatch(&mut tui, "configure", json!({"readingViewport":true}));
@@ -1075,6 +1135,68 @@ fn pointer_capture_survives_tab_focus_change_and_release_keeps_the_new_focus() {
     );
     assert!(tui.drag.is_none());
     assert!(tui.focus.as_ref().unwrap().same(&next));
+    close(&mut tui);
+}
+
+#[test]
+fn terminal_navigation_is_revision_bound_and_preserves_native_editing() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Paste("/co".into())).unwrap();
+    let original = observation(&tui);
+    let navigation =
+        json!({"owner":original["snapshot"]["text"]["owner"],"basedOn":original["revision"]});
+    dispatch(&mut tui, "configure", json!({"navigation":navigation}));
+    draw(&mut tui, 50, 20);
+    let focus = tui.focus.clone().unwrap();
+    for (index, code) in [
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Tab,
+        KeyCode::Enter,
+        KeyCode::Esc,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        tui.input_settled(key(code)).unwrap();
+        assert_eq!(observation(&tui), original);
+        assert!(tui.focus.as_ref().unwrap().same(&focus));
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["navigations"],
+            index + 1
+        );
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["navigation"]["observation"],
+            original
+        );
+    }
+    tui.input_settled(Event::Paste("x".into())).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["navigations"],
+        5
+    );
+    assert_eq!(
+        observation(&tui)["snapshot"]["text"]["bytes"],
+        original["snapshot"]["text"]["bytes"].as_u64().unwrap() + 2
+    );
+    let current = observation(&tui);
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"navigation":{"owner":"retired-owner","basedOn":current["revision"]}}),
+    );
+    draw(&mut tui, 50, 20);
+    tui.input_settled(key(KeyCode::Up)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["navigations"],
+        5
+    );
+    assert_ne!(
+        observation(&tui)["snapshot"]["selection"],
+        current["snapshot"]["selection"]
+    );
     close(&mut tui);
 }
 
@@ -1317,7 +1439,13 @@ fn committed_addition_preserves_native_draft_selection_focus_and_undo() {
         .iter()
         .find(|p| p.manifest().id == "dynamic.app")
         .unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     if let Implementation::JavaScript { realm, .. } = &mut declaration
         .entries
         .get_mut(&EntryTarget::Tui)
@@ -1504,16 +1632,16 @@ fn paste_then_enter_is_immediate_and_ordered_while_the_original_js_job_is_slow()
     let packages = packages.into_iter().map(|original| {
         if !matches!(original.manifest().id.as_str(), "dynamic.app" | "dynamic.composer") { return original; }
         let id = original.manifest().id.clone();
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation else { unreachable!() };
         let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap()
-            .replace("on:{changed:'changed',submitted:'submitted'}", "on:{changed:'changed',submitted:'submitted',checkpoint:'checkpoint'}");
+            .replace("on:{changed:'changed',submitted:'submitted',navigated:'navigated'}", "on:{changed:'changed',submitted:'submitted',checkpoint:'checkpoint'}");
         if original.manifest().id == "dynamic.app" {
             source = source.replace(
                 "if(event.key==='reject'){", "if(event.key==='reject'){const until=Date.now()+100;while(Date.now()<until){};",
             ).replace(
                 "next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;",
-                "if(event.name==='checkpoint'){next.nativeReady=event.event.state.initialized;}else{next.observation=event.event;if(event.name==='submitted'){if(!state.nativeReady)throw new Error('submission preceded its original checkpoint');next.submissions=(state.submissions??0)+1;}}",
+                "if(event.name==='checkpoint'){next.nativeReady=event.event.state.initialized;}else{if(event.name==='navigated'){next.navigation=event.event;next.navigations=(state.navigations??0)+1;}else next.observation=event.event;if(event.name==='submitted'){if(!state.nativeReady)throw new Error('submission preceded its original checkpoint');next.submissions=(state.submissions??0)+1;}}",
             );
         }
         let package = support::package(&id, declaration, Some(source));
@@ -1609,7 +1737,7 @@ fn consecutive_native_command_receipts_keep_original_values_through_candidate_re
     let (runtime, mut input, packages) = editor_fixture();
     let packages = packages.into_iter().map(|original| {
         if original.manifest().id != "dynamic.app" { return original; }
-        let declaration = original.manifest().application.clone().unwrap();
+        let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation else { unreachable!() };
         let source = std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(
             "next.observation=event.event;", "next.observation=event.event;if(event.event.receipt)next.receipts=[...(state.receipts??[]),event.event.receipt];",
@@ -1892,4 +2020,344 @@ fn primary_copy_requires_selection_and_preserves_the_draft() {
         "copy this"
     );
     close(&mut tui);
+}
+
+#[test]
+fn ordinary_textarea_ctrl_v_replaces_selection_without_file_policy() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    let mount = draft(&tui);
+    super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    )
+    .clipboard
+    .as_mut()
+    .unwrap()
+    .set_clipboard_text("Plain 中文\nnext".into());
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+        .editor
+        .text()
+        != "Plain 中文\nnext"
+    {
+        tui.pump_settled().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        observation(&tui)["snapshot"]["text"]["bytes"],
+        "Plain 中文\nnext".len()
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn editor_right_click_menu_copies_cuts_and_selects_original_editor() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    draw(&mut tui, 50, 20);
+    let area = tui.focus.as_ref().unwrap().area.visible();
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    assert!(tui.editor_menu.is_some());
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 50, 20));
+    let painted = tui.paint(buffer.area, &mut buffer).unwrap();
+    let screen: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    for label in ["Copy", "Cut", "Paste", "Select all"] {
+        assert!(screen.contains(label), "missing {label}: {screen}");
+    }
+    // Opening itself has no clipboard side effect, and activation waits for flush.
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert!(!tui.flush_clipboard(&mut Vec::new()).unwrap());
+    tui.present(painted);
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    let mut copied = Vec::new();
+    assert!(tui.flush_clipboard(&mut copied).unwrap());
+    assert_eq!(copied, b"\x1b]52;c;U3RhcnQ=\x07");
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .text(),
+        "Start"
+    );
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .text(),
+        ""
+    );
+    assert!(tui.flush_clipboard(&mut Vec::new()).unwrap());
+    super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    )
+    .clipboard
+    .as_mut()
+    .unwrap()
+    .set_clipboard_text("menu paste".into());
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Left),
+        area.x + 2,
+        area.y.min(14) + 3,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+        .editor
+        .text()
+        != "menu paste"
+    {
+        tui.pump_settled().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
+        .unwrap();
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .selected_text(),
+        "menu paste"
+    );
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    draw(&mut tui, 50, 20);
+    dispatch(&mut tui, "configure", json!({"readOnly":true}));
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert!(tui.editor_menu.is_none());
+    assert!(!tui.flush_clipboard(&mut Vec::new()).unwrap());
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .text(),
+        "menu paste"
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn pending_editor_paste_is_cancelled_on_window_focus_loss_and_errors_are_visible() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    let owner = super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    );
+    owner
+        .clipboard
+        .as_mut()
+        .unwrap()
+        .set_clipboard_text("must not insert".into());
+    owner.paste(false);
+    tui.input_settled(Event::FocusLost).unwrap();
+    for _ in 0..20 {
+        tui.pump_settled().unwrap();
+    }
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .text(),
+        "Start"
+    );
+    tui.input_settled(Event::FocusGained).unwrap();
+    let owner = super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    );
+    owner.editor.error = Some("composer-too-large");
+    let buffer = draw(&mut tui, 50, 20);
+    let screen: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(screen.contains("Text exceeds the input limit"));
+    assert!(!screen.contains("composer-too-large"));
+    close(&mut tui);
+}
+
+#[test]
+fn resize_grip_changes_height_without_editing_text_or_selection() {
+    let (_runtime, mut tui) = presenter();
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"terminalRows":{"min":3,"max":8,"resizable":true}}),
+    );
+    draw(&mut tui, 50, 40);
+    tui.input_settled(Event::Paste("original draft".into()))
+        .unwrap();
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    draw(&mut tui, 50, 40);
+    let mount = draft(&tui);
+    let area = |tui: &Presenter| {
+        tui.scene
+            .iter()
+            .find(|target| target.mount == mount)
+            .unwrap()
+            .area
+            .visible()
+    };
+    let initial = area(&tui);
+    let before = observation(&tui);
+    let column = initial.right() - 2;
+    let row = initial.bottom() - 1;
+    for (kind, row) in [
+        (MouseEventKind::Down(MouseButton::Left), row),
+        (MouseEventKind::Drag(MouseButton::Left), row + 10),
+        (MouseEventKind::Up(MouseButton::Left), row + 10),
+    ] {
+        tui.input_settled(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        draw(&mut tui, 50, 40);
+    }
+    assert_eq!(
+        area(&tui).height,
+        initial.height + 10,
+        "manual height exceeds the automatic preferred maximum"
+    );
+    assert_eq!(observation(&tui), before);
+    let row = area(&tui).bottom() - 1;
+    for (kind, row) in [
+        (MouseEventKind::Down(MouseButton::Left), row),
+        (MouseEventKind::Drag(MouseButton::Left), 0),
+        (MouseEventKind::Up(MouseButton::Left), 0),
+    ] {
+        tui.input_settled(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        draw(&mut tui, 50, 40);
+    }
+    assert_eq!(area(&tui).height, 5, "minimum text rows plus border");
+    assert_eq!(observation(&tui), before);
+    tui.input_settled(Event::Paste("replacement".into()))
+        .unwrap();
+    assert_eq!(
+        super::super::textarea::editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        "replacement"
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn physical_cursor_follows_the_rendered_multiline_caret_after_resize() {
+    use ratatui::layout::Position;
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 24);
+    tui.input_settled(Event::Paste("中🙂\n末".into())).unwrap();
+    for width in [50, 11, 32] {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, width, 24));
+        let pending = tui.paint(buffer.area, &mut buffer).unwrap();
+        let (x, y) = (0..24)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .find(|&(x, y)| buffer[(x, y)].symbol() == "末")
+            .expect("last edited line is painted");
+        assert_eq!(pending.cursor_position(), Some(Position::new(x + 2, y)));
+        tui.present(pending);
+        tui.settle().unwrap();
+    }
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+    tui.shutdown_settled().unwrap();
 }

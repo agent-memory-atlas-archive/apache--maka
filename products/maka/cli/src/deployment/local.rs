@@ -34,10 +34,20 @@ type Connection = Client;
 /// Interactive startup does not install, update, repair or take over a Host.
 /// The UI calls this only after terminal validation, in a cancellable background job.
 pub async fn connect(path: PathBuf) -> Result<Connection, HostError> {
-    crate::operation::without_progress(connect_inner(path)).await
+    crate::operation::without_progress(connect_inner(path, None)).await
 }
 
-async fn connect_inner(path: PathBuf) -> Result<Connection, HostError> {
+pub async fn connect_application(
+    request: &maka_transport::startup::Request,
+) -> Result<Connection, HostError> {
+    request.validate()?;
+    crate::operation::without_progress(connect_inner(request.root.clone(), Some(request))).await
+}
+
+async fn connect_inner(
+    path: PathBuf,
+    selection: Option<&maka_transport::startup::Request>,
+) -> Result<Connection, HostError> {
     let mut child = None;
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let (_launch, root_id) = loop {
@@ -68,7 +78,13 @@ async fn connect_inner(path: PathBuf) -> Result<Connection, HostError> {
                 Err(error) => return Err(error.into()),
             }
         };
-        if let Some(connection) = live(&path, &root_id).await? {
+        if selection
+            .and_then(|selection| selection.state_domain.as_ref())
+            .is_some_and(|expected| *expected != root_id)
+        {
+            return Err("State Root differs from the selected application Host".into());
+        }
+        if let Some(connection) = live(&path, &root_id, selection).await? {
             return Ok(connection);
         }
         let directory = directory(&root_id)?;
@@ -77,7 +93,7 @@ async fn connect_inner(path: PathBuf) -> Result<Connection, HostError> {
             match FileLease::acquire(&directory.join("executor.lock")) {
                 Ok(lease) => break Arc::new(lease),
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    if let Some(connection) = live(&path, &root_id).await? {
+                    if let Some(connection) = live(&path, &root_id, selection).await? {
                         return Ok(connection);
                     }
                     pause().await;
@@ -86,7 +102,7 @@ async fn connect_inner(path: PathBuf) -> Result<Connection, HostError> {
             }
         };
         lease.validate()?;
-        if let Some(connection) = live(&path, &root_id).await? {
+        if let Some(connection) = live(&path, &root_id, selection).await? {
             return Ok(connection);
         }
         match store::read(&directory).await? {
@@ -94,10 +110,11 @@ async fn connect_inner(path: PathBuf) -> Result<Connection, HostError> {
                 let root = root::resolve(&path)?;
                 deployment.validate(&root, &directory)?;
                 deployment.require_active()?;
+                prepare_application(&path, &root_id, selection).await?;
                 // Keep its probe resident until the actual interactive handshake.
                 let (probe, _) = activation::connect_or_launch(&deployment, lease.clone()).await?;
                 let anchor = probe.anchor().await?;
-                let connection = live(&path, &root_id)
+                let connection = live(&path, &root_id, selection)
                     .await?
                     .ok_or("Activated Host is unavailable")?;
                 lease.validate()?;
@@ -109,9 +126,10 @@ async fn connect_inner(path: PathBuf) -> Result<Connection, HostError> {
             }
             store::Installation::Missing => {}
         }
+        prepare_application(&path, &root_id, selection).await?;
         loop {
             lease.validate()?;
-            if let Some(connection) = live(&path, &root_id).await? {
+            if let Some(connection) = live(&path, &root_id, selection).await? {
                 if let Some(child) = &mut child {
                     release(child).await?;
                 }
@@ -169,6 +187,36 @@ async fn connect_inner(path: PathBuf) -> Result<Connection, HostError> {
     result
 }
 
+async fn prepare_application(
+    path: &std::path::Path,
+    root_id: &str,
+    selection: Option<&maka_transport::startup::Request>,
+) -> Result<(), HostError> {
+    let Some(selection) = selection else {
+        return Ok(());
+    };
+    loop {
+        if live(path, root_id, Some(selection)).await?.is_some() {
+            return Ok(());
+        }
+        let root = match RootOwner::open(path, &RootNamespaces::for_current_account()?) {
+            Ok(root) => root,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                pause().await;
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if root.root_id() != root_id {
+            return Err("State Root changed before application preparation".into());
+        }
+        let store = maka_transport::open_store(Arc::new(root)).await?;
+        let result = crate::application::select_committed_host(&store, selection).await;
+        store.drain().await;
+        return result;
+    }
+}
+
 async fn pause() {
     tokio::time::sleep(Duration::from_millis(25)).await;
 }
@@ -186,6 +234,7 @@ async fn release(child: &mut Child) -> Result<(), HostError> {
 async fn live(
     path: &std::path::Path,
     expected_root: &str,
+    selection: Option<&maka_transport::startup::Request>,
 ) -> Result<Option<Connection>, HostError> {
     // A candidate has not published discovery until database initialization is
     // complete. Do not inspect its transient SQLite startup files as a live root.
@@ -206,6 +255,10 @@ async fn live(
     if discovery.root_id != expected_root {
         return Err("State Root changed during startup".into());
     }
+    if selection.is_some_and(|selection| discovery.source.deployment != selection.deployment) {
+        return Err("live Host belongs to another application deployment".into());
+    }
+
     let stream = match ipc::connect(&discovery.endpoint).await {
         Ok(stream) => stream,
         Err(error) if error.downcast_ref::<io::Error>().is_some_and(absent) => return Ok(None),

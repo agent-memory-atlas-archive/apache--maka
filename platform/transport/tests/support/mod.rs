@@ -102,8 +102,10 @@ pub fn host_with_startup_failure() -> (Input, Vec<Package>) {
         .unwrap()
         .manifest()
         .application
-        .clone()
-        .unwrap();
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     let failing = counter::package(
         "local.failing",
         declaration,
@@ -125,7 +127,12 @@ pub fn host_with_unavailable_business() -> (Input, Vec<Package>) {
         .unwrap();
     *old = counter::package(
         "local.business",
-        old.manifest().application.clone().unwrap(),
+        old.manifest()
+            .application
+            .as_ref()
+            .unwrap()
+            .declaration()
+            .clone(),
         Some("export function activate() { throw Error('business initializer rejected'); }".into()),
     );
     input.instances.get_mut("business").unwrap().package = old.application_ref().into();
@@ -239,7 +246,13 @@ pub fn ui(target: PresentationTarget) -> (Input, Vec<Package>, Vec<RemoteObserva
     let (mut input, mut packages) = counter::dual_fixture("");
     input.environment.presentation = Some(target);
     let original = packages.pop().unwrap();
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     for entry in declaration.entries.values_mut() {
         entry.imports.insert("business".into(), import(business()));
         entry
@@ -306,7 +319,13 @@ pub fn ui(target: PresentationTarget) -> (Input, Vec<Package>, Vec<RemoteObserva
 pub fn native_host(implementation: &str) -> (Input, Vec<Package>) {
     let (mut input, mut packages) = host();
     let original = packages.remove(0);
-    let mut declaration = original.manifest().application.clone().unwrap();
+    let mut declaration = original
+        .manifest()
+        .application
+        .as_ref()
+        .unwrap()
+        .declaration()
+        .clone();
     declaration
         .entries
         .get_mut(&EntryTarget::Host)

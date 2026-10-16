@@ -22,7 +22,8 @@ use maka_event_log::message_queue::{MessageQueue, QueueCommand, QueueEdit};
 
 impl MessageBasis {
     fn same_execution(&self, other: &Self) -> bool {
-        self.graph == other.graph
+        self.compaction_prompt == other.compaction_prompt
+            && self.graph == other.graph
             && self.collaboration_mode == other.collaboration_mode
             && self.tool_discovery == other.tool_discovery
             && self.background_kind == other.background_kind
@@ -34,7 +35,6 @@ impl MessageBasis {
             && self.behavior == other.behavior
             && self.workspace == other.workspace
             && self.tools == other.tools
-            && self.max_steps == other.max_steps
     }
 }
 impl Owner {
@@ -229,7 +229,10 @@ impl Owner {
                     entry.expect("targeted promotion").execution.basis.clone(),
                 )
                 .map_err(|_| "agent_message_basis_invalid")?;
-                if control.basis.executor.is_some() || !basis.same_execution(&control.basis) {
+                if control.compacting
+                    || control.basis.executor.is_some()
+                    || !basis.same_execution(&control.basis)
+                {
                     return rejected(QueueRejection::ExecutionChanged);
                 }
                 QueueEdit::Promote {

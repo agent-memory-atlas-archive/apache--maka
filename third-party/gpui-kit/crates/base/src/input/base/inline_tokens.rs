@@ -250,6 +250,82 @@ impl InlineTokenStore {
 }
 
 impl<M: InputModeKind> InputBaseState<M> {
+    /// Recognize exact whitespace-delimited literals without changing document text,
+    /// selections, composition or undo history. This registry owns token annotations.
+    pub fn set_literal_tokens(
+        &mut self,
+        tokens: Vec<InlineToken>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), InlineTokenError> {
+        for token in &tokens {
+            token.validate()?;
+            if token.text.chars().any(char::is_whitespace) {
+                return Err(InlineTokenError::InvalidToken);
+            }
+        }
+        if M::CODE_EDITOR || self.masked || self.token_is_secret() || !self.mask_pattern.is_none() {
+            return Err(InlineTokenError::UnsupportedMode);
+        }
+        if self.literal_tokens.as_ref() != Some(&tokens) {
+            self.literal_tokens = Some(tokens);
+            self.inline_tokens = None;
+            self.reconcile_literal_tokens();
+            self.token_layout_cache = None;
+            cx.notify();
+        }
+        Ok(())
+    }
+    pub(super) fn reconcile_literal_tokens(&mut self) {
+        let Some(literal_tokens) = &self.literal_tokens else {
+            return;
+        };
+        if literal_tokens.is_empty() {
+            self.inline_tokens = None;
+            return;
+        }
+        let text = self.text.to_string();
+        let literals: std::collections::BTreeMap<&str, &InlineToken> = literal_tokens
+            .iter()
+            .map(|token| (token.text.as_ref(), token))
+            .collect();
+        let mut spans = Vec::new();
+        let mut start = 0;
+        for word in text.split_whitespace() {
+            let offset = text[start..].find(word).expect("word in source") + start;
+            if let Some(token) = literals.get(word).copied() {
+                let range = offset..offset + word.len();
+                let composing = self
+                    .ime_marked_range
+                    .is_some_and(|mark| mark.start < range.end && range.start < mark.end);
+                if !composing {
+                    spans.push(InlineTokenSpan {
+                        range,
+                        token: token.clone(),
+                    });
+                }
+            }
+            start = offset + word.len();
+        }
+        if !spans.is_empty() {
+            let mut boundaries = text
+                .grapheme_indices(true)
+                .map(|(offset, _)| offset)
+                .chain(std::iter::once(text.len()))
+                .peekable();
+            spans.retain(|span| {
+                [span.range.start, span.range.end]
+                    .into_iter()
+                    .all(|offset| {
+                        while boundaries.peek().is_some_and(|boundary| *boundary < offset) {
+                            boundaries.next();
+                        }
+                        boundaries.peek() == Some(&offset)
+                    })
+            });
+        }
+        self.inline_tokens = (!spans.is_empty()).then(|| Box::new(InlineTokenStore { spans }));
+    }
+
     pub(super) fn token_spans(&self) -> &[InlineTokenSpan] {
         self.inline_tokens
             .as_ref()
@@ -295,9 +371,12 @@ impl<M: InputModeKind> InputBaseState<M> {
         if inserted.is_some() && self.inline_tokens.is_none() {
             self.inline_tokens = Some(Box::default());
         }
-        self.inline_tokens
-            .as_mut()?
-            .replace(range, new_len, inserted.as_slice())
+        let delta = self
+            .inline_tokens
+            .as_mut()
+            .and_then(|store| store.replace(range, new_len, inserted.as_slice()));
+        self.reconcile_literal_tokens();
+        delta
     }
     pub(super) fn replay_tokens(
         &mut self,
@@ -306,6 +385,12 @@ impl<M: InputModeKind> InputBaseState<M> {
         delta: Option<&TokenDelta>,
         undo: bool,
     ) {
+        // Literal annotations derive from the replayed text, rather than the
+        // explicit token deltas recorded against its previous coordinates.
+        if self.literal_tokens.is_some() {
+            self.reconcile_literal_tokens();
+            return;
+        }
         let inserted = delta
             .map(|d| {
                 if undo {
@@ -321,6 +406,7 @@ impl<M: InputModeKind> InputBaseState<M> {
         if let Some(store) = self.inline_tokens.as_mut() {
             store.replace(range, new_len, inserted);
         }
+        self.reconcile_literal_tokens();
     }
     fn check_token_mode(&self) -> Result<(), InlineTokenError> {
         if self.ime_marked_range.is_some() {
@@ -384,6 +470,7 @@ impl<M: InputModeKind> InputBaseState<M> {
                 spans: content.tokens,
             })
         });
+        self.reconcile_literal_tokens();
     }
 }
 

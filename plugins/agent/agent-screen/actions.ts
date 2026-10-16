@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { canCompact, openCompact, compactCopy } from './compact.js';
 import { tuiText, copy } from './locale.js';
 import type {
   Action,
@@ -459,6 +460,8 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.navigation++;
   state.parts = [];
   state.run = null;
+  state.compacting = false;
+  state.compact = null;
   state.metrics = null;
   state.queue = null;
   state.interactions = null;
@@ -544,6 +547,8 @@ export function mutationPending(state: State) {
     state.uncertain !== null ||
     Object.values(state.pending).some((request) =>
       [
+        'compact',
+        'compactField',
         'queueRead',
         'questionRead',
         'respond',
@@ -715,6 +720,13 @@ export function rootCommands(
       ? copied
       : null;
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
+    {
+      kind: 'compact-open',
+      id: 'compact-open',
+      label: compactCopy(locale).title,
+      hint: '/compact',
+      disabled: !route || !canCompact(state),
+    },
     ...(target === 'tui'
       ? [
           {
@@ -1044,6 +1056,26 @@ export function controlSidebar(state: State, op: TerminalPaneCommand['op']) {
   }
 }
 
+// Aliases only name existing root actions; availability and labels stay in rootCommands.
+export function composerCommands(state: State, locale: string, target: 'tui' | 'desktop') {
+  const aliases: Partial<Record<RootCommand, string>> = {
+    'compact-open': 'compact',
+    create: 'new',
+    'model-setup': 'model',
+    settings: 'settings',
+    'help-open': 'help',
+    'skills-open': 'skills',
+    'plan-open': 'plan',
+    'goal-open': 'goal',
+    'recap-open': 'recap',
+    'usage-open': 'usage',
+    'terminal-open': 'terminal',
+  };
+  return rootCommands(state, locale, target).flatMap(({ kind, id, label, disabled }) =>
+    aliases[kind] ? [{ id, command: aliases[kind]!, label, disabled }] : [],
+  );
+}
+
 export function rootCommand(
   state: State,
   actions: Action[],
@@ -1057,7 +1089,8 @@ export function rootCommand(
     )
   )
     return false;
-  if (kind === 'outputs-open') {
+  if (kind === 'compact-open') openCompact(state, actions);
+  else if (kind === 'outputs-open') {
     state.inspector = 'outputs';
     const visit = state.visits.find((entry) => entry.id === state.selected?.id);
     if (visit) {
@@ -1389,6 +1422,7 @@ export function changeSession(
 }
 
 export function closeDialog(state: State) {
+  if (state.dialog === 'compact') state.compact = null;
   if (state.dialog === 'session-change') state.sessionChange = null;
   // Cancel follows the original queue sheet: discard this edit, not an accepted operation.
   if (state.dialog === 'queue') state.queueEdit = null;

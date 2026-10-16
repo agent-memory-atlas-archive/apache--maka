@@ -59,7 +59,7 @@ async fn preturn_keeps_anchor_and_latest_main_never_falls_back_a_broken_newer_tr
                 covered_through: source.source_evidence.high_water,
                 source_digest: source.source_evidence.digest,
                 previous_checkpoint_id: None,
-                summary: TextSummary::from_model_step(output, false).unwrap(),
+                summary: TextSummary::from_model_step(output).unwrap(),
                 summary_step_id: "summary".into(),
             },
         },
