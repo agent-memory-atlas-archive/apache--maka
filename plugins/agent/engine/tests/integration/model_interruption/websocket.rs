@@ -289,7 +289,7 @@ async fn interrupted_progress_renews_compaction_before_and_after_a_checkpoint() 
                     item["type"] == "function_call_output" && item["call_id"] == call),
                     "compaction must cover the settled effect before continuing");
                 if round == 2 {
-                    assert!(summary["input"].to_string().contains("Previous continuation summary"));
+                    assert!(summary["input"].to_string().contains("Continuation summary"));
                 }
                 let event = json!({"type":"response.completed", "response":{"id":format!("summary-{round}"), "output":[{"type":"message", "id":format!("summary-text-{round}"), "content":[{"type":"output_text", "text":SUMMARY}]}]}});
                 let body = format!("data: {event}\n\n");

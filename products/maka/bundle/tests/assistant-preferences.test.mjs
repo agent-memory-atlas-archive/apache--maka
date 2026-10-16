@@ -39,6 +39,8 @@ for (const target of ['tui', 'desktop'])
       revision: 4,
       displayName: 'Saved',
       assistantTone: '',
+      compactionPrompt: 'Default compression prompt',
+      defaultCompactionPrompt: 'Default compression prompt',
       workspaceInstructions: true,
       incognitoActive: false,
       shellTitles: true,
@@ -106,6 +108,8 @@ for (const target of ['tui', 'desktop'])
       revision: 7,
       displayName: '',
       assistantTone: '',
+      compactionPrompt: 'Default compression prompt',
+      defaultCompactionPrompt: 'Default compression prompt',
       workspaceInstructions: true,
       incognitoActive: false,
       shellTitles: true,
@@ -160,4 +164,105 @@ for (const target of ['tui', 'desktop'])
       expectedRevision: 8,
       mutation: { kind: 'shell_titles', enabled: true },
     });
+  });
+
+for (const target of ['tui', 'desktop'])
+  test(`Assistant ${target} saves a custom compression prompt and restores the built-in default`, async () => {
+    const { component } = await import(`../dist/packages/assistant-preferences/${target}.js`);
+    const props = { theme, locale: 'en', open: true, busy: false, shell: { back: 0 } };
+    let out = component.mount(props, {});
+    const event = (input) => (out = component.event(out.frame.state, input, props, {}));
+    const raw = (key) => event({ kind: 'raw', key, event: {} });
+    const finish = (value) =>
+      event({ kind: 'action', key: out.actions[0].key, event: { status: 'succeeded', value } });
+    const observed = (text, revision, receipt = null) => ({
+      revision,
+      snapshot: {
+        text: { owner: 'prompt', revision, bytes: Buffer.byteLength(text) },
+        marked: null,
+      },
+      receipt,
+    });
+    const field = (value) =>
+      event({ kind: 'component', child: 'assistant-compaction', name: 'changed', event: value });
+    const saved = {
+      revision: 4,
+      displayName: 'Saved',
+      assistantTone: '',
+      workspaceInstructions: true,
+      incognitoActive: false,
+      shellTitles: true,
+      compactionPrompt: 'Built-in instructions',
+      defaultCompactionPrompt: 'Built-in instructions',
+    };
+    finish([]);
+    finish(saved);
+    field(observed('', 0));
+    const initial = out.frame.state.fields.compaction.command;
+    assert.deepEqual(initial.edit, { kind: 'reset', text: 'Built-in instructions' });
+    field(
+      observed('Built-in instructions', 1, {
+        owner: initial.owner,
+        sequence: initial.sequence,
+        outcome: { status: 'applied' },
+      }),
+    );
+    const draft = observed('Keep 中文 decisions', 2);
+    field(draft);
+    raw('save-compaction');
+    assert.equal(out.actions[0].resources.text.child, 'assistant-compaction');
+    finish({ metadata: draft.snapshot.text, text: 'Keep 中文 decisions' });
+    assert.deepEqual(out.actions[0].input, {
+      expectedRevision: 4,
+      mutation: { kind: 'compaction_prompt', prompt: 'Keep 中文 decisions' },
+    });
+    assert.equal(valid(out.actions[0].input), true, JSON.stringify(valid.errors));
+    const commit = (revision) =>
+      event({
+        kind: 'action',
+        key: out.actions[0].key,
+        event: {
+          status: 'operation',
+          reply: {
+            reference: {
+              contract: { name: 'maka.settings.Settings', version: 1 },
+              method: 'updateAssistantPreferences',
+              operation: `prompt-${revision}`,
+            },
+            receipt: {
+              kind: 'recorded',
+              outcome: { kind: 'returned', value: { kind: 'committed', revision } },
+            },
+          },
+        },
+      });
+    const unrelated = structuredClone(out.frame.state.fields.name);
+    commit(5);
+    finish({ ...saved, revision: 5, compactionPrompt: 'Keep 中文 decisions' });
+    assert.deepEqual(out.frame.state.fields.name, unrelated);
+    const savedReset = out.frame.state.fields.compaction.command;
+    field(
+      observed(savedReset.edit.text, 3, {
+        owner: savedReset.owner,
+        sequence: savedReset.sequence,
+        outcome: { status: 'applied' },
+      }),
+    );
+    raw('reset-compaction');
+    assert.deepEqual(out.actions[0].input, {
+      expectedRevision: 5,
+      mutation: { kind: 'compaction_prompt', prompt: null },
+    });
+    commit(6);
+    finish({ ...saved, revision: 6 });
+    const pending = out.frame.state.fields.compaction.command;
+    assert.deepEqual(pending.edit, { kind: 'reset', text: 'Built-in instructions' });
+    field(
+      observed(pending.edit.text, 4, {
+        owner: pending.owner,
+        sequence: pending.sequence,
+        outcome: { status: 'applied' },
+      }),
+    );
+    assert.equal(out.frame.state.saved.compactionPrompt, 'Built-in instructions');
   });

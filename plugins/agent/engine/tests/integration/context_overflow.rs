@@ -161,7 +161,7 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
         fixture::respond(&mut old, "old-answer", "stop").await;
         let mut main = None;
         let mut summaries = 0;
-        while summaries < 2 || main.is_none() {
+        while summaries < 1 || main.is_none() {
             let (mut socket, _) = listener.accept().await.unwrap();
             let request = fixture::read_request(&mut socket).await;
             if request["messages"]
@@ -169,7 +169,7 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
                 .contains("Now write the structured summary")
             {
                 summaries += 1;
-                fixture::respond(&mut socket, "malformed", "stop").await;
+                fixture::respond(&mut socket, "incomplete", "length").await;
             } else {
                 assert!(main.is_none(), "only one main request before overflow");
                 assert!(request["messages"].to_string().contains("old-answer"));
@@ -227,7 +227,7 @@ async fn proactive_failure_spends_the_same_budget_as_overflow_recovery() {
                 }
             ))
             .count(),
-        2
+        1
     );
     assert_eq!(
         events

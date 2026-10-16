@@ -149,6 +149,7 @@ impl Owner {
         .await
         .map_err(public_error)?;
         let mut basis = MessageBasis {
+            compaction_prompt: Some(self.effective_compaction_prompt().await?),
             graph: None,
             collaboration_mode: CollaborationMode::Agent,
             background_kind: kind,

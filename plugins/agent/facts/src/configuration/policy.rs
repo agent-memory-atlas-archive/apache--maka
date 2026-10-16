@@ -46,6 +46,8 @@ impl Default for ChatDefaults {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimePolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_prompt: Option<String>,
     pub network_proxy: NetworkProxy,
     pub personalization: Personalization,
     pub memory: MemoryPolicy,
@@ -90,6 +92,7 @@ impl Default for RuntimePolicy {
                 .map(String::from)
                 .to_vec(),
             },
+            compaction_prompt: None,
             personalization: Personalization {
                 display_name: String::new(),
                 assistant_tone: String::new(),

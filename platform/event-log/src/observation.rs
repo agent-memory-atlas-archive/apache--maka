@@ -38,6 +38,7 @@ pub struct SessionObservation<T> {
     pub root_turn: Option<turns::TurnBoundary>,
     pub through_sequence: u64,
     pub active_streams: Vec<AssistantStreamSeed>,
+    pub compacting: bool,
     pub pending_interactions: Vec<InteractionRecord>,
     pub message_queue: crate::message_queue::MessageQueue,
 }
@@ -167,12 +168,15 @@ impl EventLog {
                     };
                     let active_streams =
                         streams::read(&mut transaction, root_turn.as_ref()).await?;
+                    let compacting =
+                        streams::compacting(&mut transaction, root_turn.as_ref()).await?;
                     transaction.commit().await?;
                     Ok(Some(SessionObservation {
                         session,
                         root_turn,
                         through_sequence,
                         active_streams,
+                        compacting,
                         pending_interactions,
                         message_queue,
                     }))

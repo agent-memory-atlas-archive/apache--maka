@@ -307,6 +307,7 @@ export function conversationView<N extends Node>(
       autoFocus: !state.searchOpen && state.browse === null,
     },
     {
+      compact: 'compact',
       sent: 'sent',
       submission: 'submission',
       setup: 'setup',
@@ -467,6 +468,7 @@ export function conversationView<N extends Node>(
       sessionId: state.selected?.id ?? null,
       dataSource: state.selected?.dataSource ?? null,
       running: !!state.run,
+      compacting: state.compacting,
       metrics,
       theme,
       locale,

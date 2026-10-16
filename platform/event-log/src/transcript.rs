@@ -19,6 +19,7 @@
 
 //! Disposable message index; authority stays in the owner-typed canonical ledger.
 mod active;
+mod compaction;
 pub(crate) use active::interrupted_messages;
 mod evidence;
 mod history;
@@ -81,13 +82,13 @@ impl EventLog {
                     // and budget-checked separately, one boundary at a time.
                     let boundaries = {
                         let records = sqlx::query(
-                            "SELECT sequence, invocation_id, operation_id FROM session_history_events runtime_events
+                            "SELECT sequence, invocation_id, operation_id, kind FROM session_history_events runtime_events
                  WHERE owner_session_id = ?1
                    AND sequence > ?2 AND sequence <= ?3
-                   AND NOT EXISTS (SELECT 1 FROM runtime_events opening
+                   AND (kind = 'context_checkpoint_recorded' OR NOT EXISTS (SELECT 1 FROM runtime_events opening
                        WHERE opening.invocation_id = runtime_events.invocation_id
                          AND opening.kind = 'invocation_opened'
-                         AND json_extract(opening.event_json, '$.fact.input.kind') = 'context_compact')
+                         AND json_extract(opening.event_json, '$.fact.input.kind') = 'context_compact'))
                    AND (kind NOT IN ('model_completed', 'model_interrupted') OR
                        EXISTS (SELECT 1 FROM runtime_events request
              JOIN runtime_events opening ON opening.invocation_id = request.invocation_id
@@ -97,7 +98,7 @@ impl EventLog {
              AND json_extract(opening.event_json, '$.fact.input.kind') IN ('message', 'continuation', 'handoff')
              AND json_extract(request.event_json, '$.fact.purpose') = 'main'))
                    AND (kind IN ('message_imported', 'invocation_opened', 'message_steered', 'model_completed',
-                                'model_interrupted', 'invocation_ended',
+                                'model_interrupted', 'invocation_ended', 'context_checkpoint_recorded',
                                 'tool_dispatched', 'tool_rejected', 'tool_settled', 'executor_completed')
                        OR (kind = 'executor_observed' AND json_extract(event_json, '$.fact.output.type') IN ('tool_start','tool_result')))
                  ORDER BY sequence LIMIT ?4",
@@ -115,13 +116,20 @@ impl EventLog {
                                     row.try_get::<i64, _>(0)?,
                                     row.try_get::<String, _>(1)?,
                                     row.try_get::<Option<String>, _>(2)?,
+                                    row.try_get::<String, _>(3)?,
                                 ))
                             })
                             .collect::<Result<Vec<_>, sqlx::Error>>()?
                     };
                     let ready = boundaries.len() <= max_boundaries;
                     let mut processed = progress;
-                    for (sequence, invocation, step) in boundaries.iter().take(max_boundaries) {
+                    for (sequence, invocation, step, kind) in boundaries.iter().take(max_boundaries) {
+                        if kind == "context_checkpoint_recorded" {
+                            let row = compaction::project(&mut tx, *sequence).await?;
+                            persist(&mut tx, &session, row).await?;
+                            processed = *sequence;
+                            continue;
+                        }
                         let facts = evidence::selected(
                             &mut tx,
                             invocation,

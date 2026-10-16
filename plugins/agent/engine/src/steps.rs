@@ -19,7 +19,6 @@
 
 use crate::{Inner, RunContext, RunError, auto_context, model_attempt, prune};
 use futures_util::FutureExt;
-use maka_agent_facts::context::ModelPurpose;
 use maka_tools::RunTools;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -88,7 +87,6 @@ pub(super) async fn run(
                         inner,
                         input,
                         &context,
-                        ModelPurpose::Main,
                         cancellation,
                         continuation_base,
                         &intent.successor_invocation_id,
@@ -151,7 +149,6 @@ pub(super) async fn run(
                 inner,
                 input,
                 &context,
-                ModelPurpose::Main,
                 cancellation,
                 continuation_base,
                 &input.invocation.invocation_id,
@@ -192,7 +189,6 @@ pub(super) async fn run(
                     inner,
                     input,
                     &context,
-                    ModelPurpose::Main,
                     cancellation,
                     continuation_base,
                     &input.invocation.invocation_id,
@@ -320,7 +316,6 @@ pub(super) async fn run(
                     inner,
                     input,
                     &context,
-                    ModelPurpose::Main,
                     cancellation,
                     continuation_base,
                     &input.invocation.invocation_id,

@@ -44,7 +44,7 @@ pub(super) struct Main<'a> {
 pub(super) enum Attempt<'a> {
     Main(Main<'a>),
     Summary {
-        adapter: maka_agent_ports::model::Binding,
+        surface: Arc<crate::request_composition::Surface>,
     },
 }
 
@@ -67,7 +67,6 @@ pub(super) async fn prompt<W>(
     inner: &Inner,
     input: &RunInput<W>,
     source: &ModelContextSource,
-    purpose: ModelPurpose,
     cancellation: &CancellationToken,
     continuation_base: Option<u64>,
     current: &str,
@@ -92,34 +91,26 @@ pub(super) async fn prompt<W>(
     )
     .await?;
     if let Some(baseline) = &source.baseline {
-        let text = match purpose {
-            ModelPurpose::Summary => format!(
-                "Previous continuation summary:\n{}\n\nUpdate it using the newer conversation events that follow.",
-                baseline.checkpoint.summary.text
-            ),
-            ModelPurpose::Main => format!(
-                "Continuation summary:\n{}",
-                baseline.checkpoint.summary.text
-            ),
-        };
+        let text = format!(
+            "Continuation summary:\n{}",
+            baseline.checkpoint.summary.text
+        );
         prompt.insert(0, Message::user(text));
     }
-    if purpose == ModelPurpose::Main {
-        let system_text = input
-            .configuration
-            .system_prompt
-            .as_ref()
-            .map(|system| system.text.clone())
-            .unwrap_or_default();
-        if !system_text.is_empty() {
-            prompt.insert(
-                0,
-                Message::System {
-                    content: system_text,
-                    provider_options: None,
-                },
-            );
-        }
+    let system_text = input
+        .configuration
+        .system_prompt
+        .as_ref()
+        .map(|system| system.text.clone())
+        .unwrap_or_default();
+    if !system_text.is_empty() {
+        prompt.insert(
+            0,
+            Message::System {
+                content: system_text,
+                provider_options: None,
+            },
+        );
     }
     Ok(prompt)
 }
@@ -323,7 +314,6 @@ pub(super) async fn execute_main(
                         inner,
                         input,
                         &context,
-                        ModelPurpose::Main,
                         cancellation,
                         continuation_base,
                         &input.invocation.invocation_id,
@@ -359,59 +349,27 @@ pub(super) async fn execute_once(
     progressed: &mut bool,
     retry: &mut Option<Vec<Message>>,
 ) -> Result<(String, ModelStep), RunError> {
-    let (purpose, lane, surface, summary_adapter, tools) = match attempt {
+    let (purpose, lane, surface, tools) = match attempt {
         Attempt::Main(Main {
             lane,
             surface,
             tools,
             ..
-        }) => (
-            ModelPurpose::Main,
-            Some(lane),
-            Some(surface),
-            None,
-            Some(tools),
-        ),
-        Attempt::Summary { adapter } => (ModelPurpose::Summary, None, None, Some(adapter), None),
+        }) => (ModelPurpose::Main, Some(lane), surface, Some(tools)),
+        Attempt::Summary { surface } => (ModelPurpose::Summary, None, surface, None),
     };
     if cancellation.is_cancelled() {
         return Err(RunError::Cancelled);
     }
-    let max_output_tokens = surface.as_ref().map_or(
-        Some(input.main_output_limit.unwrap_or(8000).min(8000)),
-        |surface| surface.max_output_tokens,
-    );
-    let prepared = prepare_request(input, prompt, definitions, max_output_tokens)?;
-    let (binding, composition) = match surface {
-        Some(surface) => (surface.adapter.clone(), surface.evidence.clone()),
-        None => {
-            let request = &prepared.request;
-            let binding = summary_adapter.expect("summary adapter frozen at capture");
-            let evidence = maka_agent_facts::composition::RequestComposition {
-                system_prompt: request.prompt.iter().find_map(|message| match message {
-                    Message::System { content, .. } => Some(content.clone()),
-                    _ => None,
-                }),
-                dynamic_context: vec![],
-                tool_catalog_digest: maka_agent_facts::artifact::content_digest(
-                    &serde_json::to_vec(&request.tools)
-                        .map_err(|error| RunError::Internal(error.to_string()))?,
-                ),
-                tools: request.tools.clone(),
-                provider_options: Some(request.provider_options.clone()),
-                max_output_tokens: request.max_output_tokens,
-                sources: input
-                    .model_revision
-                    .iter()
-                    .cloned()
-                    .chain(std::iter::once(binding.source().clone()))
-                    .collect(),
-            }
-            .freeze()
-            .map_err(|error| RunError::Internal(error.into()))?;
-            (binding, Arc::new(evidence))
-        }
-    };
+    let prepared = prepare_request(
+        input,
+        prompt,
+        definitions,
+        surface.max_output_tokens,
+        purpose,
+    )?;
+    let binding = surface.adapter.clone();
+    let composition = surface.evidence.clone();
     let item_acceptance = purpose == ModelPurpose::Main && binding.supports_item_acceptance();
     let step_id = Uuid::new_v4().to_string();
     let event = maka_agent_facts::event::RuntimeEvent::new(
@@ -512,6 +470,7 @@ pub(super) fn prepare_request<W>(
     prompt: Vec<Message>,
     definitions: Vec<ToolDefinition>,
     max_output_tokens: Option<u64>,
+    purpose: ModelPurpose,
 ) -> Result<PreparedRequest, RunError> {
     let prompt = if input.supports_vision
         && matches!(
@@ -525,12 +484,16 @@ pub(super) fn prepare_request<W>(
     };
     let prompt = history::project_compatible(prompt, &input.provider.kind);
     let prompt = maka_model::reasoning::project(prompt, &input.provider.kind);
-    let max_output_tokens = Some(crate::context_input::output_limit(
-        input,
-        &prompt,
-        &definitions,
-        max_output_tokens.unwrap_or(8000),
-    ));
+    let max_output_tokens = if purpose == ModelPurpose::Summary {
+        max_output_tokens
+    } else {
+        Some(crate::context_input::output_limit(
+            input,
+            &prompt,
+            &definitions,
+            max_output_tokens.unwrap_or(8000),
+        ))
+    };
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Evidence<'a> {

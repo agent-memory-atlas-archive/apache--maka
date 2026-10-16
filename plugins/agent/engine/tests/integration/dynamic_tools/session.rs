@@ -129,10 +129,10 @@ async fn session_loading_preserves_wire_prefixes_until_committed_compaction_and_
                     let (mut socket,other)=next(&listener).await;
                     empty(&other,mode);
                     fixture::respond(&mut socket,"isolated","stop").await;
-                    for _ in 0..if success {1} else {2} {
+                    for _ in 0..1 {
                         let (mut socket,summary)=next(&listener).await;
-                        assert!(summary.get("tools").is_none());
-                        fixture::respond(&mut socket,if success {fixture::SUMMARY} else {"invalid summary"},"stop").await;
+                        assert_eq!(summary["tools"],warm["tools"]);
+                        fixture::respond(&mut socket,if success {fixture::SUMMARY} else {"incomplete summary"},if success {"stop"} else {"length"}).await;
                     }
                     let (mut socket,compacted)=next(&listener).await;
                     if success {empty(&compacted,mode);} else {assert_eq!(compacted["tools"],warm["tools"],"a failed summary cannot unload anything");}
@@ -233,7 +233,7 @@ async fn continuation_admission_rejects_changed_loading_before_claiming_the_sour
                 loaded(&request, ToolMode::Direct);
                 fixture::respond(&mut socket, "loaded", "stop").await;
                 let (mut socket, summary) = next(&listener).await;
-                assert!(summary.get("tools").is_none());
+                assert_eq!(summary["tools"], request["tools"]);
                 fixture::respond(&mut socket, fixture::SUMMARY, "stop").await;
                 let (mut socket, resumed) = next(&listener).await;
                 empty(&resumed, mode);

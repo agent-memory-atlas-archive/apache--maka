@@ -27,6 +27,7 @@ use std::{
 use uuid::Uuid;
 
 mod code_mode;
+mod compaction;
 mod computer;
 mod goal;
 mod graph;

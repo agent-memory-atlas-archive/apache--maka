@@ -522,6 +522,7 @@ mod tests {
                 Ok(history::Page::Ready {
                     through: 7,
                     chunks: vec![history::Chunk {
+                        compaction: None,
                         field: Default::default(),
                         message_id: "m".into(),
                         turn_id: "t".into(),

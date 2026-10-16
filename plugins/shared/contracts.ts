@@ -86,6 +86,7 @@ export interface Theme {
   markdown: MarkdownAppearance;
 }
 export interface Message {
+  compaction?: { durationMs: number };
   pending?: boolean;
   id: string;
   // Stable message field/byte-segment identity, including the streaming prefix.
@@ -406,7 +407,8 @@ const messageSchema = object(
     pending: { type: 'boolean' },
     id: string,
     contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
-    role: { enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result'] },
+    role: { enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result', 'compaction'] },
+    compaction: object({ durationMs: { type: 'integer', minimum: 0, maximum: 9007199254740991 } }),
     timestamp: {
       anyOf: [{ type: 'integer', minimum: 0, maximum: 9007199254740991 }, { type: 'null' }],
     },
@@ -1144,6 +1146,7 @@ export const composerFooterContract = component(
     sessionId: { anyOf: [string, { type: 'null' }] },
     dataSource: { anyOf: [{ $ref: '#/$defs/AgentDataSource' }, { type: 'null' }] },
     running: { type: 'boolean' },
+    compacting: { type: 'boolean' },
     metrics: { anyOf: [{ $ref: '#/$defs/AgentSessionMetrics' }, { type: 'null' }] },
     theme: { $ref: '#/$defs/Theme' },
     locale,
@@ -1224,6 +1227,7 @@ export const composerContract = component(
         attachments: { type: 'array', maxItems: 8, items: string },
       }),
     ),
+    compact: withDefs(object({ context: string, dataSource: { $ref: '#/$defs/AgentDataSource' } })),
     setup: object({ context: string }),
     readiness: withDefs({
       type: 'array',

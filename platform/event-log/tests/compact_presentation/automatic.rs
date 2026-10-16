@@ -90,6 +90,7 @@ async fn automatic_summary_is_hidden_without_interrupting_main_delivery_or_read_
             InvocationState::Running
         ));
         assert!(during.active_streams.is_empty());
+        assert!(during.compacting);
         assert!(
             log.active_transcript(&inv, summary_fence)
                 .await
@@ -98,8 +99,8 @@ async fn automatic_summary_is_hidden_without_interrupting_main_delivery_or_read_
         );
         assert_eq!(during.session.last_message, read.last_message);
         assert_eq!(during.session.read_state, read.read_state);
-        // Existing subscribers still receive the main closer at a fence which
-        // includes a later summary. No summary event consumes delivery budget.
+        // Subscribers receive the main closer and a status invalidation,
+        // while private summary content remains hidden.
         let mut cursor = main_fence;
         let mut facts = Vec::new();
         loop {
@@ -115,7 +116,8 @@ async fn automatic_summary_is_hidden_without_interrupting_main_delivery_or_read_
                 break;
             }
         }
-        assert_eq!(facts.len(), 2);
+        assert_eq!(facts.len(), 3);
+        assert!(matches!(&facts[2], StreamFact::ContextChanged));
         assert!(
             matches!(&facts[0], StreamFact::PartFinished { step_id, .. } if step_id == "main-a")
         );
@@ -165,6 +167,7 @@ async fn automatic_summary_is_hidden_without_interrupting_main_delivery_or_read_
                 .unwrap()
                 .unwrap();
             assert_eq!(active.active_streams.len(), 1);
+            assert!(!active.compacting);
             assert_eq!(active.active_streams[0].message_id, later_id);
             assert_eq!(
                 log.active_transcript(&inv, later).await.unwrap()[0].id,
@@ -187,6 +190,13 @@ async fn automatic_summary_is_hidden_without_interrupting_main_delivery_or_read_
         )
         .await;
         expected.extend(view.push(&end).unwrap());
+        assert!(
+            !log.observe_session::<Value>("session")
+                .await
+                .unwrap()
+                .unwrap()
+                .compacting
+        );
         assert!(
             log.get_session::<Value>("session")
                 .await

@@ -22,10 +22,13 @@ import { tui_chat_context, tui_chat_metrics_hint } from '../../shared/tui-messag
 
 // This feature owns this explicit message catalog; shared messages remain tree-shakeable.
 
+import type { Catalog } from '../../shared/locale.js';
+
 const terminalMessages = {
   'chat-context': tui_chat_context,
+  'chat-compacting': ['Compressing context', '正在压缩上下文', '正在壓縮上下文'],
   'chat-metrics-hint': tui_chat_metrics_hint,
-};
+} satisfies Catalog;
 export function tuiText(
   locale: string,
   key: string,

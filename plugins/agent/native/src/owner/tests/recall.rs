@@ -161,6 +161,29 @@ async fn recall_native_model_tools_expand_exclude_active_turn_and_retain_materia
         f.drained().await;
         let facts = service_tools::facts(&f,&target).await;
         assert_eq!(facts.iter().filter(|fact| matches!(fact,Fact::ToolSettled { outcome: ToolOutcome::Succeeded { .. }, .. })).count(),4,"{facts:?}");
+        // Context checkpoints replace active model input, not original Recall material.
+        let compacted = f.mutation(2,"compact",json!({"sessionId":target,"model":f.selection().await}),Uuid::new_v4()).await.unwrap();
+        assert_eq!(compacted["kind"],"started");
+        let (mut socket,_) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        response_with_text(&mut socket,"A short overview without the original tool result.").await;
+        f.drained().await;
+        assert!(service_tools::facts(&f,&target).await.iter().any(|fact| matches!(fact,Fact::ContextCheckpointRecorded { .. })));
+        let mut history_input = json!({"sessionId":target,"position":{"kind":"start"}});
+        let mut historical_tools = String::new();
+        loop {
+            let page = f.query("history",history_input.clone()).await.unwrap();
+            history_input["through"] = page["through"].clone();
+            if page["kind"] == "preparing" { continue; }
+            for chunk in page["chunks"].as_array().unwrap() {
+                if matches!(chunk["role"].as_str(),Some("tool_call" | "tool_result")) {
+                    historical_tools.push_str(chunk["text"].as_str().unwrap());
+                }
+            }
+            if page["after"].is_null() { break; }
+            history_input["position"] = json!({"kind":"after","cursor":page["after"]});
+        }
+        assert!(historical_tools.contains("historical attachment contents"),"{historical_tools}");
         let copies = f.store.list_artifacts(&target,0,128).await.unwrap();
         let copied = copies.records.iter().find(|record| record.name == "notes.txt").unwrap();
         assert_ne!(copied.id,artifact);

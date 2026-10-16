@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import { createCopy } from '../../shared/locale.js';
+import { type Catalog, createCopy } from '../../shared/locale.js';
 import {
   msg_back,
   msg_executionReceipt,
@@ -60,6 +60,14 @@ export const copy = /* @__PURE__ */ createCopy(messages);
 export type Copy = ReturnType<typeof copy>;
 
 const terminalMessages = {
+  'assistant-compaction': ['Compression prompt', '压缩提示词', '壓縮提示詞'],
+  'assistant-compaction-save': ['Save compression prompt', '保存压缩提示词', '儲存壓縮提示詞'],
+  'assistant-compaction-reset': ['Restore default prompt', '恢复默认提示词', '還原預設提示詞'],
+  'assistant-compaction-help': [
+    'Used for automatic and manual compression. You can override it for one compression in /compact.',
+    '用于自动和手动压缩，可在 /compact 中为单次压缩修改。',
+    '用於自動和手動壓縮，可在 /compact 中為單次壓縮修改。',
+  ],
   'assistant-conflict': tui_assistant_conflict,
   'assistant-instructions': tui_assistant_instructions,
   'assistant-instructions-help': tui_assistant_instructions_help,
@@ -76,7 +84,7 @@ const terminalMessages = {
   'assistant-unavailable': tui_assistant_unavailable,
   'assistant-unknown': tui_assistant_unknown,
   'settings-assistant': tui_settings_assistant,
-};
+} satisfies Catalog;
 export function tuiText(
   locale: string,
   key: string,

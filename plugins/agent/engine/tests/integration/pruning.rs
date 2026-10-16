@@ -105,13 +105,7 @@ async fn settled_results_are_pruned_before_context_limits_and_survive_failed_sum
             tool(&mut socket, call_count).await;
             let mut main = None;
             let mut summaries = 0;
-            let expected_summaries = if !spent {
-                0
-            } else if interrupted {
-                1
-            } else {
-                2
-            };
+            let expected_summaries = if !spent { 0 } else { 1 };
             while summaries < expected_summaries || main.is_none() {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let request = fixture::read_request(&mut socket).await;
@@ -126,8 +120,8 @@ async fn settled_results_are_pruned_before_context_limits_and_survive_failed_sum
                 summaries += 1;
                 assert!(summaries <= expected_summaries);
                 assert_eq!(
-                    request["max_tokens"], 4000,
-                    "Summary also respects the selected output budget"
+                    request["max_tokens"], 8000,
+                    "Summary budget is independent of the Main output budget"
                 );
                 assert!(
                     request["messages"]
@@ -142,7 +136,7 @@ async fn settled_results_are_pruned_before_context_limits_and_survive_failed_sum
                     let body = format!("data: {delta}\n\ndata: {failure}\n\n");
                     socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
                 } else {
-                    fixture::respond(&mut socket, "malformed summary", "stop").await;
+                    fixture::respond(&mut socket, "incomplete summary", "length").await;
                 }
             }
             let (mut socket, request) = main.unwrap();

@@ -55,6 +55,9 @@ pub use projects::*;
 #[path = "contract_execution.rs"]
 mod execution;
 pub use execution::*;
+#[path = "contract_compaction.rs"]
+mod compaction;
+pub use compaction::*;
 
 #[path = "contract_interactions.rs"]
 mod interaction;
@@ -740,6 +743,8 @@ pub struct SessionRead {
 #[schemars(rename = "AgentObservation")]
 pub struct Observation {
     pub session: Session,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub compacting: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remembered_backend: Option<BackendPreference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -938,6 +943,8 @@ pub struct HistoryAttachment {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentHistoryChunk")]
 pub struct HistoryChunk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<maka_agent_ports::session::history::Compaction>,
     /// Display metadata only, on the first user-message fragment; no storage capability.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 8))]
@@ -1383,6 +1390,14 @@ pub fn contract() -> Contract {
                     method::<ExecutionRead, ExecutionResult>(MethodMode::Query),
                 ),
                 ("work".into(), method::<WorkRead, Work>(MethodMode::Query)),
+                (
+                    "compactionPrompt".into(),
+                    method::<SessionRead, CompactionPrompt>(MethodMode::Query),
+                ),
+                (
+                    "compact".into(),
+                    method::<Compact, CompactResult>(MethodMode::Mutation),
+                ),
                 (
                     "resume".into(),
                     method::<Resume, ResumeResult>(MethodMode::Mutation),

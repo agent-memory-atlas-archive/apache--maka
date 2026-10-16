@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { compactConfirm } from './compact.js';
 import type {
   Action,
   ComponentInput,
@@ -74,6 +75,14 @@ export function handleRaw<N extends Node>(
   locale: string,
 ) {
   const target = presentation.target;
+  if (input.key === 'compact-confirm') compactConfirm(state, actions);
+  if (
+    input.key === 'compact-check' &&
+    state.uncertain?.reference.method === 'compact' &&
+    !Object.values(state.pending).some((request) => request.kind === 'receipt')
+  )
+    intent(state, actions, { kind: 'receipt' }, 'receipts', 'read', state.uncertain.reference);
+  if (input.key === 'compact-cancel' && !mutationPending(state)) closeDialog(state);
   if (
     input.key === 'schedule-reminder' &&
     !state.dialog &&

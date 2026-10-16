@@ -29,7 +29,6 @@ pub use reference::ToolResultAddress;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const MAX_ARCHIVE_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_ARCHIVE_REF_CHARS: usize = 16_384;
 pub const ARCHIVE_READ_INSTRUCTIONS: &str = "Read the page below; pass page.next to Read to continue. The address is a Session resource, not a workspace file.";
 
@@ -153,10 +152,8 @@ impl ArchivedPlaceholder {
 
     pub fn validate(&self) -> Result<(), &'static str> {
         self.identity.validate()?;
-        if self.identity.original_bytes > MAX_ARCHIVE_BYTES as u64
-            || self.original_estimated_tokens > 9_007_199_254_740_991
-        {
-            return Err("archive exceeds byte or token limit");
+        if self.original_estimated_tokens > 9_007_199_254_740_991 {
+            return Err("archive exceeds token limit");
         }
         let model = self.model_value()?;
         if model.to_string().encode_utf16().count() > MAX_PAGE_CHARS {
@@ -191,4 +188,29 @@ fn model_header(identity: &ArchiveIdentity) -> Result<ModelHeader<'_>, &'static 
         reason: PruneReason::ToolResultPruned,
         read_instructions: ARCHIVE_READ_INSTRUCTIONS,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archive_body_can_exceed_four_mib_while_model_page_stays_bounded() {
+        let text = "x".repeat(5 * 1024 * 1024);
+        let projection = DurableToolProjection::Text { text: text.clone() };
+        let encoded = encode_projection(&projection).unwrap();
+        assert_eq!(encoded.len(), text.len() + 2);
+        assert_eq!(serde_json::from_slice::<String>(&encoded).unwrap(), text);
+        let placeholder =
+            ArchivedPlaceholder::prepare("event".into(), "call".into(), "Read".into(), &projection)
+                .unwrap()
+                .unwrap();
+        assert_eq!(placeholder.identity.original_bytes, 5 * 1024 * 1024 + 2);
+        let model = placeholder.to_model_projection().unwrap();
+        let DurableToolProjection::Json { value } = model else {
+            panic!()
+        };
+        assert!(value.to_string().encode_utf16().count() <= MAX_PAGE_CHARS);
+        assert!(placeholder.page.next.is_some());
+    }
 }

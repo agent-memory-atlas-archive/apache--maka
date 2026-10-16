@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { compactComponent, openCompact } from './compact.js';
 import type {
   Action,
   AgentDirectorySelection,
@@ -104,6 +105,17 @@ export function handleComponent<N extends Node>(
   locale: string,
 ) {
   const target = presentation.target;
+  if (input.child === 'composer' && input.name === 'compact') {
+    const command = input.event as Pick<ComposerSent, 'context' | 'dataSource'>;
+    if (
+      command.context === state.selected?.id &&
+      sameValue(command.dataSource, state.selected.dataSource)
+    )
+      openCompact(state, actions);
+    return frame(presentation, configuredLocale, state, values, actions);
+  }
+  if (compactComponent(state, input))
+    return frame(presentation, configuredLocale, state, values, actions);
   if (goalComponent(state, input))
     return frame(presentation, configuredLocale, state, values, actions);
   if (input.name === 'chrome' && state.openedPages.includes(input.child as Page)) {

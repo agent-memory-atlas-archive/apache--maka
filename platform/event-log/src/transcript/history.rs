@@ -219,11 +219,13 @@ impl EventLog {
                     let ending = (Cursor { field, sequence, offset: end }, row.total);
                     let candidate_left = if reverse { Some(beginning) } else { left.or(Some(beginning)) };
                     let candidate_right = if reverse { right.or(Some(ending)) } else { Some(ending) };
-                    let emit = row.total != 0 || matches!(row.role.as_str(), "tool_call" | "tool_result");
+                    let emit = row.total != 0 || matches!(row.role.as_str(), "tool_call" | "tool_result")
+                        || (view == HistoryView::Conversation && row.role == "context_compacted");
                     if emit {
                     let role = match row.role.as_str() {
                         "user" => Role::User, "assistant" => Role::Assistant,
                         "tool_call" => Role::ToolCall, "tool_result" => Role::ToolResult,
+                        "context_compacted" => Role::Compaction,
                         _ => return Err(invalid("invalid history text role")),
                     };
                     let attachments = if start == 0 && role == Role::User {
@@ -240,7 +242,13 @@ impl EventLog {
                         Some(tool)
                     } else { None };
                     let timing = super::timing::read(&mut tx, &session, &row.turn, through_sql).await?;
-                    chunks.push(Chunk { field, timing,
+                    let compaction = if role == Role::Compaction {
+                        let duration: i64 = sqlx::query_scalar(
+                            "SELECT json_extract(payload, '$.durationMs') FROM transcript_rows WHERE session_id = ?1 AND sequence = ?2"
+                        ).bind(&session).bind(sql_number(sequence)?).fetch_one(&mut *tx).await?;
+                        Some(maka_agent_ports::session::history::Compaction { duration_ms: sequence_number(duration)? })
+                    } else { None };
+                    chunks.push(Chunk { field, timing, compaction,
                         message_id: row.message, turn_id: row.turn, timestamp: row.timestamp, role,
                         sequence, offset: start, total_bytes: row.total, text: text.to_owned(), attachments, tool,
                     });

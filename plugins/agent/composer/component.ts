@@ -573,7 +573,22 @@ export function composer<N extends Node>(
                 new TextEncoder().encode(chunk.text).length === submission.draft.snapshot.text.bytes
               ) {
                 if (!chunk.text.trim() && !submission.attachments.length) entry.notice = 'empty';
-                else {
+                else if (chunk.text.trim() === '/compact' && !submission.attachments.length) {
+                  events.push({
+                    name: 'compact',
+                    value: { context: submission.context, dataSource: submission.dataSource },
+                  });
+                  entry.delivery = {
+                    kind: 'clear',
+                    caller: null,
+                    command: {
+                      owner: submission.draft.snapshot.text.owner,
+                      sequence: ++state.serial,
+                      basedOn: submission.draft.revision,
+                      edit: { kind: 'reset', text: '' },
+                    },
+                  };
+                } else {
                   const key = `send-${++state.serial}`,
                     backend = submission.backend;
                   submission.preview = {

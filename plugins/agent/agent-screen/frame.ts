@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { compactView, compactCopy } from './compact.js';
 import type {
   Action,
   ComponentValues,
@@ -481,51 +482,54 @@ export function frame<N extends Node>(
     state,
     ui.dialog(
       'agent-screen-dialog',
-      state.dialog === 'sandbox'
-        ? text.sandboxTitle
-        : state.dialog === 'session-change'
-          ? text.deleteSessionTitle
-          : state.dialog === 'attachments'
-            ? target === 'tui' && state.attachments.selection?.browse
-              ? tuiText(locale, 'attachments-local-files')
-              : text.attachmentTitle
-            : state.dialog === 'skills'
-              ? text.skillsTitle
-              : state.dialog === 'terminal'
-                ? text.terminalTitle
-                : state.dialog === 'question'
-                  ? state.interaction?.record?.request.kind === 'form'
-                    ? text.formTitle
-                    : text.questionsTitle
-                  : state.dialog === 'approval'
-                    ? state.interaction?.record?.request.kind === 'permissions'
-                      ? text.permissionApprovalTitle
-                      : state.interaction?.record?.request.kind === 'client_capability'
-                        ? text.computerApprovalTitle
-                        : text.approvalTitle
-                    : state.dialog === 'directories'
-                      ? text.directoryTitle
-                      : state.dialog === 'graph'
-                        ? text.graphTitle
-                        : state.dialog === 'plan'
-                          ? text.planTitle
-                          : state.dialog === 'goal'
-                            ? text.goalTitle
-                            : state.dialog === 'recap'
-                              ? text.recapTitle
-                              : state.dialog === 'checklist'
-                                ? text.checklistTitle
-                                : state.dialog === 'details'
-                                  ? text.detailsTitle
-                                  : state.dialog === 'queue'
-                                    ? text.queueEdit
-                                    : state.dialog === 'help'
-                                      ? text.helpTitle
-                                      : text.paletteTitle,
+      state.dialog === 'compact'
+        ? compactCopy(locale).title
+        : state.dialog === 'sandbox'
+          ? text.sandboxTitle
+          : state.dialog === 'session-change'
+            ? text.deleteSessionTitle
+            : state.dialog === 'attachments'
+              ? target === 'tui' && state.attachments.selection?.browse
+                ? tuiText(locale, 'attachments-local-files')
+                : text.attachmentTitle
+              : state.dialog === 'skills'
+                ? text.skillsTitle
+                : state.dialog === 'terminal'
+                  ? text.terminalTitle
+                  : state.dialog === 'question'
+                    ? state.interaction?.record?.request.kind === 'form'
+                      ? text.formTitle
+                      : text.questionsTitle
+                    : state.dialog === 'approval'
+                      ? state.interaction?.record?.request.kind === 'permissions'
+                        ? text.permissionApprovalTitle
+                        : state.interaction?.record?.request.kind === 'client_capability'
+                          ? text.computerApprovalTitle
+                          : text.approvalTitle
+                      : state.dialog === 'directories'
+                        ? text.directoryTitle
+                        : state.dialog === 'graph'
+                          ? text.graphTitle
+                          : state.dialog === 'plan'
+                            ? text.planTitle
+                            : state.dialog === 'goal'
+                              ? text.goalTitle
+                              : state.dialog === 'recap'
+                                ? text.recapTitle
+                                : state.dialog === 'checklist'
+                                  ? text.checklistTitle
+                                  : state.dialog === 'details'
+                                    ? text.detailsTitle
+                                    : state.dialog === 'queue'
+                                      ? text.queueEdit
+                                      : state.dialog === 'help'
+                                        ? text.helpTitle
+                                        : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
         [
+          ...(state.dialog === 'compact' ? [compactView(presentation, state, theme, locale)] : []),
           ...(state.dialog === 'sandbox' ? [sandboxView(presentation, state, theme, locale)] : []),
           ...(state.dialog === 'session-change' && state.sessionChange
             ? [

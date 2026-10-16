@@ -327,6 +327,7 @@ impl Handler for Agent {
                         _ => None,
                     };
                     let result = encode(Observation {
+                        compacting: observed.compacting,
                         session,
                         metrics,
                         remembered_backend,
@@ -409,6 +410,7 @@ impl Handler for Agent {
                             chunks: chunks
                                 .into_iter()
                                 .map(|chunk| HistoryChunk {
+                                    compaction: chunk.compaction,
                                     attachments: chunk
                                         .attachments
                                         .into_iter()
@@ -666,6 +668,11 @@ impl Handler for Agent {
                     )
                 }
                 "execution" => encode(owner.execution(decode(input)?).await?),
+                "compactionPrompt" => encode(owner.compaction_prompt(decode(input)?).await?),
+                "compact" => {
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
+                    encode(owner.compact(decode(input)?, operation).await?)
+                }
                 "resume" => {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.resume(decode(input)?, operation).await?)
@@ -924,7 +931,8 @@ fn delivery(event: StoreStreamEvent) -> Delivery {
         }
         StreamFact::InvocationEnded { failed, .. } => DeliveryFact::Ended { failed },
         StreamFact::StepEnded { step_id, .. } => DeliveryFact::StepEnded { step_id },
-        StreamFact::MessageSteered
+        StreamFact::ContextChanged
+        | StreamFact::MessageSteered
         | StreamFact::ExecutorToolStart { .. }
         | StreamFact::ExecutorToolProgress { .. }
         | StreamFact::ExecutorToolResult { .. }

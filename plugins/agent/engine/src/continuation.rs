@@ -18,7 +18,6 @@
  */
 
 use crate::{Inner, RunError, RunInput, model_attempt};
-use maka_agent_facts::context::ModelPurpose;
 use maka_agent_facts::continuation::ContinuationClaim;
 use maka_agent_facts::continuation::MAX_SOURCE_BYTES;
 use maka_agent_facts::continuation::MAX_SOURCE_EVENTS;
@@ -160,7 +159,6 @@ pub(super) async fn inspect(
         inner,
         input,
         &context,
-        ModelPurpose::Main,
         cancellation,
         match &input.work {
             crate::RunWork::Handoff { pause, .. } => pause.execution.replay_base,
@@ -243,8 +241,13 @@ pub(super) fn replay<W>(
             "continuation requires stable user/tool replay boundaries",
         ));
     }
-    let request =
-        model_attempt::prepare_request(input, prompt, definitions, input.main_output_limit)?;
+    let request = model_attempt::prepare_request(
+        input,
+        prompt,
+        definitions,
+        input.main_output_limit,
+        maka_agent_facts::context::ModelPurpose::Main,
+    )?;
     if cancellation.is_cancelled() {
         return Err(RunError::Cancelled);
     }

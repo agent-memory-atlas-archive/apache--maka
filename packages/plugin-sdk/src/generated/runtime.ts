@@ -2358,6 +2358,10 @@ export type NetworkProxyUpdateResult =
     };
 export type SettingsPreferencesMutation =
   | {
+      prompt?: string | null;
+      kind: 'compaction_prompt';
+    }
+  | {
       displayName: string;
       assistantTone: string;
       kind: 'personalization';
@@ -4567,7 +4571,7 @@ export type HistoryTurnOutcome = 'completed' | 'failed' | 'aborted';
  * Canonical message author/kind; the field identifies body versus thinking.
  * Tool body JSON contributes string values, never its keys.
  */
-export type Role = 'user' | 'assistant' | 'tool_call' | 'tool_result';
+export type Role = 'compaction' | 'user' | 'assistant' | 'tool_call' | 'tool_result';
 /**
  * Recorded Host settlement for presentation; returned is not business success.
  * Foreign/provider results do not establish this Host evidence.
@@ -8196,6 +8200,8 @@ export interface PricingUpdate {
   mutation: PricingMutation;
 }
 export interface SettingsAssistantPreferences {
+  compactionPrompt: string;
+  defaultCompactionPrompt: string;
   revision: number;
   displayName: string;
   assistantTone: string;
@@ -9827,6 +9833,7 @@ export interface AgentDelivery {
 }
 export interface AgentObservation {
   session: AgentSession;
+  compacting?: boolean;
   rememberedBackend?: AgentBackendPreference | null;
   metrics?: AgentSessionMetrics | null;
   through: number;
@@ -9913,6 +9920,7 @@ export interface AgentQueueMutation {
   edit: AgentQueueAction;
 }
 export interface AgentHistoryChunk {
+  compaction?: HistoryCompaction | null;
   /**
    * Display metadata only, on the first user-message fragment; no storage capability.
    *
@@ -9974,6 +9982,12 @@ export interface AgentHistoryChunk {
   totalBytes: number;
   text: string;
   tool: HistoryTool | null;
+}
+/**
+ * Duration of a successfully adopted context checkpoint, in recorded milliseconds.
+ */
+export interface HistoryCompaction {
+  durationMs: number;
 }
 export interface AgentHistoryAttachment {
   name: string;

@@ -702,3 +702,25 @@ async fn saved_model_survives_restart_and_resolves_locally_at_the_current_revisi
         f.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn compaction_preferences_accept_custom_prompt_and_reset_to_default() {
+    let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
+    let initial = query(&f, "assistantPreferences", json!({})).await;
+    assert_eq!(
+        initial["compactionPrompt"],
+        initial["defaultCompactionPrompt"]
+    );
+    let (saved,_) = mutate(&f,"updateAssistantPreferences",json!({"expectedRevision":initial["revision"],"mutation":{"kind":"compaction_prompt","prompt":"Custom freeform instructions"}}),None).await;
+    assert_eq!(saved["kind"], "committed");
+    let custom = query(&f, "assistantPreferences", json!({})).await;
+    assert_eq!(custom["compactionPrompt"], "Custom freeform instructions");
+    let (reset,_) = mutate(&f,"updateAssistantPreferences",json!({"expectedRevision":custom["revision"],"mutation":{"kind":"compaction_prompt","prompt":null}}),None).await;
+    assert_eq!(reset["kind"], "committed");
+    let reset = query(&f, "assistantPreferences", json!({})).await;
+    assert_eq!(
+        reset["compactionPrompt"],
+        initial["defaultCompactionPrompt"]
+    );
+    f.app.shutdown().await.unwrap();
+}

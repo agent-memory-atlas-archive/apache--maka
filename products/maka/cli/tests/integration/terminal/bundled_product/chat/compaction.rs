@@ -1,0 +1,241 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+
+const GLOBAL_PROMPT: &str = "Preserve fixture decisions.";
+const ONCE_PROMPT: &str = "For this compression only, preserve the Unicode decision: 中文.";
+
+fn context_foreground(output: &[u8]) -> Option<[u8; 3]> {
+    let text = String::from_utf8_lossy(output);
+    let before = &text[..text.rfind("Context ")?];
+    let rgb = &before[before.rfind("\x1b[38;2;")? + "\x1b[38;2;".len()..];
+    let mut parts = rgb.split(|c: char| !c.is_ascii_digit());
+    Some([
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    ])
+}
+
+#[test]
+#[ignore = "real bundled product compaction dialog, streamed summary and durable divider after restart"]
+fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let (requests, received) = mpsc::channel();
+    let server = model_server(listener, requests, 2, 1);
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let ui = directory.path().join("ui");
+    let host = ui.join("host");
+    let host_guard = HostRootGuard::new(&host);
+    let namespaces = RootNamespaces::for_current_account().unwrap();
+    drop(RootOwner::create(&ui, &namespaces).unwrap());
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        seed_connection(&host, &namespaces, &base, json!({})).await;
+        let config = maka_config::ConfigurationStore::for_root(Arc::new(
+            RootOwner::open(&host, &namespaces).unwrap(),
+        ))
+        .await
+        .unwrap();
+        let revision = config.runtime_policy().await.unwrap().revision;
+        assert!(matches!(
+            config
+                .set_compaction_prompt(revision, Some(GLOBAL_PROMPT.into()))
+                .await
+                .unwrap(),
+            maka_agent_facts::configuration::policy::RuntimePolicyMutationResult::Committed { .. }
+        ));
+        config.shutdown().await.unwrap();
+    });
+    let mut tui = Pty::spawn(&[
+        "application",
+        "launch",
+        "--root",
+        ui.to_str().unwrap(),
+        "--workspace",
+        workspace.to_str().unwrap(),
+        "--trust-workspace",
+        "--locale",
+        "en",
+    ]);
+    tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
+    tui.send(b"\x0b");
+    tui.wait_for("Close commands");
+    tui.send(b"New conversation");
+    tui.wait_for("› New conversation");
+    tui.send(b"\r");
+    tui.wait_for("Message…");
+    tui.wait_for("fixture-model");
+    click(&mut tui, "Message…");
+    paste(
+        &mut tui,
+        "Remember the Unicode decision and keep deployment pending.",
+    );
+    tui.wait_for("Remember the Unicode decision and keep deployment pending.");
+    tui.send(b"\r");
+    let (main, mut socket) = next_request(&mut tui, &received);
+    delta(
+        &mut socket,
+        "Decision recorded: 中文. Deployment is still pending.",
+    );
+    complete(&mut socket);
+    tui.wait_for("Deployment is still pending.");
+    tui.wait_for("Workspace conversation");
+    click(&mut tui, "Message…");
+    tui.send(b"/compact");
+    tui.send(b"\r");
+    tui.wait_for("Compact context");
+    tui.wait_for(GLOBAL_PROMPT);
+    evidence(&tui, "compact-confirmation");
+    let idle_context_color = context_foreground(&tui.output).unwrap();
+    eprintln!("compact: native confirmation displays global prompt");
+    assert!(
+        received.try_recv().is_err(),
+        "opening confirmation must not call the model"
+    );
+    let prompt_row = tui
+        .screen
+        .snapshot()
+        .unwrap()
+        .screen
+        .lines()
+        .position(|line| line.contains(GLOBAL_PROMPT))
+        .unwrap();
+    click(&mut tui, GLOBAL_PROMPT);
+    // Native textareas paint their own caret. Clear the known short fixture
+    // prompt and wait for its content row to be completely blank before paste.
+    tui.read();
+    tui.send(b"\x1b[F");
+    tui.send(&[0x7f; 64]);
+    tui.wait_until(|screen| {
+        screen
+            .lines()
+            .nth(prompt_row)
+            .and_then(|line| line.split('│').nth(2))
+            .is_some_and(|content| content.trim().is_empty())
+    });
+    paste(&mut tui, ONCE_PROMPT);
+    tui.wait_for("For this compression only");
+    evidence(&tui, "compact-edited");
+    // The native dialog title also contains Compact; the button includes its
+    // neighboring Cancel control, so locate its row explicitly.
+    let screen = tui.screen.snapshot().unwrap().screen;
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("Compact") && line.contains("Cancel"))
+        .unwrap();
+    let column = line[..line.find("Compact").unwrap()].width() + 2;
+    tui.send(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            column,
+            row + 1,
+            column,
+            row + 1
+        )
+        .as_bytes(),
+    );
+    let (summary, mut socket) = next_request(&mut tui, &received);
+    assert_eq!(
+        summary["messages"].as_array().unwrap().last().unwrap()["content"],
+        ONCE_PROMPT
+    );
+    assert!(!summary["messages"].to_string().contains(GLOBAL_PROMPT));
+    assert!(
+        summary["messages"]
+            .to_string()
+            .contains("Deployment is still pending")
+    );
+    assert_eq!(
+        summary["tools"], main["tools"],
+        "summary retains the captured Main tool surface"
+    );
+    // Hold the real HTTP summary stream open while inspecting the native footer.
+    tui.wait_until(|s| !s.contains("Compact context") && s.contains("Context "));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while context_foreground(&tui.output) == Some(idle_context_color) {
+        tui.read();
+        assert!(
+            Instant::now() < deadline,
+            "Context foreground did not change while the summary stream was open"
+        );
+    }
+    assert!(context_foreground(&tui.output).is_some());
+    evidence(&tui, "compact-running");
+    eprintln!("compact: exact one-shot instruction and active footer tint verified");
+    assert!(
+        !tui.screen
+            .snapshot()
+            .unwrap()
+            .screen
+            .contains("Context compressed (")
+    );
+    delta(
+        &mut socket,
+        "## Current task\nDeployment is pending.\n## Decisions\nPreserve 中文.\n## Next steps\nFinish deployment.",
+    );
+    complete(&mut socket);
+    tui.wait_for("Context compressed (");
+    tui.wait_until(|s| {
+        s.lines()
+            .any(|line| line.contains("Context compressed (") && line.contains("s)"))
+    });
+    evidence(&tui, "compact-completed");
+    eprintln!("compact: successful durable divider displayed");
+    tui.send(b"\x11");
+    tui.finish();
+    host_guard.stop();
+    server.join().unwrap();
+
+    let mut restored = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
+    restored.wait_until_with_timeout(
+        |s| s.contains("Workspace conversation"),
+        Duration::from_secs(60),
+    );
+    restored.wait_for("Context compressed (");
+    evidence(&restored, "compact-restarted");
+    eprintln!("compact: divider retained after Host and UI restart");
+    restored.send(b"\x11");
+    restored.finish();
+    host_guard.stop();
+    runtime.block_on(async {
+        let config = maka_config::ConfigurationStore::for_root(Arc::new(
+            RootOwner::open(&host, &namespaces).unwrap(),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            config
+                .runtime_policy()
+                .await
+                .unwrap()
+                .policy
+                .compaction_prompt
+                .as_deref(),
+            Some(GLOBAL_PROMPT),
+            "the dialog override must not modify global preferences"
+        );
+        config.shutdown().await.unwrap();
+    });
+}

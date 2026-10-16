@@ -141,13 +141,14 @@ function chunkId(chunk: NonNullable<State['window']>['page']['chunks'][number]) 
 function historyMessage(chunk: NonNullable<State['window']>['page']['chunks'][number]): Message {
   return {
     id: chunkId(chunk),
+    ...(chunk.compaction ? { compaction: chunk.compaction } : {}),
     contentKey: 'body-' + chunkId(chunk),
     role: chunk.field === 'thinking' ? 'thinking' : chunk.role,
     timestamp: chunk.timestamp,
     text: chunk.text,
     tool: chunk.tool,
     continued: chunk.offset !== 0 || utf8Bytes(chunk.text) !== chunk.totalBytes,
-    source: chunk.sequence,
+    source: chunk.role === 'compaction' ? null : chunk.sequence,
     image: chunk.tool?.result?.image ?? false,
   };
 }

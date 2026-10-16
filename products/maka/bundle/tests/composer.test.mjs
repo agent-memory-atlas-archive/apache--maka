@@ -532,3 +532,25 @@ test('pending approval keeps the entire composer border amber through focus and 
     assert.equal(find(c.out.frame.view).border.focused_color, theme.terminal.accent);
   }
 });
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} /compact opens a local command and clears its captured draft`, async () => {
+    const c = await client(target);
+    c.ready('/compact');
+    c.send('/compact');
+    assert.deepEqual(c.out.events, [
+      { name: 'compact', value: { context: 'session', dataSource } },
+    ]);
+    assert.deepEqual(c.editor().command.edit, { kind: 'reset', text: '' });
+    c.clear();
+    c.ready('/compact is a command');
+    c.send('/compact is a command');
+    assert.deepEqual(c.out.actions[0].input, {
+      sessionId: 'session',
+      message: '/compact is a command',
+      attachments: [],
+      model: backend.model,
+      thinkingLevel: null,
+    });
+  });
+}

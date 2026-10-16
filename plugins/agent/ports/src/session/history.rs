@@ -219,6 +219,7 @@ impl Read {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
+    Compaction,
     User,
     Assistant,
     ToolCall,
@@ -365,6 +366,8 @@ pub struct HistorySource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Chunk {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<Compaction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timing: Option<TurnTiming>,
     pub field: HistoryField,
     pub message_id: String,
@@ -379,6 +382,15 @@ pub struct Chunk {
     pub tool: Option<Tool>,
     /// User attachment descriptors, present only on the first chunk of a message.
     pub attachments: Vec<AttachmentRef>,
+}
+
+/// Duration of a successfully adopted context checkpoint, in recorded milliseconds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "HistoryCompaction")]
+pub struct Compaction {
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub duration_ms: u64,
 }
 
 /// Recorded logical Turn boundaries at the same history fence. An unfinished

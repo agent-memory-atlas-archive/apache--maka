@@ -98,17 +98,14 @@ async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() 
             "MAIN_SYSTEM_PROMPT_EVIDENCE"
         );
     }
-    assert!(
-        !requests[1]
-            .to_string()
-            .contains("MAIN_SYSTEM_PROMPT_EVIDENCE")
-    );
+    assert_eq!(requests[1]["messages"][0], requests[0]["messages"][0]);
+    assert_eq!(requests[1]["messages"][1], requests[0]["messages"][1]);
     assert!(
         requests[1]["messages"]
             .to_string()
             .contains("old-answer-private")
     );
-    assert_eq!(requests[1]["messages"][0]["role"], "user");
+    assert_eq!(requests[1]["messages"][0]["role"], "system");
     assert!(
         requests[1]["messages"].as_array().unwrap().last().unwrap()["content"]
             .as_str()
@@ -156,7 +153,10 @@ async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() 
         .unwrap()
         .unwrap();
     assert_eq!(composition.max_output_tokens, Some(8000));
-    assert!(composition.system_prompt.is_none());
+    assert_eq!(
+        composition.system_prompt.as_deref(),
+        Some("MAIN_SYSTEM_PROMPT_EVIDENCE")
+    );
     let first_request = prefix
         .events
         .iter()
@@ -198,7 +198,7 @@ async fn compact_next_main_and_reopen_use_durable_baseline_with_complete_tail() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn malformed_summary_repairs_once_then_keeps_previous_context() {
+async fn arbitrary_completed_summary_is_accepted_without_format_repair() {
     let directory = tempfile::tempdir().unwrap();
     let log = Arc::new(
         EventLog::open(&directory.path().join("events.sqlite"))
@@ -209,12 +209,7 @@ async fn malformed_summary_repairs_once_then_keeps_previous_context() {
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         let mut requests = Vec::new();
-        for text in [
-            "old-answer",
-            "invalid-summary",
-            "still-invalid",
-            "next-answer",
-        ] {
+        for text in ["old-answer", "invalid-summary", "next-answer"] {
             let (mut socket, _) = listener.accept().await.unwrap();
             requests.push(read_request(&mut socket).await);
             respond(&mut socket, text, "stop").await;
@@ -229,30 +224,21 @@ async fn malformed_summary_repairs_once_then_keeps_previous_context() {
             .unwrap();
     }
     let prefix = log.prefix(100, 256 * 1024).await.unwrap();
-    assert!(
-        !prefix
-            .events
-            .iter()
-            .any(|event| matches!(event.event.fact, Fact::ContextCheckpointRecorded { .. }))
-    );
-    assert!(prefix.events.iter().any(|event|matches!(&event.event.fact,Fact::InvocationEnded {outcome:InvocationOutcome::ContextCompactFinished {outcome:CompactOutcome::Failed {reason}}} if reason=="malformed_summary_missing_section")));
+    assert!(prefix.events.iter().any(|event| matches!(&event.event.fact,
+        Fact::ContextCheckpointRecorded { checkpoint } if checkpoint.summary.text == "invalid-summary")));
     let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 3);
     assert!(
         requests[2]["messages"]
             .to_string()
-            .contains("A prior attempt was rejected")
-    );
-    assert!(requests[3]["messages"].to_string().contains("old-answer"));
-    assert!(
-        !requests[3]["messages"]
-            .to_string()
             .contains("invalid-summary")
     );
+    assert!(!requests[2]["messages"].to_string().contains("old-answer"));
     worker.drain().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn length_repairs_summary_but_retains_incomplete_main_without_success() {
+async fn incomplete_summary_fails_without_repair_and_main_retains_incomplete_text() {
     use crate::support::agent_loop;
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -270,7 +256,6 @@ async fn length_repairs_summary_but_retains_incomplete_main_without_success() {
         for (text, reason) in [
             ("old", "stop"),
             ("cut", "length"),
-            (SUMMARY, "stop"),
             ("truncated-main", "length"),
             ("after-failure", "stop"),
         ] {
@@ -322,23 +307,26 @@ async fn length_repairs_summary_but_retains_incomplete_main_without_success() {
         .unwrap();
     let requests = server.await.unwrap();
     assert!(
-        requests[4]["messages"]
+        requests[3]["messages"]
             .to_string()
             .contains("truncated-main"),
         "valid incomplete text remains available to a new user message"
     );
-    assert!(
-        requests[2]["messages"]
-            .to_string()
-            .contains("well under half the length")
-    );
     let prefix = log.prefix(100, 256 * 1024).await.unwrap();
     assert!(
-        prefix
+        !prefix
             .events
             .iter()
             .any(|event| matches!(event.event.fact, Fact::ContextCheckpointRecorded { .. }))
     );
+    assert!(prefix.events.iter().any(|event| matches!(
+        &event.event.fact,
+        Fact::InvocationEnded {
+            outcome: InvocationOutcome::ContextCompactFinished {
+                outcome: CompactOutcome::Failed { .. }
+            }
+        }
+    )));
     let truncated: Vec<_> = prefix
         .events
         .iter()
@@ -369,4 +357,341 @@ async fn length_repairs_summary_but_retains_incomplete_main_without_success() {
             .any(|event| matches!(event.event.fact, Fact::ModelCompleted { .. }))
     );
     worker.drain().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn summary_preserves_main_prefix_tools_and_custom_instruction_with_independent_budget() {
+    use crate::support::agent_loop;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for (window, main_budget, expected_budget) in [
+        (None, Some(128), 8000),
+        (Some(1_000_000), Some(128), 40_000),
+        (Some(1_000_000), Some(64_000), 64_000),
+        (Some(128_000), None, 8000),
+        (Some(128_000), Some(128), 5120),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let log = Arc::new(
+            EventLog::open(&directory.path().join("events.sqlite"))
+                .await
+                .unwrap(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut requests = vec![];
+            for text in ["original answer", "自由格式摘要", "next answer", ""] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                requests.push(read_request(&mut socket).await);
+                respond(&mut socket, text, "stop").await;
+            }
+            requests
+        });
+        let effects = Arc::new(AtomicUsize::new(0));
+        let worker = engine(log.clone());
+        for (id, compact) in [
+            ("first", false),
+            ("compact", true),
+            ("next", false),
+            ("again", true),
+        ] {
+            let mut run = input(&base, id, compact);
+            run.main_output_limit = main_budget;
+            run.context = Some(maka_agent_facts::context::ModelRequestContext {
+                provider_id: "fixture".into(),
+                context_window: window,
+                model_context_window: window,
+                declared_window: None,
+            });
+            run.configuration.system_prompt = Some(maka_agent_facts::execution::SystemPrompt {
+                text: if compact {
+                    "different compact invocation system"
+                } else {
+                    "frozen ordinary main system"
+                }
+                .into(),
+                sources: vec![],
+                policy_revision: 1,
+            });
+            if compact {
+                run.configuration.compaction_prompt = Some("只保留下一步；可使用任意格式。".into());
+            } else {
+                run.work = agent_loop::input(
+                    &base,
+                    id,
+                    Arc::new(agent_loop::Effect {
+                        log: log.clone(),
+                        count: effects.clone(),
+                    }),
+                )
+                .work;
+            }
+            worker.run(run, CancellationToken::new()).await.unwrap();
+        }
+        worker.drain().await;
+        let requests = server.await.unwrap();
+        for (main, summary) in [(0, 1), (2, 3)] {
+            let prefix = requests[main]["messages"].as_array().unwrap();
+            let compact = requests[summary]["messages"].as_array().unwrap();
+            assert_eq!(&compact[..prefix.len()], prefix);
+            assert_eq!(
+                compact.len(),
+                prefix.len() + 2,
+                "one completed assistant message and one compaction instruction"
+            );
+            assert_eq!(compact.last().unwrap()["role"], "user");
+            assert_eq!(
+                compact.last().unwrap()["content"],
+                "只保留下一步；可使用任意格式。"
+            );
+            assert_eq!(requests[summary]["tools"], requests[main]["tools"]);
+            assert!(!requests[main]["tools"].as_array().unwrap().is_empty());
+            assert_eq!(requests[summary]["max_tokens"], expected_budget);
+            assert_eq!(requests[main]["max_tokens"], main_budget.unwrap_or(8000));
+        }
+        assert_eq!(effects.load(Ordering::SeqCst), 0);
+        let context = log.read_model_context("session", None).await.unwrap();
+        assert_eq!(context.baseline.unwrap().checkpoint.summary.text, "");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn summary_only_excerpts_after_provider_overflow_with_frozen_composition() {
+    use tokio::io::AsyncWriteExt;
+    let directory = tempfile::tempdir().unwrap();
+    let log = Arc::new(
+        EventLog::open(&directory.path().join("events.sqlite"))
+            .await
+            .unwrap(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let original = "history-marker ".repeat(3000);
+    let expected = original.clone();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        read_request(&mut socket).await;
+        respond(&mut socket, &original, "stop").await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let full = read_request(&mut socket).await;
+        let body = r#"{"error":{"message":"request exceeds context","type":"invalid_request_error","code":"context_length_exceeded"}}"#;
+        socket.write_all(format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let fitted = read_request(&mut socket).await;
+        respond(&mut socket, "brief arbitrary summary", "stop").await;
+        (full, fitted)
+    });
+    let worker = engine(log.clone());
+    worker
+        .run(input(&base, "old", false), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut compact = input(&base, "compact", true);
+    compact.main_output_limit = Some(128);
+    compact.context = Some(maka_agent_facts::context::ModelRequestContext {
+        provider_id: "fixture".into(),
+        context_window: Some(10_000),
+        model_context_window: Some(10_000),
+        declared_window: None,
+    });
+    worker.run(compact, CancellationToken::new()).await.unwrap();
+    worker.drain().await;
+    let (full, fitted) = server.await.unwrap();
+    assert!(full["messages"].to_string().contains(&expected));
+    assert!(
+        !full["messages"]
+            .to_string()
+            .contains("Conversation excerpts")
+    );
+    assert!(
+        fitted["messages"]
+            .to_string()
+            .contains("Conversation excerpts")
+    );
+    assert!(fitted.to_string().len() < full.to_string().len());
+    assert_eq!(full["max_tokens"], 400);
+    assert_eq!(fitted["max_tokens"], 400);
+    let events = log.prefix(100, 1024 * 1024).await.unwrap();
+    let mut compositions = vec![];
+    for event in events.events.iter().filter(|event| {
+        matches!(
+            event.event.fact,
+            Fact::ModelRequested {
+                purpose: maka_agent_facts::context::ModelPurpose::Summary,
+                ..
+            }
+        )
+    }) {
+        compositions.push(
+            log.request_composition("session", &event.event.id)
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    assert_eq!(compositions.len(), 2);
+    assert_eq!(compositions[0], compositions[1]);
+    assert!(events.events.iter().any(|event| matches!(&event.event.fact,
+        Fact::ContextCheckpointRecorded { checkpoint } if checkpoint.summary.text == "brief arbitrary summary")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn summary_advertised_tools_never_execute() {
+    use crate::support::agent_loop;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::AsyncWriteExt;
+    let directory = tempfile::tempdir().unwrap();
+    let log = Arc::new(
+        EventLog::open(&directory.path().join("events.sqlite"))
+            .await
+            .unwrap(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let main = read_request(&mut socket).await;
+        respond(&mut socket, "ordinary answer", "stop").await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let summary = read_request(&mut socket).await;
+        assert_eq!(summary["tools"], main["tools"]);
+        let call = serde_json::json!({"id":"summary","object":"chat.completion.chunk","created":1,"model":"test",
+            "choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"forbidden","type":"function",
+            "function":{"name":"echo","arguments":"{}"}}]},"finish_reason":null}]});
+        let end = serde_json::json!({"id":"summary","object":"chat.completion.chunk","created":1,"model":"test",
+            "choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]});
+        let body = format!("data: {call}\n\ndata: {end}\n\ndata: [DONE]\n\n");
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    });
+    let effects = Arc::new(AtomicUsize::new(0));
+    let worker = engine(log.clone());
+    let mut main = input(&base, "main", false);
+    main.work = agent_loop::input(
+        &base,
+        "main",
+        Arc::new(agent_loop::Effect {
+            log: log.clone(),
+            count: effects.clone(),
+        }),
+    )
+    .work;
+    worker.run(main, CancellationToken::new()).await.unwrap();
+    assert!(
+        worker
+            .run(input(&base, "compact", true), CancellationToken::new())
+            .await
+            .is_err()
+    );
+    worker.drain().await;
+    server.await.unwrap();
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+    assert!(
+        log.read_model_context("session", None)
+            .await
+            .unwrap()
+            .baseline
+            .is_none()
+    );
+    let events = log.prefix(100, 256 * 1024).await.unwrap();
+    assert!(
+        !events
+            .events
+            .iter()
+            .any(|event| matches!(event.event.fact, Fact::ToolDispatched { .. }))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn overflow_preserves_system_and_first_goal_or_continuation_summary() {
+    use tokio::io::AsyncWriteExt;
+    const GOAL: &str = "UNIQUE_ORIGINAL_GOAL: recover the launch checklist";
+    const SYSTEM: &str = "Preserve trusted system instructions exactly.";
+    for baseline in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let log = Arc::new(
+            EventLog::open(&directory.path().join("events.sqlite"))
+                .await
+                .unwrap(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut responses = vec!["initial answer".to_string()];
+            if baseline {
+                responses.push(GOAL.into());
+            }
+            responses.extend(
+                (0..3)
+                    .map(|index| format!("large turn {index}: {}", "recent detail ".repeat(3000))),
+            );
+            for response in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                read_request(&mut socket).await;
+                respond(&mut socket, &response, "stop").await;
+            }
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let full = read_request(&mut socket).await;
+            let body = r#"{"error":{"message":"context exceeded","type":"invalid_request_error","code":"context_length_exceeded"}}"#;
+            socket.write_all(format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let fitted = read_request(&mut socket).await;
+            respond(&mut socket, "final summary", "stop").await;
+            (full, fitted)
+        });
+        let worker = engine(log.clone());
+        let mut stages = vec![("first", false)];
+        if baseline {
+            stages.push(("baseline", true));
+        }
+        stages.extend([
+            ("one", false),
+            ("two", false),
+            ("three", false),
+            ("final", true),
+        ]);
+        for (id, compact) in stages {
+            let mut run = input(&base, id, compact);
+            run.configuration.system_prompt = Some(maka_agent_facts::execution::SystemPrompt {
+                text: SYSTEM.into(),
+                sources: vec![],
+                policy_revision: 1,
+            });
+            if id == "first"
+                && let maka_agent_engine::RunWork::Message { message, .. } = &mut run.work
+            {
+                *message = GOAL.into();
+            }
+            if id == "final" {
+                run.context = Some(maka_agent_facts::context::ModelRequestContext {
+                    provider_id: "fixture".into(),
+                    context_window: Some(10_000),
+                    model_context_window: Some(10_000),
+                    declared_window: None,
+                });
+            }
+            worker.run(run, CancellationToken::new()).await.unwrap();
+        }
+        worker.drain().await;
+        let (full, fitted) = server.await.unwrap();
+        assert_eq!(full["messages"][0], fitted["messages"][0]);
+        assert_eq!(fitted["messages"][0]["role"], "system");
+        assert_eq!(fitted["messages"][0]["content"], SYSTEM);
+        assert!(full["messages"].to_string().contains(GOAL));
+        assert!(
+            !full["messages"]
+                .to_string()
+                .contains("Conversation excerpts")
+        );
+        let excerpt = fitted["messages"][1]["content"].as_str().unwrap();
+        assert!(excerpt.contains("Earlier task or summary:"));
+        assert!(
+            excerpt.contains(GOAL),
+            "first conversational anchor must survive: {excerpt}"
+        );
+        if baseline {
+            assert!(excerpt.contains("Continuation summary:"));
+        }
+        assert!(excerpt.contains("large turn 2"));
+        assert!(fitted.to_string().len() < full.to_string().len());
+    }
 }

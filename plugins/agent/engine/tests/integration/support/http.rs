@@ -41,7 +41,7 @@ pub async fn read_request(socket: &mut TcpStream) -> Value {
                 .then(|| value.trim().parse().unwrap())
         })
         .unwrap();
-    assert!(length < 512 * 1024);
+    assert!(length < 16 * 1024 * 1024);
     while bytes.len() < boundary + length {
         let mut chunk = [0; 4096];
         let count = socket.read(&mut chunk).await.unwrap();

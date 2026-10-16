@@ -25,7 +25,7 @@ use maka_agent_facts::event::Fact;
 use maka_agent_facts::event::InvocationOutcome;
 use maka_event_log::turns::{InvocationState, TurnBoundary};
 
-fn project((boundary, high_water): (TurnBoundary, u64)) -> Execution {
+pub(super) fn project((boundary, high_water): (TurnBoundary, u64)) -> Execution {
     Execution {
         session_id: boundary.invocation.session_id,
         turn_id: boundary.invocation.turn_id,
@@ -38,6 +38,9 @@ fn project((boundary, high_water): (TurnBoundary, u64)) -> Execution {
             InvocationState::WaitingForUser => ExecutionState::Waiting,
             InvocationState::Ended { outcome, .. } => match outcome {
                 InvocationOutcome::HandoffPaused { .. } => ExecutionState::Paused,
+                InvocationOutcome::ContextCompactFinished {
+                    outcome: maka_agent_facts::context::CompactOutcome::Failed { .. },
+                } => ExecutionState::Failed,
                 InvocationOutcome::Completed | InvocationOutcome::ContextCompactFinished { .. } => {
                     ExecutionState::Completed
                 }
@@ -295,6 +298,7 @@ impl Owner {
             Err(_) => return Ok(parked(Reason::SourceNotResumable)),
         };
         let basis = MessageBasis {
+            compaction_prompt: configuration.compaction_prompt.clone(),
             graph,
             collaboration_mode: configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,
@@ -385,6 +389,7 @@ impl Owner {
         runs.controls.insert(
             input.session_id,
             Control {
+                compacting: false,
                 invocation: invocation.clone(),
                 basis,
                 cancellation: running.cancellation(),

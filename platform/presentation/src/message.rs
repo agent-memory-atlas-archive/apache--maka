@@ -99,6 +99,9 @@ pub struct Message {
     rename_all_fields = "camelCase"
 )]
 pub enum Content {
+    ContextCompacted {
+        duration_ms: u64,
+    },
     ModelInterruption {
         message: String,
     },

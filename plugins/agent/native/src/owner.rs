@@ -26,6 +26,7 @@ use maka_agent_engine::{Engine, RunError, RunInput, RunWork};
 mod assistant;
 mod attachments;
 mod auxiliary;
+mod compaction;
 mod execution;
 mod goal;
 mod graph;
@@ -74,6 +75,8 @@ use maka_agent_api::session::SessionConfiguration;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MessageBasis {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    compaction_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     graph: Option<maka_graph::Epoch>,
     #[serde(default, skip_serializing_if = "is_agent_collaboration")]
@@ -131,6 +134,7 @@ enum PreparedBackend {
     Executor(Box<crate::executor::Backend>),
 }
 struct Control {
+    compacting: bool,
     invocation: Invocation,
     basis: MessageBasis,
     cancellation: CancellationToken,
@@ -898,6 +902,7 @@ impl Owner {
             return Err("agent_planning_unavailable".into());
         }
         let mut basis = MessageBasis {
+            compaction_prompt: Some(self.effective_compaction_prompt().await?),
             graph: None,
             collaboration_mode: session.configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,

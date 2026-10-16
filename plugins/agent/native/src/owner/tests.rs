@@ -68,6 +68,9 @@ mod catalog;
 #[path = "tests/history_search.rs"]
 mod history_search;
 
+#[path = "tests/compaction.rs"]
+mod compaction;
+
 #[path = "tests/execution.rs"]
 mod execution;
 #[path = "tests/executor.rs"]

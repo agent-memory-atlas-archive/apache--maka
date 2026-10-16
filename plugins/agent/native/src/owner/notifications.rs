@@ -93,6 +93,7 @@ impl Owner {
             return Ok(None);
         }
         let mut basis = MessageBasis {
+            compaction_prompt: Some(self.effective_compaction_prompt().await?),
             graph: None,
             collaboration_mode: session.configuration.collaboration_mode,
             background_kind: BackgroundKind::Schedule,

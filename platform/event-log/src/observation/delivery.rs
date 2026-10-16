@@ -39,6 +39,7 @@ pub struct StoreStreamEvent {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StreamFact {
+    ContextChanged,
     ExecutorStarted,
     ExecutorDelta {
         text_kind: TextKind,
@@ -237,6 +238,12 @@ SELECT json_object(
         'run_id', json_extract(event_json, '$.invocation.run_id'),
         'invocation_id', invocation_id),
     'fact', json(CASE
+        WHEN kind IN ('model_requested', 'context_checkpoint_recorded') OR
+             (kind IN ('model_completed', 'model_interrupted') AND EXISTS (
+                SELECT 1 FROM runtime_events request WHERE request.invocation_id = runtime_events.invocation_id
+                AND request.kind = 'model_requested' AND request.operation_id = runtime_events.operation_id
+                AND json_extract(request.event_json, '$.fact.purpose') = 'summary'))
+            THEN json_object('kind', 'context_changed')
         WHEN kind IN ('executor_started', 'executor_completed') THEN json_object('kind', kind)
         WHEN kind = 'executor_observed' AND json_extract(event_json, '$.fact.output.type') IN ('output_delta','thinking_delta') THEN
             json_object('kind', 'executor_delta',
@@ -262,6 +269,8 @@ SELECT json_object(
         WHEN kind IN ('invocation_opened', 'message_steered') THEN json_object('kind', kind)
         WHEN kind = 'invocation_ended' THEN json_object('kind', kind,
             'failed', json(CASE WHEN json_extract(event_json, '$.fact.outcome.kind') = 'failed'
+                OR (json_extract(event_json, '$.fact.outcome.kind') = 'context_compact_finished'
+                    AND json_extract(event_json, '$.fact.outcome.outcome.kind') = 'failed')
                 OR (json_extract(event_json, '$.fact.outcome.kind') = 'cancelled' AND EXISTS (
                     SELECT 1 FROM runtime_events started WHERE started.invocation_id = runtime_events.invocation_id AND started.kind = 'executor_started'))
                 THEN 'true' ELSE 'false' END))
@@ -286,12 +295,12 @@ SELECT json_object(
 FROM runtime_events
 WHERE sequence > ?2 AND sequence <= ?3
 AND json_extract(event_json, '$.invocation.session_id') = ?1
-AND (kind = 'invocation_ended' OR NOT EXISTS (
+AND (kind IN ('invocation_ended', 'model_requested', 'model_completed', 'model_interrupted', 'context_checkpoint_recorded') OR NOT EXISTS (
     SELECT 1 FROM runtime_events opening
     WHERE opening.invocation_id = runtime_events.invocation_id
       AND opening.kind = 'invocation_opened'
       AND json_extract(opening.event_json, '$.fact.input.kind') = 'context_compact'))
-AND (kind NOT IN ('model_observed', 'model_completed', 'model_interrupted') OR
+AND (kind != 'model_observed' OR
      EXISTS (SELECT 1 FROM runtime_events request
              JOIN runtime_events opening ON opening.invocation_id = request.invocation_id
              AND opening.kind = 'invocation_opened'
@@ -300,7 +309,8 @@ AND (kind NOT IN ('model_observed', 'model_completed', 'model_interrupted') OR
              AND json_extract(opening.event_json, '$.fact.input.kind') IN ('message', 'continuation', 'handoff')
              AND json_extract(request.event_json, '$.fact.purpose') = 'main'))
 AND (kind IN ('invocation_opened', 'message_steered', 'invocation_ended', 'model_completed', 'model_interrupted',
-             'tool_dispatched', 'tool_rejected', 'tool_settled', 'executor_started', 'executor_observed', 'executor_completed')
+             'tool_dispatched', 'tool_rejected', 'tool_settled', 'executor_started', 'executor_observed', 'executor_completed', 'context_checkpoint_recorded')
+     OR (kind = 'model_requested' AND json_extract(event_json, '$.fact.purpose') = 'summary')
      OR (kind = 'model_observed'
          AND json_extract(event_json, '$.fact.event.kind') IN
              ('part_started', 'part_delta', 'part_finished')))

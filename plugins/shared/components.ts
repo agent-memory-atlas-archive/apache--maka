@@ -480,7 +480,7 @@ export function timeline<N extends Node>(
       state.browse = null;
       return;
     }
-    const rows = timelineRows(props);
+    const rows = timelineRows(props).filter(({ message }) => message.role !== 'compaction');
     if (
       state.browse?.request === props.browse &&
       rows.some(({ message }) => message.id === state.browse!.id)
@@ -595,6 +595,36 @@ export function timeline<N extends Node>(
     state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
     const messages: N[] = rows.flatMap((row, index) => {
       const { message, result, depth, timing } = row;
+      if (message.role === 'compaction') {
+        if (!message.compaction) return [];
+        const seconds = (message.compaction.durationMs / 1000).toFixed(1).replace(/\.0$/, '');
+        const rule = (side: string) =>
+          ui.box(
+            'compact-rule-' + side + message.id,
+            ui.rule ? [ui.rule('compact-line-' + side + message.id, 'row')] : [],
+            {
+              terminal: { grow: 1, shrink: true },
+              style: { grow: 1, height: pixels(1) },
+              ...(target === 'desktop' ? { background: props.theme.border } : {}),
+            },
+          );
+        return [
+          ui.box(
+            'message-' + message.id,
+            [
+              rule('left'),
+              ui.text(
+                'compacted-label-' + message.id,
+                tuiText(props.locale, 'context-compacted', { seconds }),
+                12,
+                props.theme.muted,
+              ),
+              rule('right'),
+            ],
+            { row: true, gap: target === 'tui' ? 1 : 12, style: { width: fill, align: 'center' } },
+          ),
+        ];
+      }
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
       const structured = tool && hasToolEvidence(message, props);
@@ -666,6 +696,7 @@ export function timeline<N extends Node>(
         : props.theme;
       const messageNode = messageView(presentation, target, messageTheme, props.locale, {
         ...message,
+        role: message.role,
         traceDepth: depth,
         detailStatus: state.details[message.id]?.status ?? null,
         separate:
@@ -1279,7 +1310,7 @@ export function timeline<N extends Node>(
       if (state.browse && state.browse.request === props.browse && !next.browse) {
         // A page split within one message replaces the bounded window. Follow
         // its existing landing edge instead of restarting at the first row.
-        const rows = timelineRows(props);
+        const rows = timelineRows(props).filter(({ message }) => message.role !== 'compaction');
         const row = props.landing.edge === 'end' ? rows.at(-1) : rows[0];
         if (row) {
           next.browse = { ...state.browse };
@@ -1322,7 +1353,7 @@ export function timeline<N extends Node>(
         !props.loading &&
         input.kind === 'raw'
       ) {
-        const cards = timelineRows(props);
+        const cards = timelineRows(props).filter(({ message }) => message.role !== 'compaction');
         const rows = cards.map(({ message }) => message);
         const selected = rows.find((message) => input.key === 'browse-' + message.id);
         const at = rows.findIndex((message) => message.id === next.browse!.id);

@@ -190,8 +190,7 @@ pub(super) async fn validate(
     };
     if completion.invocation != event.invocation
         || !(opened < requested && requested < completed && completed < sequence)
-        || TextSummary::from_model_step(output, checkpoint.previous_checkpoint_id.is_none())
-            .map_err(|_| invalid("invalid completed summary"))?
+        || TextSummary::from_model_step(output).map_err(|_| invalid("invalid completed summary"))?
             != checkpoint.summary
     {
         return Err(invalid("summary does not match its completed model step"));

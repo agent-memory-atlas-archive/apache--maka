@@ -112,6 +112,8 @@ export function agentScreen<N extends Node>(
         navigation: 0,
         landing: { sequence: 0, edge: 'end' },
         tailReceipt: null,
+        compact: null,
+        compacting: false,
         fileContext: null,
         copyRequest: null,
         messageCopy: null,

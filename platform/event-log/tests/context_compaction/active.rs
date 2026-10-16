@@ -92,7 +92,7 @@ async fn checkpoint(log: &EventLog, id: &str, mode: CheckpointMode) -> EventWrit
                 covered_through: source.source_evidence.high_water,
                 source_digest: source.source_evidence.digest,
                 previous_checkpoint_id: source.baseline.map(|b| b.event_id),
-                summary: TextSummary::from_model_step(output, false).unwrap(),
+                summary: TextSummary::from_model_step(output).unwrap(),
                 summary_step_id: step,
             },
         },

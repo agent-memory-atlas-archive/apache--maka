@@ -8491,6 +8491,187 @@ export const contracts = {
           },
           resources: {},
         },
+        compact: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentCompact',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              model: {
+                $ref: '#/$defs/ModelSelection',
+              },
+              thinkingLevel: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/ThinkingLevel',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              prompt: {
+                description: 'One invocation only; omission uses the global preference.',
+                type: ['string', 'null'],
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'model'],
+            $defs: {
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentCompactResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  execution: {
+                    $ref: '#/$defs/AgentExecution',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'started',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'execution'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentCompactRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentExecution: {
+                description:
+                  'Canonical physical execution receipt, independent of the current Session tip.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  turnId: {
+                    type: 'string',
+                  },
+                  runId: {
+                    type: 'string',
+                  },
+                  invocationId: {
+                    type: 'string',
+                  },
+                  highWater: {
+                    description: 'Run-local event count, not the root-global transcript cursor.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  state: {
+                    $ref: '#/$defs/AgentExecutionState',
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId', 'runId', 'invocationId', 'highWater', 'state'],
+              },
+              AgentExecutionState: {
+                type: 'string',
+                enum: [
+                  'admitted',
+                  'running',
+                  'waiting',
+                  'paused',
+                  'completed',
+                  'failed',
+                  'cancelled',
+                ],
+              },
+              AgentCompactRejection: {
+                type: 'string',
+                enum: ['busy', 'closed', 'archived', 'backend_unavailable', 'workspace_changed'],
+              },
+            },
+          },
+          resources: {},
+        },
+        compactionPrompt: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentCompactionPrompt',
+            type: 'object',
+            properties: {
+              compactionPrompt: {
+                type: 'string',
+              },
+              defaultCompactionPrompt: {
+                type: 'string',
+              },
+            },
+            additionalProperties: false,
+            required: ['compactionPrompt', 'defaultCompactionPrompt'],
+          },
+          resources: {},
+        },
         create: {
           mode: 'mutation',
           input: {
@@ -10656,6 +10837,16 @@ export const contracts = {
               AgentHistoryChunk: {
                 type: 'object',
                 properties: {
+                  compaction: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryCompaction',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   attachments: {
                     description:
                       'Display metadata only, on the first user-message fragment; no storage capability.',
@@ -10734,6 +10925,21 @@ export const contracts = {
                   'text',
                   'tool',
                 ],
+              },
+              HistoryCompaction: {
+                description:
+                  'Duration of a successfully adopted context checkpoint, in recorded milliseconds.',
+                type: 'object',
+                properties: {
+                  durationMs: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: ['durationMs'],
               },
               AgentHistoryAttachment: {
                 type: 'object',
@@ -10814,7 +11020,7 @@ export const contracts = {
                 description:
                   'Canonical message author/kind; the field identifies body versus thinking.\nTool body JSON contributes string values, never its keys.',
                 type: 'string',
-                enum: ['user', 'assistant', 'tool_call', 'tool_result'],
+                enum: ['compaction', 'user', 'assistant', 'tool_call', 'tool_result'],
               },
               HistoryTool: {
                 description:
@@ -14893,6 +15099,9 @@ export const contracts = {
             properties: {
               session: {
                 $ref: '#/$defs/AgentSession',
+              },
+              compacting: {
+                type: 'boolean',
               },
               rememberedBackend: {
                 anyOf: [
@@ -36688,6 +36897,12 @@ export const contracts = {
             title: 'SettingsAssistantPreferences',
             type: 'object',
             properties: {
+              compactionPrompt: {
+                type: 'string',
+              },
+              defaultCompactionPrompt: {
+                type: 'string',
+              },
               revision: {
                 type: 'integer',
                 format: 'uint64',
@@ -36713,6 +36928,8 @@ export const contracts = {
             },
             additionalProperties: false,
             required: [
+              'compactionPrompt',
+              'defaultCompactionPrompt',
               'revision',
               'displayName',
               'assistantTone',
@@ -39976,6 +40193,20 @@ export const contracts = {
             $defs: {
               SettingsPreferencesMutation: {
                 oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      prompt: {
+                        type: ['string', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'compaction_prompt',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind'],
+                  },
                   {
                     type: 'object',
                     properties: {
