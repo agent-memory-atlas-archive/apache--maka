@@ -80,9 +80,12 @@ Engine 夹具走真实 append 校验，每 1,000 轮执行真实压缩；关闭�
 
 历史与取消测试使用 `--kind responsive`，并将 `MAKA_RESPONSIVENESS_FIXTURES`
 设为上述一次性 `.sqlite` 快照路径，以逗号分隔。它验证冷 transcript 准备、真实
-历史页，以及 admission 完成后 10 ms 和模型 HTTP 请求到达后的取消。第一个触发点
-不保证引擎仍处于准备阶段，需核对模型请求计数。停止耗时包括 Engine 完成和清理，
-并核对持久化的取消结果；不包含 EventLog 关闭时等待被放弃读取结束的时间。
+历史页，以及 admission 前、admission 完成后 10 ms 和模型 HTTP 请求到达后的取消。
+admission 前覆盖普通与手动消息预检：10 ms 触发时 start 必须仍在等待，随后取消且
+不产生 opening 或模型请求。夹具需足够大，提前完成 admission 会使测试失败。
+admission 后的定时触发不保证引擎仍处于准备阶段，需核对模型请求计数。
+停止计时截至 start 返回取消，或已 admission 的 Engine 完成清理且持久化取消结果；
+不包含 EventLog 关闭时等待被放弃读取结束的时间。
 这些是存储／Engine API 指标，不是 GUI 或 Host IPC 延迟。上下文与裁剪读取在
 调用方取消后通过 SQLite progress handler 中断，并等事务清理完成后复用连接；
 双 reader 回收及事务恢复另有行为测试，不代表任意同步 Rust 计算都可立即中断。

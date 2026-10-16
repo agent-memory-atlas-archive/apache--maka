@@ -20,7 +20,7 @@
 //! Release-only history/cancellation probe over explicitly selected disposable
 //! long_task_perf fixture databases. Preparation and warm reads are separate.
 use crate::support::context as fixture;
-use maka_agent_engine::RunError;
+use maka_agent_engine::{RunError, RunWork};
 use maka_agent_facts::event::InvocationOutcome;
 use maka_agent_ports::session::history::{Page, Position};
 use maka_event_log::EventLog;
@@ -120,7 +120,12 @@ async fn long_history_responsiveness() {
             "first_page_ms":first_page_ms, "chunks":chunks, "errors":0})
         );
         log.close().await.unwrap();
-        for phase in ["after_admission_10ms", "model"] {
+        for phase in [
+            "before_admission_10ms",
+            "before_manual_admission_10ms",
+            "after_admission_10ms",
+            "model",
+        ] {
             for repetition in 0..repetitions {
                 let directory = tempfile::tempdir().unwrap();
                 let database = directory.path().join("events.sqlite");
@@ -142,6 +147,65 @@ async fn long_history_responsiveness() {
                     let _ = socket.read_to_end(&mut bytes).await;
                 });
                 let started = Instant::now();
+                if phase.starts_with("before_") {
+                    let cancellation = CancellationToken::new();
+                    let token = cancellation.clone();
+                    let engine = worker.clone();
+                    let mut input = fixture::input(&base, "responsive", false);
+                    let invocation = input.invocation.clone();
+                    if let RunWork::Message {
+                        allow_prior_unknown,
+                        ..
+                    } = &mut input.work
+                    {
+                        *allow_prior_unknown = phase == "before_manual_admission_10ms";
+                    } else {
+                        panic!("expected message fixture");
+                    }
+                    let mut starting =
+                        tokio::spawn(async move { engine.start(input, token).await });
+                    // The timed stimulus is valid only while admission is pending.
+                    tokio::select! {
+                        biased;
+                        _ = &mut starting => panic!("fixture admitted before cancellation stimulus"),
+                        _ = tokio::time::sleep(Duration::from_millis(10)) => {},
+                    }
+                    let cancel_at_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    let history = tail(&log, through, turns);
+                    let stop = async {
+                        let started = Instant::now();
+                        cancellation.cancel();
+                        let result = tokio::time::timeout(Duration::from_secs(300), starting)
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        let stop_ms = started.elapsed().as_secs_f64() * 1000.0;
+                        assert!(matches!(result, Err(RunError::Cancelled)));
+                        stop_ms
+                    };
+                    let ((history_ms, chunks), stop_ms) = tokio::join!(history, stop);
+                    worker.drain().await;
+                    server.abort();
+                    let _ = server.await;
+                    assert!(
+                        log.invocation_boundary("session", &invocation.invocation_id)
+                            .await
+                            .unwrap()
+                            .is_none()
+                    );
+                    assert_eq!(*log.subscribe_commits().borrow(), through);
+                    assert_eq!(requests.load(Ordering::Relaxed), 0);
+                    println!(
+                        "{}",
+                        json!({"benchmark":"long_history_responsiveness", "history_turns":turns,
+                        "phase":phase, "repetition":repetition, "cancel_at_ms":cancel_at_ms,
+                        "stop_ms":stop_ms, "concurrent_history_ms":history_ms, "chunks":chunks,
+                        "model_requests":0, "outcome":"cancelled", "errors":0})
+                    );
+                    drop(worker);
+                    Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
+                    continue;
+                }
                 let running = worker
                     .start(
                         fixture::input(&base, "responsive", false),

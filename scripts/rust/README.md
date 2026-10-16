@@ -91,11 +91,15 @@ longer than the measured run.
 For history and cancellation, set `MAKA_RESPONSIVENESS_FIXTURES` to a
 comma-separated list of those disposable `.sqlite` snapshots and use
 `--kind responsive`. This checks cold transcript preparation, a real history
-page, and cancellation both 10 ms after admission and after model HTTP receipt.
-The first trigger does not guarantee the Engine is still preparing; inspect the
-recorded model request count. Stop timing includes Engine completion and cleanup,
-with a verified durable cancelled outcome, but excludes closing the EventLog and
-draining abandoned read snapshots. It measures the store/Engine APIs, not GUI or
+page, and cancellation before admission, 10 ms after admission, and after model
+HTTP receipt. Before-admission cases cover ordinary and manual-message preflight:
+start must remain pending at the 10 ms stimulus, then cancel without an opening
+or model request. Use a sufficiently large fixture; early admission fails the probe.
+The after-admission trigger does not guarantee preparation is still running;
+inspect the model request count. Stop timing ends when start returns cancellation
+or the admitted Engine completes cleanup with a durable cancelled outcome. It
+excludes closing the EventLog and draining abandoned read snapshots.
+It measures the store/Engine APIs, not GUI or
 Host IPC latency. Context/prune reads interrupt abandoned SQLite work through a
 progress handler and await transaction cleanup before reuse. Separate behavior
 tests cover reclaiming both readers and transaction recovery; arbitrary

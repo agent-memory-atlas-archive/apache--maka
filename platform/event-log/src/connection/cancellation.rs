@@ -22,6 +22,38 @@ use std::time::Duration;
 
 const LONG_QUERY: &str = "WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<5000000) SELECT sum(x) FROM n";
 
+#[tokio::test]
+async fn manual_preflight_waits_for_read_capacity_without_blocking_writes() {
+    let directory = tempfile::tempdir().unwrap();
+    let log = crate::EventLog::open(&directory.path().join("events.sqlite"))
+        .await
+        .unwrap();
+    let through = *log.subscribe_commits().borrow();
+    let readers = log.connection.readers.acquire_many(2).await.unwrap();
+    let mut check = Box::pin(log.check_manual_message_history("session"));
+    assert!(futures_util::poll!(&mut check).is_pending());
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        log.create_session("session", "manual", &serde_json::json!({"saved":true}), 1),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(futures_util::poll!(&mut check).is_pending());
+    drop(check);
+    drop(readers);
+    assert!(!log.check_manual_message_history("session").await.unwrap());
+    assert_eq!(
+        log.get_session::<serde_json::Value>("session")
+            .await
+            .unwrap()
+            .map(|record| record.configuration),
+        Some(serde_json::json!({"saved":true}))
+    );
+    assert_eq!(*log.subscribe_commits().borrow(), through);
+    log.close().await.unwrap();
+}
+
 async fn owner(directory: &std::path::Path) -> Arc<OwnedConnection> {
     let lease = Arc::new(crate::root::FileLease::acquire(&directory.join("writer.lock")).unwrap());
     Arc::new(OwnedConnection::open(

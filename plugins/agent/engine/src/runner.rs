@@ -57,17 +57,23 @@ pub async fn run(
             ..
         }
     );
-    let prior_unknown = if manual_message {
-        inner
-            .log
-            .check_manual_message_history(&input.invocation.session_id)
-            .await
-    } else {
-        inner
-            .log
-            .prepare_prune_candidates(&input.invocation.session_id, None, 0, 0, None)
-            .await
-            .map(|_| false)
+    let prior_unknown = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(RunError::Cancelled),
+        result = async {
+            if manual_message {
+                inner
+                    .log
+                    .check_manual_message_history(&input.invocation.session_id)
+                    .await
+            } else {
+                inner
+                    .log
+                    .prepare_prune_candidates(&input.invocation.session_id, None, 0, 0, None)
+                    .await
+                    .map(|_| false)
+            }
+        } => result,
     };
     let prior_unknown = match prior_unknown {
         Ok(value) => value,
