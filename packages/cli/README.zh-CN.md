@@ -106,6 +106,49 @@ maka run --help
 Maka 默认会在执行高权限工具操作前询问。`maka run --yolo` 会授予该任务完整的文件和网络
 权限，只应在你允许任务修改的环境中使用。
 
+
+主代理可以请求结构化结果，或显式提交后返回：
+
+```sh
+maka run "检查这个项目" --json
+maka run "检查这个项目" --no-wait
+```
+
+这两种调用的 JSON 结果都包含 `sessionId`。普通调用仍默认等待并输出最终答案。
+`--no-wait` 在提交被接收后返回；使用会话 ID 查询后续结果。假设返回的会话 ID 保存在
+`$session` 中：
+
+```sh
+maka run --session "$session" --status
+maka run --session "$session" --wait --json
+maka run --session "$session" --answer '["是",null]' --wait --json
+maka run --session "$session" "接下来检查测试" --queue --wait --json
+maka run --session "$session" "重点检查参数解析" --steer --no-wait
+maka run --session "$session" --result --json
+maka run --session "$session" --resume --wait --json
+```
+
+普通内置 AskUser 会以退出码 0 返回 `needs_input`、问题及选项，Host 保留等待中的 Turn。
+`--answer` 使用 JSON 数组，为每个问题提供一个字符串或 `null`，回答后原工具调用和原 Turn
+继续执行，无需 `--resume`。答案提交失败或结果不确定时不会自动重发；先重新读取当前问题，
+再决定下一步。存在多批待回答问题时会如实报告，无法唯一选择当前批次时拒绝提交答案。
+
+默认使用 queue，每条显式排队消息对应一个独立后续 Turn。steer 沿用 Host 当前 Turn 的追加
+机制，错过最后处理边界时可能进入后续 Turn。提交排队消息时的 `--wait` 跟踪该消息对应的执行；steer 配合 `--wait` 观察连接时选定的
+Turn，不保证追加消息一定在该 Turn 结束前消费。
+单独 `--wait` 在连接时固定目标，空闲时读取最近结果。`--result` 不等待仍在执行的 Turn。
+状态和结果查询不准备模型、不启动 MCP。用 Ctrl+C 退出会话观察会让 Host 继续执行；旧阻塞
+run 的取消行为保持原样。
+
+会话控制使用已保存的配置。需要指定配置、cwd、timeout 或 Graph 选项的阻塞运行，继续使用
+兼容入口 `--resume <session-id>` 选择会话并提供新 prompt。`--session <id> --resume` 则表示
+安全恢复已停止的执行。空闲会话的新 prompt 可以使用 `--max-steps`，排队或 steer 消息不能
+给已有 Turn 附加步数上限。执行完整权限会话仍需显式 `--yolo`。
+
+当前不支持客户端 MCP 交互返回后由另一个 CLI 进程续接。阻塞 MCP 运行保留现有行为；
+`--no-wait` 会拒绝脱离本次调用持有的 MCP servers。Graph 交互交接也暂缓。执行本地会话控制
+及后台提交时使用持久 CLI 安装；临时 npx 调用可能持有 Host 生命周期，继续使用旧阻塞路径。
+
 ## 升级
 
 在 nightly 线内更新时固定精确版本（`--target` 只接受 `latest`、`next` 或精确的 Maka

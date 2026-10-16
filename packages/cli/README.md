@@ -116,6 +116,57 @@ Maka asks before privileged tool operations by default. `maka run --yolo` grants
 and network access and should only be used in an environment you are prepared to let the task
 modify.
 
+
+For another agent to drive a Session, request structured output or explicitly submit without waiting:
+
+```sh
+maka run "Inspect this project" --json
+maka run "Inspect this project" --no-wait
+```
+
+Both forms return a `sessionId` in their JSON result. Ordinary runs still wait and print the final
+answer by default. `--no-wait` returns after admission; use the Session ID to observe the eventual
+result. Given a returned Session ID in `$session`:
+
+```sh
+maka run --session "$session" --status
+maka run --session "$session" --wait --json
+maka run --session "$session" --answer '["Yes",null]' --wait --json
+maka run --session "$session" "Inspect the tests next" --queue --wait --json
+maka run --session "$session" "Focus on the parser" --steer --no-wait
+maka run --session "$session" --result --json
+maka run --session "$session" --resume --wait --json
+```
+
+An ordinary built-in AskUser returns `needs_input`, the questions and options, with exit code 0.
+The Host retains the waiting Turn. `--answer` accepts one string or `null` per question in a JSON
+array and continues the original tool call and Turn. It does not need `--resume`. A failed or
+uncertain answer submission is not automatically retried; read the current questions before
+choosing what to do next. Multiple pending batches are reported, and an answer is refused when
+the current batch cannot be selected uniquely.
+
+Queue is the default: each explicit queued message opens its own subsequent Turn. Steer uses the
+Host's existing current-Turn delivery and may carry over if it misses that Turn's last boundary.
+Submitting a queued prompt with `--wait` follows that message's execution. Steer with `--wait`
+observes the Turn selected on attachment; it does not guarantee consumption before that Turn ends. A standalone `--wait` fixes its
+target on attachment; when idle, it reads the latest result. `--result` never waits for an active
+Turn. Status and result queries do not prepare a model or start MCP. Interrupting Session
+observation with Ctrl+C leaves Host execution running; legacy blocking run cancellation retains
+its existing behavior.
+
+Session commands use the saved configuration. Keep using the legacy `--resume <session-id>`
+selector for blocking runs that supply configuration, cwd, timeout or Graph options; that selector
+continues accepting a new prompt. `--session <id> --resume` instead requests safe continuation of
+stopped execution. An idle Session prompt can use `--max-steps`; a queued or steering message
+cannot attach a step cap to an existing Turn. Executing a full-access Session still requires
+`--yolo`.
+
+Returning from client-owned MCP interaction and resuming it in another CLI process is not
+supported. Blocking MCP runs retain their existing behavior; `--no-wait` refuses to detach the
+MCP servers owned by that invocation. Graph interaction handoff is also deferred. Use a persistent
+CLI installation for local Session control execution and detached runs; temporary npx invocations
+may own the Host's lifetime and keep the legacy blocking path.
+
 ## Upgrade
 
 Update within the nightly line by pinning the exact release (`--target` accepts `latest`,

@@ -39,6 +39,56 @@ describe('maka run argument parsing', () => {
     assert.equal(parseMakaRunArgs(['x', '--max-steps', '1.5']).kind, 'error');
   });
 
+  test('parses session controls while preserving the legacy resume selector', () => {
+    const parsed = parseMakaRunArgs(['--session', 'session-1', '--resume', '--wait', '--json']);
+    assert.equal(parsed.kind, 'run');
+    if (parsed.kind !== 'run') return;
+    assert.equal(parsed.options.sessionId, 'session-1');
+    assert.equal(parsed.options.resumeExecution, true);
+    assert.equal(parsed.options.resumeId, undefined);
+    assert.deepEqual(parseMakaRunArgs(['--session', 'session-1', '--answer', '["Yes",null]']), {
+      kind: 'run',
+      options: { stdinPrompt: false, sessionId: 'session-1', answers: ['Yes', null] },
+    });
+    for (const args of [
+      ['--status'],
+      ['--session', 's', '--answer', 'yes'],
+      ['--session', 's', '--answer', '[1]'],
+      ['--session', 's', '--status', '--result'],
+      ['--session', 's', 'x', '--queue', '--steer'],
+      ['x', '--wait', '--no-wait'],
+      ['--session', 's', '--queue'],
+      ['--session', 's', '--resume', 'extra'],
+      ['x', '--graph', '--no-wait'],
+    ])
+      assert.equal(parseMakaRunArgs(args).kind, 'error', args.join(' '));
+  });
+
+  test('session queries bypass prompt/stdin and model execution preparation', async () => {
+    const stdout: string[] = [];
+    const exit = await runMakaTextCliCore(
+      ['--session', 's', '--status'],
+      {
+        listSessions: async () => {
+          throw new Error('must not list model-compatible Sessions');
+        },
+        createContext: async () => {
+          throw new Error('provider is out of quota');
+        },
+        runSession: async (options) => ({ sessionId: options.sessionId!, status: 'running' }),
+      },
+      {
+        stdinIsTTY: () => false,
+        readStdin: async () => {
+          throw new Error('must not read stdin');
+        },
+        writeStdout: (text) => stdout.push(text),
+      },
+    );
+    assert.equal(exit, 0);
+    assert.deepEqual(JSON.parse(stdout.join('')), { sessionId: 's', status: 'running' });
+  });
+
   test('accepts only the explicit non-interactive sandbox bypass flag', () => {
     assert.deepEqual(parseMakaRunArgs(['run tools', '--yolo']), {
       kind: 'run',
