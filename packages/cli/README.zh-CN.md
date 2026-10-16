@@ -157,6 +157,13 @@ run 的取消行为保持原样。
 `--no-wait` 会拒绝脱离本次调用持有的 MCP servers。Graph 交互交接也暂缓。执行本地会话控制
 及后台提交时使用持久 CLI 安装；临时 npx 调用可能持有 Host 生命周期，继续使用旧阻塞路径。
 
+仓库的 `maka-cli` skill 提供主/子代理 CLI 协作指引；待其进入所选分支后可安装。
+skill 本身不安装 Maka CLI：
+
+```sh
+npx skills add apache/maka --skill maka-cli
+```
+
 ## 升级
 
 在 nightly 线内更新时固定精确版本（`--target` 只接受 `latest`、`next` 或精确的 Maka

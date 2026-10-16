@@ -175,6 +175,13 @@ MCP servers owned by that invocation. Graph interaction handoff is also deferred
 CLI installation for local Session control execution and detached runs; temporary npx invocations
 may own the Host's lifetime and keep the legacy blocking path.
 
+For agent-to-agent CLI workflows, install the repository's `maka-cli` skill after it is available
+on your selected branch. It explains Session coordination; it does not install Maka itself:
+
+```sh
+npx skills add apache/maka --skill maka-cli
+```
+
 ## Upgrade
 
 Update within the nightly line by pinning the exact release (`--target` accepts `latest`,
