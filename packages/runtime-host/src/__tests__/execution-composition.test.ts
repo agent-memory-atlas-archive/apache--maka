@@ -323,13 +323,14 @@ test('assistant messages enter a durable Inbox through real Host admission witho
         abortSignal: new AbortController().signal,
         emitOutput() {},
       };
-      await send.impl({ messageId: 'host-reply', messages: ['好的，我来安排。'] }, call);
-      await send.impl({ messageId: 'host-reply', messages: ['好的，我来安排。'] }, call);
+      await send.impl({ messageId: 'host-reply', messages: [{ summary: '已接手', text: '好的，我来安排。' }] }, call);
+      await send.impl({ messageId: 'host-reply', messages: [{ summary: '已接手', text: '好的，我来安排。' }] }, call);
       const replies = (await sessionStore.readMessages(chat.id)).filter(
         (row) => row.type === 'assistant',
       );
       assert.equal(replies.length, 1);
       assert.equal(replies[0].text, '好的，我来安排。');
+      assert.equal(replies[0].summary, '已接手');
       // Both visible directions are published in the canonical continuity snapshot.
       await pollFor(() =>
         frames.some((frame) => frame.kind === 'subscription.transcript_advanced'),
@@ -344,6 +345,10 @@ test('assistant messages enter a durable Inbox through real Host admission witho
         assert.match(
           parts.map((part) => Buffer.from(part.data, 'base64').toString('utf8')).join(''),
           /好的，我来安排/,
+        );
+        assert.match(
+          parts.map((part) => Buffer.from(part.data, 'base64').toString('utf8')).join(''),
+          /已接手/,
         );
       }
       assert.equal(executed.has(chat.id), false);

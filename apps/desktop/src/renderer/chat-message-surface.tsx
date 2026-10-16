@@ -27,6 +27,7 @@ import {
   useUiLocale,
   type LiveTurnProjection,
 } from '@maka/ui';
+import { PersonalAssistantTyping } from './features/personal-assistant/typing.js';
 import { PersonalAssistantAvatar, useAssistantAvatar } from './features/personal-assistant/index.js';
 import { OnboardingHero } from './onboarding-hero';
 import type { SessionHealthNoticeView, SessionUiReads } from './features/conversation/index.js';
@@ -209,6 +210,7 @@ export function ChatMessageSurface({
           <StagedQuoteChatView
             {...chatViewRest}
             assistantAvatar={assistantAvatar}
+            activityContent={isAssistant && visible && activeSessionId ? <PersonalAssistantTyping key={activeSessionId} sessionId={activeSessionId} avatar={assistantAvatar} /> : undefined}
             liveTurns={seededLiveTurns}
               // Every branch above reseeds `sessionId` to `activeSessionId`, and a
             // render-phase setState re-runs this body before anything commits, so

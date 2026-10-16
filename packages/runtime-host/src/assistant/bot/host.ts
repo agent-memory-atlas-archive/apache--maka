@@ -52,6 +52,7 @@ export function initializeBot(
       error: store.get('error') ?? null,
       wakeError: store.get('wakeError') ?? null,
       sleeping: bot.isSleeping(),
+      working: bot.isWorking(),
     }),
     receive: (id, content) => bot.receive(id, content),
     post: (input) => bot.post(input),
@@ -116,13 +117,16 @@ export function initializeBot(
   );
   register(
     'SendUser',
-    '向用户发送一批聊天消息，messages 按顺序显示为独立气泡。messageId 标识这批发送，重试时复用。发送后循环继续。',
+    '向用户发送一批聊天消息，messages 按顺序显示为独立气泡。每项填写 text（完整正文）；summary（简短摘要）可选。短消息直接发正文，不必写摘要。较长消息需要填写独立摘要，用户默认看到摘要，点击展开正文；摘要由你概括，不是截断正文。需要你从用户的观看体验来看需不需要摘要。messageId 标识这批发送，重试时复用。发送后循环继续。',
     z.object({
       messageId: z.string().min(1).max(200),
-      messages: z.array(z.string().trim().min(1).max(48000)).min(1).max(100),
-    }).strict().refine((value) => value.messages.reduce((sum, text) => sum + text.length, 0) <= 48000,
+      messages: z.array(z.object({
+        summary: z.string().trim().min(1).max(2000).optional(),
+        text: z.string().trim().min(1).max(48000),
+      }).strict()).min(1).max(100),
+    }).strict().refine((value) => value.messages.reduce((sum, message) => sum + (message.summary?.length ?? 0) + message.text.length, 0) <= 48000,
       'Messages must total at most 48000 characters'),
-    async (input: { messageId: string; messages: string[] }) => {
+    async (input: { messageId: string; messages: { summary?: string; text: string }[] }) => {
       const messageIds = store.queueVisibleBatch(input.messageId, input.messages);
       await bot.flush();
       return { sent: true, messageIds };

@@ -210,6 +210,8 @@ export function ChatView(props: {
    * the regular prompt-suggestion hero shows.
    */
   emptyOverride?: ReactNode;
+  /** Ephemeral host-owned activity, outside the durable conversation. */
+  activityContent?: ReactNode;
   /** Optional host-owned identity beside a turn; absent for ordinary transcripts. */
   turnDecorations?: ReadonlyMap<string, { header?: ReactNode; context?: ReactNode; accentColor?: string; messageRail?: ReactNode }>;
   /** Session-owned records anchored after a durable conversation turn. */
@@ -849,6 +851,7 @@ export function ChatView(props: {
               {tail}
             </>
           ) : null}
+          {props.activityContent}
         </ChatMessageList>
       </section>
     );
@@ -1056,6 +1059,7 @@ export function ChatView(props: {
               )}
             </>
           )}
+          {props.activityContent}
         </ChatMessageList>
         {quoteAnnotation && annotationAnchor
           ? annotationLayer.render(

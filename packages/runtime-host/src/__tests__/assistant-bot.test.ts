@@ -256,9 +256,9 @@ test('Bot receives bodies in batches, may consult history, sends multiple messag
     assert.match(batch.items[1].content, /第二条/);
     assert.equal(batch.hasMore, false);
     assert.equal((await invoke('InboxCheck')).items.length, 0);
-    await invoke('SendUser', { messageId: 'reply-1', messages: ['好，我来安排。'] });
-    await invoke('SendUser', { messageId: 'reply-2', messages: ['有结果再告诉你。'] });
-    await invoke('SendUser', { messageId: 'reply-2', messages: ['有结果再告诉你。'] });
+    await invoke('SendUser', { messageId: 'reply-1', messages: [{ summary: '好，我来安排。', text: '好，我来安排。' }] });
+    await invoke('SendUser', { messageId: 'reply-2', messages: [{ summary: '有结果再告诉你。', text: '有结果再告诉你。' }] });
+    await invoke('SendUser', { messageId: 'reply-2', messages: [{ summary: '有结果再告诉你。', text: '有结果再告诉你。' }] });
     const all = await invoke('InboxList', {});
     assert.equal(all.items.length, 2);
     assert.ok(all.items.every((m: any) => !('status' in m)));
@@ -289,6 +289,22 @@ test('Bot receives bodies in batches, may consult history, sends multiple messag
       !tools.includes('MatterSettle'),
   );
   assert.equal(f.service.toolCeiling('owner'), undefined);
+});
+
+test('lightweight binding reports working until Sleep, without waiting for run teardown', async (t) => {
+  const f = await fixture();
+  t.after(f.close);
+  assert.equal(((await f.service.call('assistant.binding', {})) as any).bot.working, false);
+  let checked = false;
+  f.runner(async ({ invoke }) => {
+    await invoke('InboxCheck');
+    assert.equal(((await f.service.call('assistant.binding', {})) as any).bot.working, true);
+    await invoke('Sleep', {});
+    assert.equal(((await f.service.call('assistant.binding', {})) as any).bot.working, false);
+    checked = true;
+  });
+  await f.send('typing-test', '你好');
+  await until(() => checked);
 });
 
 test('delivered mail does not wake a sleeping Bot; restart preserves history and cursor', async (t) => {
@@ -353,7 +369,7 @@ test('message identities survive ambiguous publication and repeated input; forei
   assert.equal(f.visible.filter((m) => m.id === 'same').length, 1);
   await assert.rejects(f.send('same', '不同内容'), /different content/);
   await assert.rejects(
-    f.invoke('SendUser', { messageId: 'forged', messages: ['不应发送'] }),
+    f.invoke('SendUser', { messageId: 'forged', messages: [{ summary: '不应发送', text: '不应发送' }] }),
     /belongs/,
   );
   await assert.rejects(f.invoke('InboxList'), /belongs/);
@@ -376,7 +392,7 @@ test('independent discovery retains the exact prompt and reports through Inbox, 
       assert.match((await invoke('InboxRead', { id: rows.items[0].id })).content, /日程冲突/);
       await invoke('SendUser', {
         messageId: 'calendar',
-        messages: ['明天两个安排冲突，要一起调整吗？'],
+        messages: [{ summary: '明天两个安排冲突，要一起调整吗？', text: '明天两个安排冲突，要一起调整吗？' }],
       });
       await invoke('Sleep', {});
       processed = true;
@@ -709,11 +725,12 @@ test('Image avatars preserve bytes, paginate without model payloads, and survive
 test('SendUser delivers a batch in order, retries partial delivery once, and stays independent of Sleep', async (t) => {
   const f = await fixture();
   t.after(f.close);
-  const messages = ['查到了。', '不是配置问题，是服务拒绝了请求。', '要我继续查具体原因吗？'];
+  const texts = ['查到了。', '不是配置问题，是服务拒绝了请求。', '要我继续查具体原因吗？'];
+  const messages = texts.map((text, i) => i === 0 ? { text } : { summary: `摘要${i + 1}`, text });
   let done = false;
   f.runner(async ({ invoke, finish }) => {
     await invoke('InboxCheck');
-    for (const bad of [[], [''], ['ok', '  '], ['a'.repeat(30000), 'b'.repeat(30000)]]) {
+    for (const bad of [[], ['legacy string'], [{ summary: '', text: 'body' }], [{ summary: 'summary', text: ' ' }], [{ summary: 's', text: 'a'.repeat(48000) }]]) {
       await assert.rejects(invoke('SendUser', { messageId: 'invalid', messages: bad }));
     }
     assert.equal(f.visible.filter((m) => m.type === 'assistant').length, 0);
@@ -721,16 +738,16 @@ test('SendUser delivers a batch in order, retries partial delivery once, and sta
     await assert.rejects(invoke('SendUser', { messageId: 'batch', messages }), /after commit/);
     assert.deepEqual(
       f.visible.filter((m) => m.type === 'assistant').map((m) => m.text),
-      messages.slice(0, 1),
+      texts.slice(0, 1),
     );
     const sent = await invoke('SendUser', { messageId: 'batch', messages });
     assert.equal(sent.messageIds.length, 3);
     assert.deepEqual(
       f.visible.filter((m) => m.type === 'assistant').map((m) => m.text),
-      messages,
+      texts,
     );
     await invoke('SendUser', { messageId: 'batch', messages });
-    for (const changed of [messages.slice(0, 1), [...messages, 'extra'], [...messages].reverse()]) {
+    for (const changed of [[{ ...messages[0], summary: 'changed' }, ...messages.slice(1)], messages.slice(0, 1), [...messages, { summary: 'extra', text: 'extra' }], [...messages].reverse()]) {
       await assert.rejects(
         invoke('SendUser', { messageId: 'batch', messages: changed }),
         /different batch/,
@@ -755,8 +772,9 @@ test('SendUser delivers a batch in order, retries partial delivery once, and sta
   await until(() => done);
   assert.deepEqual(
     f.visible.filter((m) => m.type === 'assistant').map((m) => m.text),
-    messages,
+    texts,
   );
+  assert.deepEqual(f.visible.filter((m) => m.type === 'assistant').map((m) => m.summary), messages.map((m) => m.summary));
 });
 
 test('Batch registration is atomic and recovers pending bubbles in order after reopening', async (t) => {

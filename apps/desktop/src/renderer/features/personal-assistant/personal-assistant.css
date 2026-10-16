@@ -132,3 +132,31 @@
 }
 .personal-assistant-chat .maka-chat-message-bubble-assistant::before { left: -6px; clip-path: polygon(100% 0, 100% 100%, 0 50%); }
 .personal-assistant-chat .maka-chat-message-bubble-user::before { right: -6px; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+
+.personal-assistant-typing {
+  display: flex; align-items: flex-start; gap: 12px;
+  width: 100%; max-width: var(--maka-reading-measure);
+  box-sizing: border-box; margin: 12px auto;
+}
+.personal-assistant-typing-bubble {
+  position: relative; display: flex; align-items: center; gap: 5px;
+  height: 36px; padding: 0 15px; border-radius: 4px 14px 14px 14px;
+  background: var(--muted); color: var(--muted-foreground);
+}
+.personal-assistant-typing-bubble::before {
+  content: ''; position: absolute; left: -5px; top: 10px;
+  border-right: 6px solid var(--muted); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+}
+.personal-assistant-typing-bubble > span {
+  width: 5px; height: 5px; border-radius: 50%; background: currentColor;
+  animation: assistant-typing-dot 1.2s ease-in-out infinite;
+}
+.personal-assistant-typing-bubble > span:nth-child(2) { animation-delay: .15s; }
+.personal-assistant-typing-bubble > span:nth-child(3) { animation-delay: .3s; }
+@keyframes assistant-typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: .4; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .personal-assistant-typing-bubble > span { animation: none; opacity: .7; }
+}

@@ -45,6 +45,9 @@ export class BotController {
     this.deliveries.set(callId, batch);
     return batch;
   }
+  isWorking() {
+    return !!this.activeAgent && !this.store.get('sleepTurn') && !this.store.get('error');
+  }
   isSleeping() {
     return (
       !this.running &&

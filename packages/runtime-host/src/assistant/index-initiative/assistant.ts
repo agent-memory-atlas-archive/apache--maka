@@ -193,7 +193,7 @@ export function registerAssistant(
       totalCharacters: text.length,
     };
   });
-  ctx.api.register('assistant.binding', () => ({ state: store.get() }));
+  ctx.api.register('assistant.binding', () => ({ state: store.get(), bot: ctx.bot.status() }));
   ctx.api.register('assistant.status', summary);
   ctx.api.register('assistant.bind', async (input: any) => {
     const { sessionId } = z.object({ sessionId: z.string().min(1).max(300) }).parse(input);

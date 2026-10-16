@@ -171,7 +171,8 @@ export class BotStore {
     const old = this.db.prepare('SELECT payload FROM outbox WHERE id=?').get(message.id);
     if (old) {
       const previous = JSON.parse(String(old.payload));
-      if (previous.text !== ('text' in message ? message.text : undefined))
+      if (previous.text !== ('text' in message ? message.text : undefined) ||
+          previous.summary !== (message.type === 'assistant' ? message.summary : undefined))
         throw Error('Message ID has different text');
       return previous as StoredMessage;
     }
@@ -181,23 +182,28 @@ export class BotStore {
     return message;
   }
   /** Register the whole batch before delivery. Retries cannot extend or reorder a committed batch. */
-  queueVisibleBatch(batchId: string, texts: readonly string[]): string[] {
+  queueVisibleBatch(batchId: string, texts: readonly (string | { summary?: string; text: string })[]): string[] {
     return this.transaction(() => {
-      const payload = JSON.stringify(texts);
+      const serialize = (items: typeof texts) => JSON.stringify(items.map((entry) => typeof entry === 'string' ? entry : {
+        text: entry.text, ...(entry.summary !== undefined ? { summary: entry.summary } : {}),
+      }));
+      const payload = serialize(texts);
       const old = this.db.prepare('SELECT payload FROM outbox_batches WHERE id=?').get(batchId);
-      if (old && old.payload !== payload) throw Error('Message ID has different batch content');
+      if (old && serialize(JSON.parse(String(old.payload))) !== payload) throw Error('Message ID has different batch content');
       // Preserve single-message identities from before batch delivery was introduced.
       const legacyId = `bot-message:${batchId}`;
       if (!old && texts.length !== 1 && this.db.prepare('SELECT 1 FROM outbox WHERE id=?').get(legacyId))
         throw Error('Message ID already belongs to a single message');
       const timestamp = Date.now();
-      const ids = texts.map((text, index) => {
+      const ids = texts.map((entry, index) => {
+        const text = typeof entry === 'string' ? entry : entry.text;
+        const summary = typeof entry === 'string' ? undefined : entry.summary;
         const suffix = texts.length === 1 ? batchId : JSON.stringify([batchId, index]);
         const id = texts.length === 1 ? legacyId : `bot-batch-message:${suffix}`;
         this.queueVisible({
           type: 'assistant', id,
           turnId: texts.length === 1 ? `assistant-output:${suffix}` : `assistant-output:batch:${suffix}`,
-          ts: timestamp, text, modelId: 'assistant-bot',
+          ts: timestamp, text, ...(summary !== undefined ? { summary } : {}), modelId: 'assistant-bot',
         });
         return id;
       });
