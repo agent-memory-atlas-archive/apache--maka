@@ -39,3 +39,16 @@ node scripts/rust/notices.mjs check
 ```
 
 Review the generated inventory and license texts. [notices-sources.json](notices-sources.json) records reviewed upstream exceptions. Release assembly also includes notices from the actual V8 build and Rust standard library. The TSV inventory does not replace full license texts.
+
+To compare direct TUI startup on macOS/Linux, build and retain each executable,
+then run:
+
+```sh
+python3 scripts/rust/benchmark-startup.py --binary target/debug/maka \
+  --baseline /tmp/maka-before --runs 5 --output /tmp/maka-startup
+```
+
+The benchmark uses isolated roots, measures installation separately, and alternates
+reopens. It waits for the home screen and verifies the command palette before
+quitting. The output directory retains raw terminal output, failures, and timing
+medians/ranges. Keep build profiles equal and run without competing builds.

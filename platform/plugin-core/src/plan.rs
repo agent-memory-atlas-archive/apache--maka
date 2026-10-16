@@ -193,21 +193,21 @@ enum PendingExport {
     Forward(Target),
 }
 
-struct Pending {
+struct Pending<'a> {
     instance: Instance,
     node: Node,
-    imports: BTreeMap<String, Import>,
+    imports: &'a BTreeMap<String, Import>,
     exports: BTreeMap<String, PendingExport>,
 }
 
 struct Builder<'a> {
     packages: &'a Packages,
     target: EntryTarget,
-    nodes: BTreeMap<InstanceId, Pending>,
+    nodes: BTreeMap<InstanceId, Pending<'a>>,
     aliases: BTreeMap<Vec<String>, InstanceId>,
 }
 
-impl Builder<'_> {
+impl<'a> Builder<'a> {
     fn expand(
         &mut self,
         nodes: &BTreeMap<String, Node>,
@@ -342,11 +342,7 @@ impl Builder<'_> {
                             )
                         })
                         .collect();
-                    (
-                        Some(Arc::new(entry.clone())),
-                        entry.imports.clone(),
-                        exports,
-                    )
+                    (Some(Arc::new(entry.clone())), &entry.imports, exports)
                 }
                 PackageUse::Composition => {
                     if configuration != serde_json::json!({}) {
@@ -357,7 +353,7 @@ impl Builder<'_> {
                     })?;
                     (
                         None,
-                        template.imports.clone(),
+                        &template.imports,
                         template
                             .exports
                             .iter()
@@ -430,7 +426,7 @@ enum Resolving {
 }
 
 struct Resolver<'a> {
-    nodes: &'a BTreeMap<InstanceId, Pending>,
+    nodes: &'a BTreeMap<InstanceId, Pending<'a>>,
     aliases: &'a BTreeMap<Vec<String>, InstanceId>,
     remote: &'a BTreeMap<RemoteCapability, Arc<Export>>,
 }
