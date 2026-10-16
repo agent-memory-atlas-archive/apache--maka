@@ -90,7 +90,15 @@ pub trait Widget: std::any::Any {
     fn cancel_pointer(&self, _: &mut dyn std::any::Any) {}
     /// Local pointer feedback against the last presented target. Leaving clears
     /// feedback; hovering never selects, focuses, or invokes guest code.
-    fn hover(&self, _: &mut dyn std::any::Any, _: &str, _: Option<ratatui::layout::Position>) {}
+    /// Return whether native feedback changed and needs another paint.
+    fn hover(
+        &self,
+        _: &mut dyn std::any::Any,
+        _: &str,
+        _: Option<ratatui::layout::Position>,
+    ) -> bool {
+        false
+    }
     fn same_presentation(&self, _: &dyn std::any::Any) -> bool {
         false
     }
@@ -606,7 +614,6 @@ impl Presenter {
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
-        self.resources.redraw = true;
         let result = self.input_inner(event, false, None);
         self.recover_result(result)
     }
@@ -614,7 +621,6 @@ impl Presenter {
         &mut self,
         event: Event,
     ) -> maka_ui_runtime::Result<Option<activation::CapturedActivation>> {
-        self.resources.redraw = true;
         let mut captured = None;
         let result = self.input_inner(event, false, Some(&mut captured));
         self.recover_result(result)?;
@@ -625,7 +631,6 @@ impl Presenter {
     pub(super) fn wheel(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
         debug_assert!(matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)));
-        self.resources.redraw = true;
         let result = self.input_inner(event, true, None);
         self.recover_result(result)
     }
@@ -635,6 +640,11 @@ impl Presenter {
         defer_scroll: bool,
         mut capture: Option<&mut Option<activation::CapturedActivation>>,
     ) -> maka_ui_runtime::Result<()> {
+        // Ordinary pointer motion can leave presentation entirely unchanged.
+        // Native hover reports its own changes below; other input retains the
+        // original redraw policy, including raw terminal pointer forwarding.
+        self.resources.redraw |=
+            !matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Moved);
         match event {
             Event::FocusLost => self.window_focused = false,
             Event::FocusGained => self.window_focused = true,
@@ -693,6 +703,9 @@ impl Presenter {
         } else {
             None
         };
+        if raw_pointer_target.is_some() {
+            self.resources.redraw = true;
+        }
         if raw_pointer_target.is_none()
             && (self.editor_context_menu(&event)? || self.open_context_menu(&event)?)
         {

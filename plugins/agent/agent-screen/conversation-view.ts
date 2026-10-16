@@ -216,6 +216,7 @@ export function conversationView<N extends Node>(
                 locale,
                 target,
               );
+        props.active = entry === visit;
         if (entry !== visit) props.markReadEnabled = false;
         return ui.box(
           'task-reader-' + entry.key,

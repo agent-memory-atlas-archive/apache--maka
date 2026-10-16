@@ -1115,9 +1115,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 continue;
             }
             if let Some(action) = finish.actions.pop_front() {
-                if self.actions.len() + update.actions.len() >= 64 {
-                    return Err(Error::Invalid("pending action limit".into()));
-                }
                 finish.preparing =
                     Some(self.begin_prepare_action(&finish.mount, action, update, false)?);
                 continue;
@@ -1140,9 +1137,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 if let Some(old) = old {
                     finish.demands.insert(action.key.clone(), old.clone());
                 } else {
-                    if self.actions.len() + update.actions.len() >= 64 {
-                        return Err(Error::Invalid("pending action limit".into()));
-                    }
                     finish.preparing = Some(self.begin_prepare_action(
                         &finish.mount,
                         action.clone(),

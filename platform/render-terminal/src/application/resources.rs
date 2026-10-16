@@ -853,30 +853,30 @@ impl Resources {
         &mut self,
         target: &paint::Target,
         position: Option<ratatui::layout::Position>,
-    ) -> maka_ui_runtime::Result<()> {
+    ) -> maka_ui_runtime::Result<bool> {
         let Some(owner) = self
             .owners
             .get_mut(&target.mount.id())
             .filter(|owner| owner.live && std::rc::Rc::ptr_eq(&owner.identity, &target.owner))
         else {
-            return Ok(());
+            return Ok(false);
         };
-        if catch_unwind(AssertUnwindSafe(|| {
+        match catch_unwind(AssertUnwindSafe(|| {
             owner
                 .recipe
-                .hover(owner.state.as_mut(), &target.key, position);
-        }))
-        .is_err()
-        {
-            owner.live = false;
-            self.failed.insert(
-                target.mount.id(),
-                "terminal native hover cleanup unconfirmed".into(),
-            );
-            return Err(maka_ui_runtime::Error::Invalid(
-                "terminal native hover cleanup unconfirmed".into(),
-            ));
+                .hover(owner.state.as_mut(), &target.key, position)
+        })) {
+            Ok(changed) => Ok(changed),
+            Err(_) => {
+                owner.live = false;
+                self.failed.insert(
+                    target.mount.id(),
+                    "terminal native hover cleanup unconfirmed".into(),
+                );
+                Err(maka_ui_runtime::Error::Invalid(
+                    "terminal native hover cleanup unconfirmed".into(),
+                ))
+            }
         }
-        Ok(())
     }
 }

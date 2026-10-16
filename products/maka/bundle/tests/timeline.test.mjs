@@ -786,3 +786,212 @@ test('only an observed latest tail acknowledges the displayed message', () => {
     undefined,
   );
 });
+
+function descendants(value) {
+  if (!value || typeof value !== 'object') return [];
+  return [
+    value,
+    ...Object.values(value).flatMap((child) =>
+      Array.isArray(child) ? child.flatMap(descendants) : descendants(child),
+    ),
+  ];
+}
+
+for (const target of ['tui', 'desktop']) {
+  const { component: timeline } = await import(`../dist/packages/timeline/${target}.js`);
+  const { component: details } = await import(`../dist/packages/tool-details/${target}.js`);
+  test(`${target}: every active compact summary loads before scroll and across viewport changes`, () => {
+    const props = {
+      theme,
+      locale: 'en',
+      active: true,
+      copyRequest: null,
+      browse: null,
+      timings: [],
+      markReadEnabled: false,
+      toolContext: { sessionId: 'session', through: 8 },
+      waitingTools: [],
+      liveTools: [],
+      source: null,
+      search: target === 'tui' ? { sessionId: 'session', epoch: 1, through: 8 } : null,
+      loading: false,
+      older: false,
+      newer: false,
+      latest: false,
+      landing: { sequence: 0, edge: 'end' },
+      live: false,
+      messages: Array.from({ length: 40 }, (_, i) => ({
+        id: 'tool-' + i,
+        contentKey: 'tool-' + i,
+        role: 'tool_call',
+        text: 'Read',
+        timestamp: null,
+        source: 7,
+        image: false,
+        continued: false,
+        tool: {
+          toolUseId: 'read-' + i,
+          call: {
+            sequence: 7,
+            name: 'Read',
+            title: null,
+            presentation: 'maka.workspace.Files@1/readText',
+            ancestorToolUseIds: [],
+            pending: false,
+            dispatched: true,
+          },
+          result: { sequence: 8, isError: false, settlement: 'returned', image: false },
+        },
+      })),
+    };
+    let out = timeline.mount(props, {});
+    const slots = () =>
+      descendants(out.frame.view).filter((node) => node.key?.startsWith('tool-details-'));
+    assert.equal(slots().length, 40);
+    const readers = new Map();
+    for (const slot of slots()) {
+      const child = details.mount(slot.props, {});
+      assert.equal(child.actions.length, 2, 'offscreen compact paths and status eagerly load');
+      assert.equal(slot.props.load, true);
+      readers.set(slot.key, child);
+    }
+    // Complete the first, currently offscreen summary through its actual source actions.
+    const slot = slots()[0];
+    let child = readers.get(slot.key);
+    for (const action of child.actions) {
+      const text = action.input.field === 'arguments' ? '/src/a0.rs' : 'completed';
+      child = details.event(
+        child.frame.state,
+        {
+          kind: 'action',
+          key: action.key,
+          event: {
+            status: 'succeeded',
+            value: {
+              kind: 'ready',
+              through: 8,
+              filePath: null,
+              source: {
+                sequence: action.input.source.sequence,
+                field: action.input.field,
+                path: action.input.path,
+                format: 'text',
+                text,
+                offset: 0,
+                totalBytes: Buffer.byteLength(text),
+                tool: slot.props.tool,
+              },
+            },
+          },
+        },
+        slot.props,
+        {},
+      );
+      for (const event of child.events) {
+        out = timeline.event(
+          out.frame.state,
+          {
+            kind: 'component',
+            child: slot.key,
+            name: event.name,
+            event: event.value,
+          },
+          props,
+          {},
+        );
+      }
+    }
+    if (target === 'tui') {
+      const query = '/src/a0.rs';
+      const basis = { owner: 'find-editor', revision: 1, bytes: Buffer.byteLength(query) };
+      out = timeline.event(
+        out.frame.state,
+        {
+          kind: 'component',
+          child: out.frame.state.search.key,
+          name: 'changed',
+          event: { snapshot: { text: basis, marked: null } },
+        },
+        props,
+        {},
+      );
+      const read = out.actions.find((action) => action.binding === 'reader');
+      assert.ok(read, 'search reads the actual query editor snapshot');
+      out = timeline.event(
+        out.frame.state,
+        {
+          kind: 'action',
+          key: read.key,
+          event: { status: 'succeeded', value: { metadata: basis, text: query } },
+        },
+        props,
+        {},
+      );
+    }
+    const reading = descendants(out.frame.view).find((node) => node.key === 'reading');
+    if (target === 'tui')
+      assert.deepEqual(reading.props.command.target, {
+        kind: 'find',
+        query: '/src/a0.rs',
+        step: 'first',
+      });
+    const resolvedContent = JSON.parse(JSON.stringify(reading.props.content), (_, value) =>
+      value?.key === slot.key ? child.frame.view : value,
+    );
+    assert.ok(
+      descendants(resolvedContent).some(
+        (node) => typeof node.text === 'string' && node.text.includes('/src/a0.rs'),
+      ),
+      'the original compact path reaches actual retained ReadingArea content before scrolling',
+    );
+    const source = descendants(resolvedContent).find(
+      (node) => node.binding === 'source' && node.props?.source === '/src/a0.rs',
+    );
+    assert.ok(
+      source,
+      'the compact path metadata populates the native source document, including folded content',
+    );
+    for (const visible of [['message-tool-4'], ['message-tool-20'], []]) {
+      out = timeline.event(
+        out.frame.state,
+        {
+          kind: 'component',
+          child: 'reading',
+          name: 'observed',
+          event: {
+            readingRevision: 1,
+            pendingCommand: null,
+            viewport: {
+              readingRevision: 1,
+              atStart: false,
+              atEnd: false,
+              visibleChildKeys: visible,
+            },
+          },
+        },
+        props,
+        {},
+      );
+      assert.ok(slots().every((node) => node.props.load === true));
+    }
+    props.browse = 1;
+    out = timeline.update(out.frame.state, props, {});
+    assert.ok(
+      slots().every((node) => node.props.load === true),
+      'browsing keeps all summaries',
+    );
+    props.active = false;
+    out = timeline.update(out.frame.state, props, {});
+    assert.ok(slots().every((node) => node.props.load === false));
+    for (const background of slots())
+      assert.equal(details.mount(background.props, {}).actions.length, 0);
+    props.active = true;
+    out = timeline.update(out.frame.state, props, {});
+    const resumed = slots().find((node) => node.key === slot.key);
+    assert.equal(
+      details.update(child.frame.state, resumed.props, {}).actions.length,
+      0,
+      'returning to the conversation reuses completed summary parts',
+    );
+  });
+}

@@ -100,6 +100,15 @@ impl NativeService for Sequence {
     }
     fn subscribe(&self, _: ServiceRequest, stop: CancellationToken) -> StreamFuture {
         self.0.fetch_add(1, Ordering::SeqCst);
+        if matches!(self.1, Mode::Open) {
+            return Box::pin(async move {
+                stop.cancelled().await;
+                StreamCompletion::Finished(ServiceCompletion {
+                    result: Ok(json!(0)),
+                    cleanup: Ok(()),
+                })
+            });
+        }
         sequence(0, stop, self.1)
     }
 }
@@ -129,6 +138,7 @@ fn sequence(index: usize, stop: CancellationToken, mode: Mode) -> StreamFuture {
 enum Mode {
     Causal,
     Many,
+    Open,
     Panic,
     BadItem,
     WideItem,
@@ -156,7 +166,9 @@ impl NativeComponent<()> for Parent {
         } = &call
         {
             match origin {
-                EventOrigin::Raw if *key == "inc" && !matches!(self.0, Mode::Panic) => {
+                EventOrigin::Raw
+                    if *key == "inc" && !matches!(self.0, Mode::Panic | Mode::Open) =>
+                {
                     state["selector"] = json!(1);
                     state["cycle"] = json!(state["cycle"].as_u64().unwrap() + 1);
                 }
@@ -191,7 +203,11 @@ impl NativeComponent<()> for Parent {
             )?,
         }
         .output(vec![]);
-        let count = if matches!(self.0, Mode::Many) { 16 } else { 1 };
+        let count = if matches!(self.0, Mode::Many | Mode::Open) {
+            16
+        } else {
+            1
+        };
         output.subscriptions = (0..count)
             .map(|i| Action {
                 recovery: Value::Null,
@@ -215,6 +231,26 @@ impl NativeComponent<()> for Parent {
             && !state["queried"].as_bool().unwrap()
         {
             output.frame.state["queried"] = json!(true);
+            output.actions.push(Action {
+                recovery: Value::Null,
+                continuations: Vec::new(),
+                key: "probe".into(),
+                binding: "stream".into(),
+                member: 0,
+                method: "query".into(),
+                input: Value::Null,
+                resources: BTreeMap::new(),
+            });
+        }
+        if matches!(self.0, Mode::Open)
+            && matches!(
+                &call,
+                ComponentCall::Event {
+                    origin: EventOrigin::Raw,
+                    ..
+                }
+            )
+        {
             output.actions.push(Action {
                 recovery: Value::Null,
                 continuations: Vec::new(),
@@ -509,6 +545,102 @@ fn temporary_causal_demand_changes_do_not_restart_original_committed_execution()
     assert_eq!(starts.load(Ordering::SeqCst), 1);
     close(&mut app, &[root]);
 }
+#[test]
+fn open_subscriptions_do_not_block_an_independent_query() {
+    use std::{future::poll_fn, task::Poll};
+
+    let timer = timer();
+    let (mut app, starts) = fixture(Mode::Open, &timer);
+    let roots = (0..9)
+        .map(|_| app.mount_launch(json!({})).unwrap())
+        .collect::<Vec<_>>();
+    let mut streams = Vec::new();
+    for root in &roots {
+        app.capture_actions(root, |_| panic!("no resources"))
+            .unwrap();
+        while let Some(task) = app.start_task(root).unwrap() {
+            streams.push(task);
+        }
+    }
+    timer.block_on(poll_fn(|cx| {
+        for task in &mut streams {
+            assert!(task.future.as_mut().poll(cx).is_pending());
+        }
+        Poll::Ready(())
+    }));
+    app.dispatch(&roots[0], 0, "inc", Value::Null).unwrap();
+    app.capture_actions(&roots[0], |_| panic!("no resources"))
+        .unwrap();
+    let mut query_completed = false;
+    let query_completed = timer.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            poll_fn(|cx| {
+                app.set_waker(cx.waker().clone());
+                for root in &roots {
+                    while let Some(task) = app.start_task(root).unwrap() {
+                        // The independent query is enqueued after all subscription demand.
+                        // Polling distinguishes actual query completion from queue admission.
+                        streams.push(task);
+                    }
+                }
+                for index in (0..streams.len()).rev() {
+                    if let Poll::Ready(completion) = streams[index].future.as_mut().poll(cx) {
+                        let task = streams.swap_remove(index);
+                        assert!(matches!(completion, TaskCompletion::Query(_)));
+                        assert!(app.finish_task(task.id, completion).unwrap().is_none());
+                        query_completed = true;
+                    }
+                }
+                if query_completed {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            }),
+        )
+        .await
+        .is_ok()
+    });
+    if query_completed {
+        assert_eq!(
+            app.deliver_action_results(&roots[0], |_, _, _| Ok(false))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            app.frame(&roots[0]).unwrap().state["feedback"],
+            json!({"status":"succeeded","value":0})
+        );
+    }
+    let opened = starts.load(Ordering::SeqCst);
+    for root in &roots {
+        app.retire(root).unwrap();
+        assert!(app.start_task(root).unwrap().is_none());
+    }
+    for task in streams {
+        let (id, completion) = run(&timer, task);
+        assert!(matches!(
+            completion,
+            TaskCompletion::Subscription(StreamCompletion::Finished(ServiceCompletion {
+                cleanup: Ok(()),
+                ..
+            }))
+        ));
+        assert!(app.finish_task(id, completion).unwrap().is_none());
+    }
+    assert_eq!(app.accepted_action_count(), 0);
+    close(&mut app, &roots);
+    assert!(
+        query_completed,
+        "short query did not complete while {opened} subscriptions remained open"
+    );
+    assert_eq!(
+        opened, 144,
+        "all independent subscription demand must be admitted"
+    );
+}
+
 #[test]
 fn one_pending_feedback_does_not_double_charge_each_of_48_live_requests() {
     let timer = timer();

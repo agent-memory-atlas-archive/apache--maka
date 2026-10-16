@@ -712,6 +712,7 @@ export function timeline<N extends Node>(
                 context: props.toolContext,
                 tool: message.tool,
                 expanded,
+                load: props.active !== false,
                 focusOnPointer: !search,
               },
               { context: 'context' },

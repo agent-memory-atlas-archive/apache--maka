@@ -91,6 +91,33 @@ fn native_rows_hover_is_local_and_only_flushed_controls_can_activate() {
     close(tui);
 }
 #[test]
+fn native_rows_hover_redraws_only_when_the_hovered_row_changes() {
+    let (_runtime, mut tui) = layout::native(
+        layout::View::Rows(Rc::new(RefCell::new(props())), Rc::new(Cell::new(false))),
+        Rc::new(Cell::new(true)),
+    );
+    draw(&mut tui, 40, 10);
+    tui.input(mouse(MouseEventKind::Moved, 2, 2)).unwrap();
+    assert!(tui.resources.redraw);
+    draw(&mut tui, 40, 10);
+    tui.resources.redraw = false;
+    tui.input_with_capture(mouse(MouseEventKind::Moved, 3, 2))
+        .unwrap();
+    assert!(!tui.resources.redraw, "same row in the same native widget");
+    tui.input_with_capture(mouse(MouseEventKind::Moved, 3, 3))
+        .unwrap();
+    assert!(
+        tui.resources.redraw,
+        "another row in the same native widget"
+    );
+    draw(&mut tui, 40, 10);
+    tui.resources.redraw = false;
+    tui.input(mouse(MouseEventKind::Moved, 4, 3)).unwrap();
+    assert!(!tui.resources.redraw);
+    close(tui);
+}
+
+#[test]
 fn native_rows_selected_removal_exits_exact_focus_and_does_not_retarget_repeat() {
     let props = Rc::new(RefCell::new(props()));
     let (_runtime, mut tui) = layout::native(
