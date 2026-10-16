@@ -51,7 +51,6 @@ async fn deadline(at: Option<Instant>) {
 }
 
 struct PendingOutput {
-    submitted: Option<Instant>,
     sequence: u64,
     generation: uuid::Uuid,
     surface: maka_plugin_core::runtime::Mount,
@@ -80,15 +79,6 @@ fn poll_output(
         return Ok(());
     };
     let output = pending.take().expect("original output receipt");
-    if let Some(start) = output.submitted
-        && start.elapsed() >= Duration::from_millis(16)
-    {
-        maka_ui_runtime::diagnostics::record("slow_output_receipt", || {
-            json!({
-                "sequence": output.sequence, "elapsed_us": start.elapsed().as_micros(),
-            })
-        });
-    }
     result
         .map_err(|error| sanitize(&error.to_string()))?
         .map_err(|error| sanitize(&error.to_string()))?;
@@ -206,7 +196,6 @@ pub fn run(
             match output.submit(bytes) {
                 Ok(receipt) => {
                     pending_output = Some(PendingOutput {
-                        submitted: maka_ui_runtime::diagnostics::started(),
                         sequence: issued_sequence,
                         generation: screen.as_ref().expect("original terminal").generation,
                         surface: presenter.surface(),
@@ -343,7 +332,6 @@ pub fn run(
                 }
                 issued_sequence += 1;
                 pending_output = Some(PendingOutput {
-                    submitted: maka_ui_runtime::diagnostics::started(),
                     sequence: issued_sequence,
                     generation: screen.generation,
                     surface: presenter.surface(),
@@ -403,20 +391,6 @@ pub fn run(
             };
             let mut next_input = input;
             while let Some(mut input) = next_input.take() {
-                let _span = maka_ui_runtime::diagnostics::Span::new("slow_input");
-                maka_ui_runtime::diagnostics::record("input", || {
-                    json!({
-                        "kind": match &input {
-                            Event::Mouse(mouse) => format!("mouse_{:?}", mouse.kind),
-                            Event::Key(_) => "key".into(),
-                            Event::Paste(_) => "paste".into(),
-                            Event::Resize(_, _) => "resize".into(),
-                            _ => "focus".into(),
-                        },
-                        "output_pending": pending_output.is_some(),
-                        "replayed": replay.is_some(),
-                    })
-                });
                 poll_output(
                     &mut pending_output,
                     &mut written_sequence,
@@ -434,11 +408,6 @@ pub fn run(
                         },
                         Admission::Discard => return Ok(false),
                         Admission::Pending => {
-                            maka_ui_runtime::diagnostics::record("input_deferred", || {
-                                json!({
-                                    "reason": "activation", "output_pending": pending_output.is_some(),
-                                })
-                            });
                             queued_input = Some(QueuedInput::Activation(activation));
                             wake.0.notify_one();
                             return Ok(false);
@@ -453,11 +422,6 @@ pub fn run(
                 if let Some(activation) = presenter.capture_activation(&input)
                     && presenter.activation_admission(&activation) == Admission::Pending
                 {
-                    maka_ui_runtime::diagnostics::record("input_deferred", || {
-                        json!({
-                            "reason": "activation", "output_pending": pending_output.is_some(),
-                        })
-                    });
                     queued_input = Some(QueuedInput::Activation(activation));
                     presenter.resources.redraw = true;
                     wake.0.notify_one();
@@ -470,11 +434,6 @@ pub fn run(
                     || input_needs_presentation(&presenter, &input))
                     && !is_exit(&input)
                 {
-                    maka_ui_runtime::diagnostics::record("input_deferred", || {
-                        json!({
-                            "reason": "presentation", "output_pending": pending_output.is_some(),
-                        })
-                    });
                     queued_input = Some(QueuedInput::Physical(
                         input,
                         presenter.opening_witnesses().map_err(|e| e.to_string())?,
@@ -507,11 +466,6 @@ pub fn run(
                         .dispatch_focused_shortcut_with_capture(&input, Some(&mut captured))
                         .map_err(|error| error.to_string())?;
                     if let Some(activation) = captured {
-                        maka_ui_runtime::diagnostics::record("input_deferred", || {
-                            json!({
-                                "reason": "activation", "output_pending": pending_output.is_some(),
-                            })
-                        });
                         queued_input = Some(QueuedInput::Activation(activation));
                         presenter.resources.redraw = true;
                         wake.0.notify_one();
@@ -552,11 +506,6 @@ pub fn run(
                         .map_err(|error| error.to_string())?
                 };
                 if let Some(activation) = captured {
-                    maka_ui_runtime::diagnostics::record("input_deferred", || {
-                        json!({
-                            "reason": "activation", "output_pending": pending_output.is_some(),
-                        })
-                    });
                     queued_input = Some(QueuedInput::Activation(activation));
                     presenter.resources.redraw = true;
                     wake.0.notify_one();
@@ -623,8 +572,6 @@ pub fn run(
             }
         }
     }
-    maka_ui_runtime::diagnostics::record("run_exit", || json!({"failed": failure.is_some()}));
-    maka_ui_runtime::diagnostics::flush();
     updates.stop();
     scheduler.block_on(updates.drain());
     // Failures remain inspectable in this owner; dropping it cannot substitute

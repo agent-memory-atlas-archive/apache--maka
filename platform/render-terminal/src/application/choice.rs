@@ -183,30 +183,25 @@ impl SceneState {
             })
         })
     }
-    pub fn choice_hover(&mut self, choice: &Choice, point: Option<Position>) -> bool {
+    pub fn choice_hover(&mut self, choice: &Choice, point: Option<Position>) {
         if !self.dialogs.contains_key(&choice.key) {
-            return false;
+            return;
         }
         let Some(state) = self.choices.get_mut(&choice.key) else {
-            return false;
+            return;
         };
         let Some(geometry) = state
             .geometry
             .as_ref()
             .filter(|geometry| geometry.choice == *choice)
         else {
-            return false;
+            return;
         };
         if let Some((menu, point)) = geometry.menu.as_ref().zip(point)
             && let Some(index) = menu.rows.iter().position(|row| row.contains(point))
         {
-            let key = &choice.options[menu.first + index].key;
-            if state.highlighted.as_ref() != Some(key) {
-                state.highlighted = Some(key.clone());
-                return true;
-            }
+            state.highlighted = Some(choice.options[menu.first + index].key.clone());
         }
-        false
     }
 }
 impl Presenter {

@@ -69,14 +69,6 @@ impl<V: ?Sized + 'static> Application<V> {
             if let Some(flow) = &running.stream
                 && !self.subscription_wanted(&running.consumer, &running.key, *id)
             {
-                if !flow.stop.is_cancelled() {
-                    diagnostics::record("subscription_stop", || {
-                        json!({
-                            "id": id, "mount": running.consumer.id(),
-                            "key": running.key, "method": running.method,
-                        })
-                    });
-                }
                 flow.stop.cancel();
             }
             if let Some(session) = &running.mutation

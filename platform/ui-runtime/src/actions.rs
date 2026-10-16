@@ -34,11 +34,6 @@ use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
-// Queued intents are bounded separately from accepted executors and feedback.
-// A composed frame can declare more reads than can execute at once.
-pub(super) const MAX_PENDING_ACTIONS: usize = 1024;
-const MAX_ACTIVE_ACTIONS: usize = 64;
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureSource {
@@ -381,46 +376,6 @@ impl<V: ?Sized> Actions<V> {
                 .iter()
                 .filter(|o| o.request.is_none_or(|id| !self.running.contains_key(&id)))
                 .count()
-    }
-    fn can_start(&self) -> bool {
-        // Pending feedback retains a slot until it is consumed. Otherwise a
-        // slow UI callback could let completed query outcomes grow unbounded.
-        self.len() - self.queue.len() < MAX_ACTIVE_ACTIONS
-    }
-    pub(super) fn trace_limit(&self, consumer: &Mount, action: &Action, staged: &[Prepared<V>]) {
-        diagnostics::record("pending_action_limit", || {
-            json!({
-                "incoming": {
-                    "mount": consumer.id(), "key": action.key,
-                    "binding": action.binding, "method": action.method,
-                },
-                "pending": self.len(), "staged_count": staged.len(),
-                "staged": staged.iter().map(|a| json!({
-                    "id": a.id, "mount": a.consumer.id(), "key": a.key,
-                    "method": a.method, "subscription": a.subscription,
-                })).collect::<Vec<_>>(),
-                "queue": self.queue.iter().map(|a| json!({
-                    "id": a.id, "mount": a.consumer.id(), "key": a.key,
-                    "method": a.method, "subscription": a.subscription,
-                    "invalidated": a.invalidated,
-                })).collect::<Vec<_>>(),
-                "running": self.running.iter().map(|(id, a)| json!({
-                    "id": id, "mount": a.consumer.id(), "key": a.key,
-                    "method": a.method, "completed": a.completed,
-                    "subscription": a.stream.is_some(), "mutation": a.mutation.is_some(),
-                    "stop_requested": a.stream.as_ref().map(|flow| flow.stop.is_cancelled()),
-                    "awaiting_feedback": a.stream.as_ref().map(|flow| flow.pending_feedback),
-                })).collect::<Vec<_>>(),
-                "preparing": self.preparing.iter().map(|(id, a)| json!({
-                    "id": id, "mount": a.action.consumer.id(),
-                    "key": a.action.key, "method": a.action.method, "failed": a.failed(),
-                })).collect::<Vec<_>>(),
-                "feedback": self.outcomes.iter().map(|a| json!({
-                    "id": a.request, "mount": a.consumer.id(), "key": a.key,
-                })).collect::<Vec<_>>(),
-            })
-        });
-        diagnostics::flush();
     }
     fn bytes(&self) -> usize {
         self.queue
@@ -963,29 +918,11 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         Ok(captured)
     }
-    fn action_valid(&self, action: &Prepared<V>) -> bool {
-        !action.invalidated
-            && (!action.subscription
-                || self.subscription_wanted(&action.consumer, &action.key, action.id))
-            && !self.is_retiring(&action.consumer)
-            && action
-                .captures
-                .values()
-                .chain(action.witnesses.iter().map(|c| &c.target))
-                .all(|target| self.target_valid(target))
-    }
-    pub(super) fn wake_queued_actions(&self) {
-        if self.actions.can_start() && self.actions.queue.iter().any(|a| a.resources.is_some()) {
-            self.waker().wake_by_ref();
-        }
-    }
     /// Final Mount and captured registration check. A queue is not accepted Work.
     pub fn start_task(&mut self, root: &Mount) -> Result<Option<ActionTask>> {
         loop {
-            let capacity = self.actions.can_start();
             let Some(index) = self.actions.queue.iter().position(|a| {
                 a.resources.is_some()
-                    && (capacity || !self.action_valid(a))
                     && (self.is_retiring(&a.consumer)
                         || self
                             .mount_root(&a.consumer)
@@ -995,14 +932,16 @@ impl<V: ?Sized + 'static> Application<V> {
                 return Ok(None);
             };
             let action = self.actions.queue.remove(index).expect("queue position");
-            diagnostics::record("action_dequeued", || {
-                json!({
-                    "id": action.id, "mount": action.consumer.id(), "key": action.key,
-                    "method": action.method, "subscription": action.subscription,
-                    "pending": self.actions.len() + 1,
-                })
-            });
-            if !self.action_valid(&action) {
+            if action.invalidated
+                || action.subscription
+                    && !self.subscription_wanted(&action.consumer, &action.key, action.id)
+                || self.is_retiring(&action.consumer)
+                || action
+                    .captures
+                    .values()
+                    .chain(action.witnesses.iter().map(|c| &c.target))
+                    .any(|t| !self.target_valid(t))
+            {
                 self.reject_action(action, "consumer retired before admission".into());
                 continue;
             }
@@ -1214,12 +1153,6 @@ impl<V: ?Sized + 'static> Application<V> {
         let mut first_error = None;
         for _ in 0..self.actions.outcomes.len() {
             let outcome = self.actions.outcomes.pop_front().expect("bounded outcomes");
-            diagnostics::record("feedback_polled", || {
-                json!({
-                    "id": outcome.request, "mount": outcome.consumer.id(),
-                    "key": outcome.key, "pending": self.actions.len(),
-                })
-            });
             let item = matches!(&outcome.outcome, ActionOutcome::Updated { .. });
             if self.is_retiring(&outcome.consumer)
                 || outcome.request.is_some_and(|id| {
@@ -1297,7 +1230,6 @@ impl<V: ?Sized + 'static> Application<V> {
                 }
             }
         }
-        self.wake_queued_actions();
         if let Some(error) = first_error {
             return Err(error);
         }

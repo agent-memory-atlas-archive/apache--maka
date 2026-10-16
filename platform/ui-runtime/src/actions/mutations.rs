@@ -217,20 +217,6 @@ impl<V: ?Sized + 'static> Application<V> {
         id: Uuid,
         completion: TaskCompletion,
     ) -> Result<Option<ActionTask>> {
-        diagnostics::record("action_completion", || {
-            json!({
-                "id": id, "pending": self.actions.len(),
-                "kind": match &completion {
-                    TaskCompletion::Query(_) => "query",
-                    TaskCompletion::Subscription(_) => "subscription",
-                    TaskCompletion::Prepared(_) => "prepared",
-                    TaskCompletion::Mutation(_) => "mutation",
-                    TaskCompletion::MutationProgress { .. } => "mutation_progress",
-                    TaskCompletion::Closed(_) => "closed",
-                    TaskCompletion::Interrupted(_) => "interrupted",
-                },
-            })
-        });
         let result = (|| match completion {
             TaskCompletion::Subscription(completion) => self.finish_subscription(id, completion),
             TaskCompletion::Query(completion) => {
@@ -265,7 +251,6 @@ impl<V: ?Sized + 'static> Application<V> {
             }
         })();
         self.sync_subscription_demand();
-        self.wake_queued_actions();
         result
     }
 

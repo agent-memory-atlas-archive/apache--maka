@@ -156,9 +156,9 @@ impl Widget for Rows {
         owner.offset = owner.offset.min(self.props.rows.len().saturating_sub(1));
         Ok(None)
     }
-    fn hover(&self, state: &mut dyn Any, _: &str, point: Option<Position>) -> bool {
+    fn hover(&self, state: &mut dyn Any, _: &str, point: Option<Position>) {
         let owner = state.downcast_mut::<Owner>().unwrap();
-        let hover = point.and_then(|point| {
+        owner.hover = point.and_then(|point| {
             if owner
                 .geometry
                 .as_ref()?
@@ -176,9 +176,6 @@ impl Widget for Rows {
                 .find(|hit| hit.area.contains(point))
                 .map(|hit| hit.row.clone())
         });
-        let changed = owner.hover != hover;
-        owner.hover = hover;
-        changed
     }
     fn input(
         &self,
