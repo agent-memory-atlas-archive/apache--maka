@@ -128,13 +128,11 @@ maka run --session "$session" --result --json
 maka run --session "$session" --resume --wait --json
 ```
 
-如果会话以 `--yolo` 创建，每次发送 prompt（包括 `--queue`、`--steer`）、使用 `--answer`
-回答或恢复执行时，都要再次带上 `--yolo`，确认本次调用继续使用完整权限。只读的 `--status`、
-单独 `--wait` 和 `--result` 不需要。例如，回答完整权限会话的问题：
-
-```sh
-maka run --session "$session" --answer '["是",null]' --wait --json --yolo
-```
+会话控制（`--session`）与继承模型、工作目录一样，继承 Host 已保存的权限。续跑、queue、
+steer 和回答问题不需要重复 `--yolo`，也不会改变执行边界；只有要显式授予完整权限时才加
+`--yolo`。`--status` 会报告 `executionBoundary`：受管 `read_only`/`writable`、bypass 或 external。
+只读任务描述不等于强制只读沙箱，继承 bypass 的会话依然是完整权限。旧阻塞选择器
+`--resume <id>` 对 bypass 会话仍保留显式 `--yolo` 要求。
 
 内置 AskUser 是普通阻塞运行的例外：它会输出问题 JSON 而不是最终答案。脚本应使用 `--json`
 并检查 `status`，不能仅凭退出码 0 判断任务完成。普通内置 AskUser 会以退出码 0 返回
@@ -159,8 +157,23 @@ Host 扩展受管沙箱边界，并保存供该会话后续执行使用，不会
 不确定时不要自动重试，应先读取当前请求，再决定下一步。普通阻塞运行仍保留原有的沙箱
 边界自动拒绝行为。
 
+协调线程推荐先后台入队，再处理会话交互：
+
+```sh
+maka run --session "$session" "接下来检查测试" --queue --no-wait --json
+maka run --session "$session" --wait --json
+```
+
+提交回执中的 `submission` 为 `started`、`queued` 或 `steering`，只表示接收方式；`status`
+描述当前观察到的会话，不表示刚提交的消息已完成。排队回执可同时带有 `needs_input` 和当前
+Turn 的问题，或 `needs_approval` 和沙箱请求；先回答交互，后续消息才能执行。`queued` 是观察到
+的后续消息与 steer 总数，不是精确排队位置；回执快照未追上接收结果时省略该计数，
+可用 status 读取新状态。Host 发布重试状态时，status 还会带上
+`providerRetry`，不会根据静默时间猜测活动。
+
 默认使用 queue，每条显式排队消息对应一个独立后续 Turn。steer 沿用 Host 当前 Turn 的追加
-机制，错过最后处理边界时可能进入后续 Turn。提交排队消息时的 `--wait` 跟踪该消息对应的执行；steer 配合 `--wait` 观察连接时选定的
+机制，错过最后处理边界时可能进入后续 Turn。提交排队消息时的 `--wait` 跟踪该消息对应的执行，不会返回前一 Turn 阻塞队列的问题；
+这类问题要通过独立的会话 wait/answer 处理，或采用上面的协调流程。steer 配合 `--wait` 观察连接时选定的
 Turn，不保证追加消息一定在该 Turn 结束前消费。
 单独 `--wait` 在连接时固定目标，空闲时读取最近结果。`--result` 不等待仍在执行的 Turn。
 状态和结果查询不准备模型、不启动 MCP。用 Ctrl+C 退出会话观察会让 Host 继续执行；旧阻塞

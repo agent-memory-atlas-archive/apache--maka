@@ -21,7 +21,8 @@ import type {
   InteractionQuestion,
   InteractionSandboxBoundaryRequest,
 } from '@maka/core/interaction';
-import type { InteractionPendingSnapshot } from '@maka/runtime-host/protocol';
+import type { InteractionPendingSnapshot, TurnProviderRetry } from '@maka/runtime-host/protocol';
+import type { ExecutionBoundarySummary } from '@maka/core/sandbox-boundary';
 
 export interface MakaRunSessionResult {
   sessionId: string;
@@ -32,6 +33,9 @@ export interface MakaRunSessionResult {
   pendingQuestionCount?: number;
   approvalRequests?: readonly InteractionSandboxBoundaryRequest[];
   queued?: number;
+  submission?: 'started' | 'queued' | 'steering';
+  executionBoundary?: ExecutionBoundarySummary;
+  providerRetry?: TurnProviderRetry;
 }
 
 /** A normal handoff to the caller, not a failed or cancelled Host Turn. */

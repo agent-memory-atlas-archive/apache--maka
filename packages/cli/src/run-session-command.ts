@@ -81,6 +81,9 @@ export async function runMakaSessionCommand(
     assertActive();
     let target = observer.snapshot.rootTurn?.turnId;
     let messageId: string | undefined;
+    let submission: MakaRunSessionResult['submission'];
+    let admittedQueueRevision: number | undefined;
+    let admittedQueueEpoch: string | undefined;
     let fullAccess = false;
     if (executing) {
       const boundary = await connection.request('session.execution_boundary.query', { sessionId });
@@ -88,12 +91,8 @@ export async function runMakaSessionCommand(
       if (boundary.kind === 'external')
         throw new Error('This Session must be controlled by its owning harness');
       fullAccess = boundary.kind === 'bypass';
-      if (!options.yolo && fullAccess) {
-        throw new Error(
-          `Session ${sessionId} has full access. Repeat this command with --yolo to submit a prompt, answer AskUser, or resume execution. Read-only --status, --wait and --result do not require --yolo; no action was submitted.`,
-        );
-      }
     }
+
     const authorizeExecution = async () => {
       assertActive();
       if (!options.yolo || fullAccess) return;
@@ -199,11 +198,13 @@ export async function runMakaSessionCommand(
         });
         if (started.kind !== 'started') throw new Error('Turn did not start');
         target = started.turn.turnId;
+        submission = 'started';
       } else {
         await authorizeExecution();
         messageId = env.newId();
+        const originHostEpoch = connection.hostEpoch;
         const submitted = await connection.request('turn.message.submit', {
-          originHostEpoch: connection.hostEpoch,
+          originHostEpoch,
           sessionId,
           messageId,
           content: { text: options.prompt },
@@ -211,21 +212,47 @@ export async function runMakaSessionCommand(
         });
         if (submitted.disposition === 'blocked')
           throw new Error('Message was blocked before execution');
-        if (submitted.disposition === 'turn_started') target = submitted.turnId;
-        else if (submitted.disposition === 'steering') {
+        if (submitted.disposition === 'turn_started') {
+          target = submitted.turnId;
+          submission = 'started';
+        } else if (submitted.disposition === 'steering') {
+          submission = 'steering';
+          admittedQueueRevision = submitted.queueRevision;
+          admittedQueueEpoch = originHostEpoch;
           // Steering targets the Turn selected on attachment; it does not own a new Turn.
           if (!target)
             throw new Error(
               'Steering was admitted but its observed Turn is unavailable; query Session status before continuing',
             );
           messageId = undefined;
-        } else target = undefined;
+        } else {
+          target = undefined;
+          submission = 'queued';
+          admittedQueueRevision = submitted.queueRevision;
+          admittedQueueEpoch = originHostEpoch;
+        }
       }
     }
     assertActive();
-    if (options.status || (!executing && !decidingSandbox && !options.wait && !options.result))
-      return observer.status();
-    if (options.noWait) return { sessionId, status: 'running' };
+    if (options.status || (!executing && !decidingSandbox && !options.wait && !options.result)) {
+      const executionBoundary = await connection.request('session.execution_boundary.query', {
+        sessionId,
+      });
+      assertActive();
+      return { ...observer.status(), executionBoundary };
+    }
+    if (options.noWait) {
+      if (submission !== 'queued' && submission !== 'steering')
+        return { sessionId, status: 'running', ...(submission ? { submission } : {}) };
+      const observed = observer.status();
+      // Admission can precede its projection frame. Never report an older queue count as current.
+      const { queued, ...withoutQueueCount } = observed;
+      const hasAdmittedRevision =
+        admittedQueueRevision !== undefined &&
+        observer.snapshot.queue.hostEpoch === admittedQueueEpoch &&
+        observer.snapshot.queue.queueRevision >= admittedQueueRevision;
+      return { ...(hasAdmittedRevision ? observed : withoutQueueCount), submission };
+    }
     if (!target && !messageId) target = await observer.latestTurn();
     if (!target && !messageId) return { sessionId, status: 'idle' };
     for (;;) {
@@ -412,6 +439,9 @@ class SessionRunObserver {
             ? 'failed'
             : 'running',
       queued: this.snapshot.queue.followup.length + this.snapshot.queue.steering.length,
+      ...(root && 'providerRetry' in root && root.providerRetry
+        ? { providerRetry: root.providerRetry }
+        : {}),
     };
   }
 

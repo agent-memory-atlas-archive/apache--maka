@@ -597,7 +597,11 @@ export async function runMakaTextCliCore(
     return 1;
   }
   if (outcome.status === 'running') {
-    writeSessionResult({ sessionId: session.id, status: 'running' }, deps, true);
+    writeSessionResult(
+      { sessionId: session.id, status: 'running', submission: 'started' },
+      deps,
+      true,
+    );
     return 0;
   }
   if (outcome.status !== 'completed' || outcome.finalOutput === undefined) {
@@ -658,7 +662,7 @@ function makaRunHelpText(cliCommand: string): string {
     '  --thinking <level>        off|on|minimal|low|medium|high|xhigh|max|default',
     '  --timeout <seconds>       Invocation timeout',
     '  --max-steps <count>       Tool-step cap',
-    '  --yolo                    Give full access; repeat for prompts, AskUser answers and resume',
+    '  --yolo                    Grant full access; Session controls otherwise inherit saved access',
     '  --session <session-id>    Select a Session (without a prompt: show its status)',
     '  --wait                    Wait for this message/current Turn; return input/approval early',
     '  --no-wait                 Submit and return (Host-owned execution only)',
@@ -677,8 +681,9 @@ function makaRunHelpText(cliCommand: string): string {
     '  --graph                   Run this turn in Graph Mode and wait for graph completion',
     '  -h, --help                Show help',
     '',
-    'Full-access Sessions: repeat --yolo when sending prompts (including --queue/--steer),',
-    'answering with --answer, or resuming. Read-only --status/--wait/--result need no --yolo.',
+    'Session controls inherit saved permissions; --yolo explicitly grants full access.',
+    '--status reports the execution boundary; a read-only prompt does not restrict permissions.',
+    'Legacy --resume <id> still requires --yolo for a full-access Session.',
     '--approve/--deny decide a sandbox request without changing the Session to full access.',
   ].join('\n');
 }

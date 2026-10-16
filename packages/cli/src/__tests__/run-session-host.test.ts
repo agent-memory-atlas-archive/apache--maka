@@ -35,6 +35,7 @@ import {
 } from '@maka/runtime/test-only/fake-backend';
 import { startExecutionRuntimeHostService } from '@maka/runtime-host/server';
 import { runMakaSessionCommand } from '../run-session-command.js';
+import { updateRuntimeHostSession } from '../runtime-host-session-update.js';
 import { RunSessionInterrupted } from '../run-session-result.js';
 import { randomUUID } from 'node:crypto';
 import { connectRuntimeHost } from '@maka/runtime-host/client';
@@ -227,6 +228,10 @@ test('real Host keeps AskUser alive across CLI processes and returns the origina
     );
     const queuedFirst = await cli(root, '--session', sessionId, 'queued-first', '--no-wait');
     assert.equal(queuedFirst.code, 0, queuedFirst.stderr);
+    const queuedReceipt = JSON.parse(queuedFirst.stdout);
+    assert.equal(queuedReceipt.submission, 'queued');
+    assert.equal(queuedReceipt.status, 'needs_input');
+    assert.ok(queuedReceipt.questions.length > 0);
     const queuedSecond = cli(root, '--session', sessionId, 'queued-second', '--wait', '--json');
     let admitted = false;
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -493,6 +498,73 @@ test('real Host keeps AskUser alive across CLI processes and returns the origina
       assert.equal(duplicateDecision.code, 1);
       assert.match(duplicateDecision.stderr, /found 0/);
     }
+    // Session controls inherit saved full access without another elevation flag or config write.
+    await updateRuntimeHostSession(
+      probe,
+      sessionId,
+      (current) =>
+        probe.request('session.configuration.update', {
+          sessionId,
+          expectedRevision: current.revision,
+          patch: { permissionMode: 'bypass' },
+        }),
+      { operation: 'session.configuration.update' },
+    );
+    const inheritedBoundary = await probe.request('session.execution_boundary.query', {
+      sessionId,
+    });
+    const inheritedAsk = await cli(
+      root,
+      '--session',
+      sessionId,
+      FAKE_ASK_USER_QUESTION_PROMPT,
+      '--wait',
+      '--json',
+    );
+    assert.equal(inheritedAsk.code, 0, inheritedAsk.stderr);
+    assert.equal(JSON.parse(inheritedAsk.stdout).status, 'needs_input');
+    const inheritedStatus = await cli(root, '--session', sessionId, '--status', '--json');
+    assert.deepEqual(JSON.parse(inheritedStatus.stdout).executionBoundary, inheritedBoundary);
+    const inheritedQueue = await cli(
+      root,
+      '--session',
+      sessionId,
+      'inherited-followup',
+      '--queue',
+      '--no-wait',
+      '--json',
+    );
+    assert.equal(inheritedQueue.code, 0, inheritedQueue.stderr);
+    const receipt = JSON.parse(inheritedQueue.stdout);
+    assert.equal(receipt.submission, 'queued');
+    assert.equal(receipt.status, 'needs_input');
+    assert.ok(
+      receipt.queued === undefined || receipt.queued >= 1,
+      'do not publish a stale pre-admission queue count',
+    );
+    const afterQueueStatus = await cli(root, '--session', sessionId, '--status', '--json');
+    assert.equal(JSON.parse(afterQueueStatus.stdout).queued, 1);
+    assert.deepEqual(JSON.parse(afterQueueStatus.stdout).executionBoundary, inheritedBoundary);
+    const inheritedAnswer = await cli(
+      root,
+      '--session',
+      sessionId,
+      '--answer',
+      JSON.stringify(answers),
+      '--wait',
+      '--json',
+    );
+    assert.equal(inheritedAnswer.code, 0, inheritedAnswer.stderr);
+    const inheritedWait = await cli(root, '--session', sessionId, '--wait', '--json');
+    assert.equal(inheritedWait.code, 0, inheritedWait.stderr);
+    assert.match(JSON.parse(inheritedWait.stdout).finalOutput, /inherited-followup/);
+    const inheritedResult = await cli(root, '--session', sessionId, '--result', '--json');
+    assert.equal(inheritedResult.code, 0, inheritedResult.stderr);
+    assert.match(JSON.parse(inheritedResult.stdout).finalOutput, /inherited-followup/);
+    assert.deepEqual(
+      await probe.request('session.execution_boundary.query', { sessionId }),
+      inheritedBoundary,
+    );
     await subscription.close();
     await probe.close();
   } finally {

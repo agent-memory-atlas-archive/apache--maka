@@ -140,14 +140,12 @@ maka run --session "$session" --result --json
 maka run --session "$session" --resume --wait --json
 ```
 
-For a Session created with `--yolo`, repeat `--yolo` on every command that sends a prompt
-(including `--queue` or `--steer`), answers with `--answer`, or resumes execution. This confirms
-full access for that invocation. Read-only `--status`, standalone `--wait`, and `--result` do not
-require it. For example, answering a full-access Session:
-
-```sh
-maka run --session "$session" --answer '["Yes",null]' --wait --json --yolo
-```
+Session controls (`--session`) inherit the Host's saved permissions, just as they inherit the
+model and working directory. Continuing, queueing, steering, or answering does not require another
+`--yolo` and does not change the boundary. Add `--yolo` only to explicitly grant full access.
+`--status` reports `executionBoundary`: managed `read_only`/`writable`, bypass, or external.
+A read-only task instruction does not turn a bypass Session into an enforced read-only Session.
+The legacy blocking `--resume <id>` selector retains its explicit `--yolo` requirement for bypass.
 
 An ordinary built-in AskUser returns `needs_input`, the questions and options, with exit code 0.
 The Host retains the waiting Turn. `--answer` accepts one string or `null` per question in a JSON
@@ -174,9 +172,26 @@ target the request pending when that CLI invocation attaches. Do not automatical
 retry a decision after an uncertain result: read the current requests before deciding again.
 Ordinary blocking runs retain their existing sandbox-boundary denial behavior.
 
+For coordination, submit follow-ups without blocking, then service the Session's interactions:
+
+```sh
+maka run --session "$session" "Inspect the tests next" --queue --no-wait --json
+maka run --session "$session" --wait --json
+```
+
+The admission receipt has `submission: "started"`, `"queued"`, or `"steering"`. Its `status`
+describes the currently observed Session, not completion of the submitted message. A queued receipt
+can include `needs_input` and the current Turn's questions, or `needs_approval` and its sandbox
+request. Answer that interaction before expecting the follow-up to execute. `queued` is the
+observed total of follow-up and steering messages; it is not an exact position. An admission
+receipt omits this count until its queue projection has caught up; use status for a fresh view. Status also reports
+`providerRetry` when the Host has published a retry, without guessing activity from silence.
+
 Queue is the default: each explicit queued message opens its own subsequent Turn. Steer uses the
 Host's existing current-Turn delivery and may carry over if it misses that Turn's last boundary.
-Submitting a queued prompt with `--wait` follows that message's execution. Steer with `--wait`
+Submitting a queued prompt with `--wait` follows that message's execution. It does not return
+questions from an earlier Turn blocking the queue; service those through a separate Session
+wait/answer call, or use the coordination workflow above. Steer with `--wait`
 observes the Turn selected on attachment; it does not guarantee consumption before that Turn ends. A standalone `--wait` fixes its
 target on attachment; when idle, it reads the latest result. `--result` never waits for an active
 Turn. Status and result queries do not prepare a model or start MCP. Interrupting Session

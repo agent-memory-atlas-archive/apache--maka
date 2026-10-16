@@ -99,11 +99,26 @@ request and choose again. Request IDs are tracked internally by the CLI.
 
 ## Add work or change direction
 
-Queue is the default for an added prompt; each queued message gets its own later Turn. Pair the submission with `--wait` to receive that message's result:
+Queue is the default for an added prompt; each queued message gets its own later Turn. For
+coordination, submit first, then service the Session's current interactions:
 
 ```sh
-maka run --session "$session" "Inspect the tests next" --queue --wait --json
+maka run --session "$session" "Inspect the tests next" --queue --no-wait --json
+maka run --session "$session" --wait --json
 ```
+
+Read `submission` as an admission receipt: `started`, `queued`, or `steering`. It is not completion.
+The accompanying `status` refers to the currently observed Session; a queued receipt can include
+questions from the Turn ahead of it. The queue count can be omitted until its projection catches
+up; status reads a fresh view. Handle `needs_input`/`needs_approval`, then keep observing the
+Session. `queued` counts follow-up plus steering messages, not an exact queue position. Status
+reports the execution boundary and any Host-published `providerRetry`; absence of activity details
+is not proof of a stalled task.
+
+Use `--queue --wait` when you need that message's exact result and can separately service earlier
+Turn interactions. It follows the submitted message and does not return a predecessor's AskUser;
+waiting on it alone can leave a queue blocked on an unanswered question. A Session-only wait
+selects the current Turn, and result reads the latest Turn, not every queued assignment.
 
 Use steer to change ongoing work:
 
@@ -115,11 +130,11 @@ Steer is delivered through the Host's current execution boundaries. It can miss 
 
 ## Permissions, interruption, and recovery
 
-Use `--yolo` only when full file and network access is authorized. For a full-access Session, repeat `--yolo` on every executing command: prompts (including queue/steer), answers, and resume. Read-only status, standalone wait, and result do not require it. For example:
-
-```sh
-maka run --session "$session" --answer '["Blue"]' --wait --json --yolo
-```
+Session controls (`--session`) inherit saved permissions. They do not need repeated `--yolo`
+for prompts, queue/steer, answers, or safe resume. Use `--yolo` only to explicitly grant full access.
+Inspect `executionBoundary` in status to distinguish managed read-only/writable from bypass.
+Inheriting bypass is not an enforced read-only task, even if the prompt asks only for review.
+The legacy blocking `--resume <id>` selector still requires `--yolo` for a bypass Session.
 
 To stop Host execution explicitly, use the same Host selection and Session ID:
 

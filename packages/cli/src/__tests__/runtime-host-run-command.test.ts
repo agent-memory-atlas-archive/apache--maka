@@ -969,6 +969,7 @@ describe('Runtime Host maka run adapter', () => {
     assert.deepEqual(JSON.parse(stdout.join('')), {
       sessionId: 'session-created',
       status: 'running',
+      submission: 'started',
     });
     assert.deepEqual(fixture.exactTurnStops, []);
   });
