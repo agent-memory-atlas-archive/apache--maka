@@ -658,16 +658,18 @@ export function frame<N extends Node>(
       ),
       state.dialog !== null && !inlineInteraction,
       state.dialog === 'terminal' ? { width: pixels(900) } : {},
-      state.dialog === 'sandbox'
-        ? { width: 56, height: 16 }
-        : state.dialog === 'attachments'
-          ? {
-              width: state.attachments.selection?.browse ? 80 : 64,
-              height: state.attachments.selection?.browse
-                ? 28
-                : Math.min(20, attached.length * 3 + 7),
-            }
-          : {},
+      state.dialog === 'compact'
+        ? { width: 88, height: 26 }
+        : state.dialog === 'sandbox'
+          ? { width: 56, height: 16 }
+          : state.dialog === 'attachments'
+            ? {
+                width: state.attachments.selection?.browse ? 80 : 64,
+                height: state.attachments.selection?.browse
+                  ? 28
+                  : Math.min(20, attached.length * 3 + 7),
+              }
+            : {},
     ),
   );
   if (target === 'tui')

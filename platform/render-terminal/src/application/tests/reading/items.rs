@@ -835,7 +835,7 @@ fn item_space_submission_is_explicit_and_focus_remains_activation() {
 fn list_scrollbar_paints_tracks_clicks_and_captures_drag_outside() {
     let (_runtime, mut p, _) = native((0..30).map(item).collect());
     let first = draw(&mut p, 24, 8);
-    assert_eq!(first[(23, 0)].symbol(), "█");
+    assert_eq!(first[(23, 0)].symbol(), "┃");
     assert_eq!(first[(23, 7)].symbol(), "│");
     mouse(&mut p, MouseEventKind::ScrollDown, 2, 2);
     draw(&mut p, 24, 8);
@@ -844,7 +844,7 @@ fn list_scrollbar_paints_tracks_clicks_and_captures_drag_outside() {
     let end = draw(&mut p, 24, 8);
     let viewport = state(&p).scrolls["reading"].presented.as_ref().unwrap();
     assert_eq!(viewport.offset, viewport.end());
-    assert_eq!(end[(23, 7)].symbol(), "█");
+    assert_eq!(end[(23, 7)].symbol(), "┃");
     assert!(p.drag.is_some());
     mouse(&mut p, MouseEventKind::Drag(MouseButton::Left), 30, 0);
     draw(&mut p, 24, 8);

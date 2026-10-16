@@ -596,8 +596,8 @@ fn is_wheel(event: &Event) -> bool {
     matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
         crossterm::event::MouseEventKind::ScrollUp | crossterm::event::MouseEventKind::ScrollDown))
 }
-// The primary copy chord only copies an actual selection. The explicit
-// terminal Ctrl+Shift+C command retains its whole-screen copy behavior.
+// Ctrl+C copies a selection before falling back to interrupt/clear. Cmd+C
+// also works when a macOS terminal forwards it; Ctrl+Shift+C copies the scope.
 fn copy_gesture(event: &Event, macos: bool) -> Option<bool> {
     let Event::Key(key) = event else { return None };
     if key.kind != KeyEventKind::Press || !matches!(key.code, KeyCode::Char('c' | 'C')) {
@@ -605,12 +605,8 @@ fn copy_gesture(event: &Event, macos: bool) -> Option<bool> {
     }
     if key.modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT {
         Some(false)
-    } else if key.modifiers
-        == if macos {
-            KeyModifiers::SUPER
-        } else {
-            KeyModifiers::CONTROL
-        }
+    } else if key.modifiers == KeyModifiers::CONTROL
+        || (macos && key.modifiers == KeyModifiers::SUPER)
     {
         Some(true)
     } else {
@@ -732,11 +728,11 @@ mod tests {
         assert!(window.request(now + Duration::from_secs(6)));
     }
     #[test]
-    fn primary_copy_uses_command_on_mac_and_control_elsewhere() {
+    fn selection_copy_accepts_control_on_all_terminals_and_command_on_mac() {
         let command = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::SUPER));
         let control = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert_eq!(copy_gesture(&command, true), Some(true));
-        assert_eq!(copy_gesture(&control, true), None);
+        assert_eq!(copy_gesture(&control, true), Some(true));
         assert_eq!(copy_gesture(&control, false), Some(true));
         assert_eq!(copy_gesture(&command, false), None);
         assert!(!is_exit(&command));
@@ -861,7 +857,7 @@ mod tests {
         assert!(!is_exit(&uppercase));
         let exit = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert!(is_exit(&exit));
-        assert_eq!(copy_gesture(&exit, true), None);
+        assert_eq!(copy_gesture(&exit, true), Some(true));
         assert_eq!(copy_gesture(&exit, false), Some(true));
         let quit = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
         assert!(is_exit(&quit));

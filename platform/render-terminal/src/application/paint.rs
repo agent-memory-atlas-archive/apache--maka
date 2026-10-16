@@ -1893,12 +1893,20 @@ impl Presenter {
                     let thumb = (height * height / u64::from(viewport.content)).max(1);
                     let top =
                         u64::from(offset) * (height - thumb) / u64::from(viewport.end().max(1));
+                    let ascii = border.is_some_and(|border| {
+                        border.style == maka_ui_runtime::scene::terminal::BorderStyle::Ascii
+                    });
                     for y in 0..bar.visible().height {
                         let row = bar.visible().y + y;
                         let logical = (i64::from(row) - inner.y) as u64;
                         let active = (top..top + thumb).contains(&logical);
                         buffer[(bar.visible().x, row)]
-                            .set_char(if active { '█' } else { '│' })
+                            .set_char(match (ascii, active) {
+                                (true, true) => '#',
+                                (true, false) => '|',
+                                (false, true) => '┃',
+                                (false, false) => '│',
+                            })
                             .set_style(Style::default().fg(if active {
                                 Color::Gray
                             } else {

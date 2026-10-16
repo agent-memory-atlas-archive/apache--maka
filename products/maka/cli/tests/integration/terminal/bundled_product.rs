@@ -46,6 +46,58 @@ fn click(tui: &mut Pty, label: &str) {
     );
 }
 
+fn select_text(tui: &mut Pty, text: &str) {
+    let screen = tui.screen.snapshot().unwrap().screen;
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains(text))
+        .unwrap();
+    let start = line[..line.find(text).unwrap()].width() + 1;
+    let end = start + text.width();
+    tui.send(
+        format!(
+            "\x1b[<0;{start};{}M\x1b[<32;{end};{}M\x1b[<0;{end};{}m",
+            row + 1,
+            row + 1,
+            row + 1
+        )
+        .as_bytes(),
+    );
+}
+
+fn copy_selection(tui: &mut Pty, expected: &str) {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let expected = format!("\x1b]52;c;{}\x07", STANDARD.encode(expected));
+    let gestures: &[&[u8]] = if cfg!(target_os = "macos") {
+        &[b"\x03", b"\x1b[99;9u"]
+    } else {
+        &[b"\x03"]
+    };
+    for gesture in gestures {
+        let start = tui.output.len();
+        tui.send(gesture);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            tui.read();
+            if tui.output[start..]
+                .windows(expected.len())
+                .any(|bytes| bytes == expected.as_bytes())
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "selected prompt did not reach the terminal clipboard for {gesture:?}"
+            );
+            assert!(
+                tui.child.try_wait().unwrap().is_none(),
+                "copy exited the application"
+            );
+        }
+    }
+}
+
 #[test]
 #[ignore = "starts the bundled product and its real Host in a native PTY"]
 fn bundled_product_launch_initializes_and_reopens_original_roots_without_node() {
@@ -757,6 +809,16 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
                 .lines()
                 .position(|line| line.contains("Compression prompt")),
             Some(row)
+        );
+        // Mouse-select a visible line, then copy the entire native prompt.
+        let line = "## Critical Context";
+        tui.wait_for(line);
+        select_text(&mut tui, line);
+        copy_selection(&mut tui, line);
+        tui.send(b"\x01");
+        copy_selection(
+            &mut tui,
+            maka_agent_facts::context::DEFAULT_COMPACTION_PROMPT,
         );
         if let Some(path) = std::env::var_os("MAKA_SETTINGS_EVIDENCE") {
             std::fs::create_dir_all(&path).unwrap();

@@ -66,9 +66,9 @@ fn configured_input(
     let mut source=std::str::from_utf8(original.file(module).unwrap()).unwrap().replace(&old,&new)
       .replace("initialText:'Start',", &format!("maxBytes:{max_bytes},terminalPaste:'{paste}',")).replace("menu:state.brand.menu,", "").replace("softWrap:true,", "")
       .replace("appearance:state.brand.textarea", "appearance:Object.fromEntries(Object.entries(state.brand.textarea).filter(([key])=>key!=='scrollbar'))")
-      .replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
+      .replace("on:{changed:'changed',submitted:'submitted',navigated:'navigated'}", "on:{changed:'changed',submitted:'submitted'}")
       .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
-      .replace("else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}", "else if(event.kind==='component'){if(event.name==='submitted')next.submits=(next.submits??0)+1;else next.observation=event.event;}");
+      .replace("else if(event.kind==='component'){if(event.name==='navigated'){next.navigation=event.event;next.navigations=(state.navigations??0)+1;}else next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}", "else if(event.kind==='component'){if(event.name==='submitted')next.submits=(next.submits??0)+1;else next.observation=event.event;}");
     if original.manifest().id=="dynamic.app" {
       source=source.replace("delete editor.props.readingViewport;", "delete editor.props.readingViewport;delete editor.props.submitVeto;delete editor.props.submitReject;");
       source.push_str("const submitEvent=app.event;app.event=(state,event,...rest)=>{const submitting=event.kind==='component'&&event.name==='submitted';if(submitting&&state.options?.submitReject)throw Error('submission rejected');const out=submitEvent(state,event,...rest);return out;};");

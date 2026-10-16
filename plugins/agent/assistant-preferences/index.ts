@@ -240,6 +240,16 @@ export function assistantPreferences<N extends Node>(
             ),
         ),
         fields[2]!,
+        ...(presentation.target === 'tui'
+          ? [
+              ui.text(
+                'compaction-copy-hint',
+                t('assistant-compaction-copy-hint'),
+                12,
+                props.theme.muted,
+              ),
+            ]
+          : []),
         ui.button(
           'save-compaction',
           t('assistant-compaction-save'),

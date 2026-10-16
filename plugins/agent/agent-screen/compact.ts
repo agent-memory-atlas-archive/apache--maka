@@ -40,6 +40,11 @@ export const compactCopy = createCopy({
     '總結較早的上下文以騰出空間。此處修改僅用於本次壓縮，聊天歷史仍可查看。',
   ],
   prompt: ['Compression prompt', '压缩提示词', '壓縮提示詞'],
+  copyHint: [
+    'Ctrl+A select all · ⌘C / Ctrl+C copy',
+    'Ctrl+A 全选 · ⌘C / Ctrl+C 复制',
+    'Ctrl+A 全選 · ⌘C / Ctrl+C 複製',
+  ],
   confirm: ['Compact', '开始压缩', '開始壓縮'],
   cancel: ['Cancel', '取消', '取消'],
   check: ['Check operation', '检查操作结果', '檢查操作結果'],
@@ -253,6 +258,9 @@ export function compactView<N extends Node>(
         } satisfies TextareaProps,
         { changed: 'changed' },
       ),
+      ...(presentation.target === 'tui'
+        ? [ui.text('compact-copy-hint', text.copyHint, 12, theme.muted)]
+        : []),
       ...(edit?.failed ? [ui.text('compact-error', text.failed, 13, theme.warning)] : []),
       ...(state.uncertain?.reference.method === 'compact'
         ? [
@@ -277,6 +285,6 @@ export function compactView<N extends Node>(
         { row: true, gap: 1 },
       ),
     ],
-    { gap: 1, style: { width: fill } },
+    { gap: 1, terminal: { grow: 1, shrink: true }, style: { width: fill } },
   );
 }

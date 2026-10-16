@@ -30,20 +30,61 @@ pub(crate) struct Geometry {
     area: Placement,
     top: usize,
     left: usize,
+    scrollbar: Option<Placement>,
+}
+impl Geometry {
+    pub(crate) fn paint_scrollbar(&self, buffer: &mut Buffer, style: Style, ascii: bool) {
+        let Some(bar) = self.scrollbar else { return };
+        let height = bar.height as usize;
+        let thumb = (height * height / self.layout.rows.len()).max(1);
+        let maximum = self.layout.rows.len().saturating_sub(height).max(1);
+        let top = self.top * (height - thumb) / maximum;
+        for row in 0..height {
+            if let Some(point) = bar.point(0, row) {
+                let active = (top..top + thumb).contains(&row);
+                buffer[(point.x, point.y)]
+                    .set_char(match (ascii, active) {
+                        (true, true) => '#',
+                        (true, false) => '|',
+                        (false, true) => '┃',
+                        (false, false) => '│',
+                    })
+                    .set_style(style);
+            }
+        }
+    }
 }
 impl Editor {
-    pub(crate) fn mouse_presented(&mut self, mouse: MouseEvent, geometry: &Geometry) -> bool {
+    pub(crate) fn mouse_presented(&mut self, mut mouse: MouseEvent, geometry: &Geometry) -> bool {
         if geometry.revision != self.revision {
             return false;
         }
         self.layout = geometry.layout.clone();
         self.left = geometry.left;
         self.area = (!geometry.area.is_empty()).then_some(geometry.area);
-        if !matches!(
-            mouse.kind,
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        ) {
+        // Release/move events may arrive before the next flush. They must not
+        // roll a viewport change back to the previous presented frame.
+        if matches!(mouse.kind, MouseEventKind::Down(_))
+            || matches!(mouse.kind, MouseEventKind::Drag(_)) && self.dragging
+        {
             self.top = geometry.top;
+        }
+        if let Some(bar) = geometry.scrollbar
+            && bar.contains(Position::new(mouse.column, mouse.row))
+        {
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let maximum = self.layout.rows.len().saturating_sub(bar.height as usize);
+                    let row = (i64::from(mouse.row) - bar.y) as usize;
+                    self.top = row * maximum / (bar.height.saturating_sub(1) as usize).max(1);
+                    return true;
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    // The track belongs to this editor, including at scroll boundaries.
+                    mouse.column = mouse.column.saturating_sub(1);
+                }
+                _ => {}
+            }
         }
         self.mouse(mouse)
     }
@@ -56,7 +97,23 @@ impl Editor {
         selected: Style,
         caret: Style,
     ) -> Geometry {
-        let layout = self.make_layout(area.width);
+        let mut area = area;
+        let mut layout = self.make_layout(area.width);
+        let scrollbar = if !self.single_line
+            && area.width > 1
+            && area.height > 0
+            && layout.rows.len() > area.height as usize
+        {
+            let bar = Placement::new(
+                crate::application::CellRect::new(area.right() - 1, area.y, 1, area.height),
+                area.visible(),
+            );
+            area.bounds.width -= 1;
+            layout = self.make_layout(area.width);
+            Some(bar)
+        } else {
+            None
+        };
         let mut left = self.left;
         let (cursor_row, cursor_column) =
             layout.cursor(self.selection.cursor, self.selection.upstream);
@@ -176,6 +233,7 @@ impl Editor {
             area,
             top,
             left,
+            scrollbar,
         }
     }
     pub(crate) fn present_geometry(&mut self, geometry: Geometry) {
@@ -204,7 +262,90 @@ mod tests {
             Style::default(),
             Style::default(),
         );
+        geometry.paint_scrollbar(&mut buffer, Style::default(), false);
         (geometry, buffer)
+    }
+    #[test]
+    fn overflow_track_reserves_cells_and_scrolls_without_changing_selection() {
+        let mut editor = Editor::default();
+        editor.insert("abcdef\nghijkl\nmnopqr\nstuvwx");
+        editor.selection = Selection::default();
+        let area = Rect::new(0, 0, 6, 3);
+        let (geometry, mut buffer) = paint(&editor, area);
+        assert_eq!(geometry.area.width, 5);
+        assert_eq!(buffer[(3, 0)].symbol(), "d");
+        assert_eq!(buffer[(4, 0)].symbol(), " ");
+        assert_eq!(buffer[(0, 1)].symbol(), "e");
+        assert_eq!(buffer[(5, 0)].symbol(), "┃");
+        assert_eq!(buffer[(5, 2)].symbol(), "│");
+        editor.present_geometry(geometry.clone());
+        let selection = editor.selection;
+        assert!(editor.mouse_presented(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 5,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            &geometry
+        ));
+        for kind in [
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            editor.mouse_presented(
+                MouseEvent {
+                    kind,
+                    column: 5,
+                    row: 2,
+                    modifiers: KeyModifiers::NONE,
+                },
+                &geometry,
+            );
+        }
+        assert_eq!(editor.selection, selection);
+        let (geometry, bottom) = paint(&editor, area);
+        assert_eq!(bottom[(0, 2)].symbol(), "w");
+        assert_eq!(bottom[(5, 2)].symbol(), "┃");
+        editor.present_geometry(geometry.clone());
+        assert!(editor.mouse_presented(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 5,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            &geometry
+        ));
+        assert_eq!(editor.selection, selection);
+        geometry.paint_scrollbar(&mut buffer, Style::default(), true);
+        assert_eq!(buffer[(5, 0)].symbol(), "|");
+        assert_eq!(buffer[(5, 2)].symbol(), "#");
+        let wheel = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 5,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(editor.mouse_presented(wheel, &geometry));
+        assert!(editor.mouse_presented(wheel, &geometry));
+        let (_, top) = paint(&editor, area);
+        assert_eq!(top[(0, 0)].symbol(), "a");
+        assert_eq!(top[(5, 0)].symbol(), "┃");
+        assert_eq!(editor.selection, selection);
+    }
+    #[test]
+    fn fitting_and_single_column_editors_keep_their_full_content_width() {
+        for (text, area) in [
+            ("abc", Rect::new(0, 0, 3, 2)),
+            ("abc", Rect::new(0, 0, 1, 2)),
+        ] {
+            let mut editor = Editor::default();
+            editor.insert(text);
+            let (geometry, _) = paint(&editor, area);
+            assert_eq!(geometry.area.width, area.width);
+            assert!(geometry.scrollbar.is_none());
+        }
     }
     #[test]
     fn wheel_viewport_survives_repaint_and_unrelated_selection_observation() {

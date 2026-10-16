@@ -385,11 +385,14 @@ impl Browser {
             let top = offset * (visible - thumb) / maximum;
             for line in 0..visible {
                 buffer[(bar.x, bar.y + line as u16)]
-                    .set_char(if (top..top + thumb).contains(&line) {
-                        '█'
-                    } else {
-                        '│'
-                    })
+                    .set_char(
+                        match (props.appearance.ascii, (top..top + thumb).contains(&line)) {
+                            (true, true) => '#',
+                            (true, false) => '|',
+                            (false, true) => '┃',
+                            (false, false) => '│',
+                        },
+                    )
                     .set_style(style);
             }
         }

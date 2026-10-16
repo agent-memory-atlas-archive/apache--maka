@@ -62,6 +62,11 @@ export type Copy = ReturnType<typeof copy>;
 const terminalMessages = {
   'assistant-compaction': ['Compression prompt', '压缩提示词', '壓縮提示詞'],
   'assistant-compaction-save': ['Save compression prompt', '保存压缩提示词', '儲存壓縮提示詞'],
+  'assistant-compaction-copy-hint': [
+    'Ctrl+A select all · ⌘C / Ctrl+C copy',
+    'Ctrl+A 全选 · ⌘C / Ctrl+C 复制',
+    'Ctrl+A 全選 · ⌘C / Ctrl+C 複製',
+  ],
   'assistant-compaction-reset': ['Restore default prompt', '恢复默认提示词', '還原預設提示詞'],
   'assistant-compaction-help': [
     'Used for automatic and manual compression. You can override it for one compression in /compact.',

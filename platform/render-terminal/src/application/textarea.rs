@@ -522,6 +522,11 @@ impl Widget for Recipe {
             Style::default().bg(selection).fg(selection_text),
             Style::default().add_modifier(Modifier::REVERSED),
         );
+        geometry.paint_scrollbar(
+            buffer,
+            Style::default().fg(muted).bg(background),
+            appearance.ascii,
+        );
         if owner.edit.editor.text().is_empty() {
             super::paint::text(
                 &self.props.placeholder,

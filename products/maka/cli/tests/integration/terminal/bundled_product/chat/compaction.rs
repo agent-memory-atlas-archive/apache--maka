@@ -19,7 +19,7 @@
 
 use super::*;
 
-const GLOBAL_PROMPT: &str = "Preserve fixture decisions.";
+const GLOBAL_PROMPT: &str = maka_agent_facts::context::DEFAULT_COMPACTION_PROMPT;
 const ONCE_PROMPT: &str = "For this compression only, preserve the Unicode decision: 中文.";
 
 fn context_foreground(output: &[u8]) -> Option<[u8; 3]> {
@@ -101,6 +101,10 @@ fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() 
     complete(&mut socket);
     tui.wait_for("Deployment is still pending.");
     tui.wait_for("Workspace conversation");
+    select_text(&mut tui, "Deployment is still pending.");
+    copy_selection(&mut tui, "Deployment is still pending.");
+    // A retained reading selection intentionally pauses automatic tail following.
+    click(&mut tui, "Deployment is still pending.");
     click(&mut tui, "Message…");
     tui.send(b"/");
     tui.wait_for("/compact");
@@ -115,7 +119,17 @@ fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() 
     tui.wait_until(|s| s.lines().filter(|line| line.contains("/compact")).count() >= 2);
     tui.send(b"\r");
     tui.wait_for("Compact context");
-    tui.wait_for(GLOBAL_PROMPT);
+    tui.wait_for("## Critical Context");
+    for (columns, rows) in [(80, 24), (64, 20), (120, 40)] {
+        tui.resize(columns, rows);
+        tui.wait_until(|screen| {
+            screen.contains("Ctrl+A select all")
+                && screen
+                    .lines()
+                    .any(|line| line.contains("Compact") && line.contains("Cancel"))
+        });
+        evidence(&tui, &format!("compact-{columns}x{rows}"));
+    }
     evidence(&tui, "compact-confirmation");
     let idle_context_color = context_foreground(&tui.output).unwrap();
     eprintln!("compact: native confirmation displays global prompt");
@@ -123,27 +137,9 @@ fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() 
         received.try_recv().is_err(),
         "opening confirmation must not call the model"
     );
-    let prompt_row = tui
-        .screen
-        .snapshot()
-        .unwrap()
-        .screen
-        .lines()
-        .position(|line| line.contains(GLOBAL_PROMPT))
-        .unwrap();
-    click(&mut tui, GLOBAL_PROMPT);
-    // Native textareas paint their own caret. Clear the known short fixture
-    // prompt and wait for its content row to be completely blank before paste.
-    tui.read();
-    tui.send(b"\x1b[F");
-    tui.send(&[0x7f; 64]);
-    tui.wait_until(|screen| {
-        screen
-            .lines()
-            .nth(prompt_row)
-            .and_then(|line| line.split('│').nth(2))
-            .is_some_and(|content| content.trim().is_empty())
-    });
+    click(&mut tui, "## Critical Context");
+    tui.send(b"\x01");
+    copy_selection(&mut tui, GLOBAL_PROMPT);
     paste(&mut tui, ONCE_PROMPT);
     tui.wait_for("For this compression only");
     evidence(&tui, "compact-edited");
