@@ -78,23 +78,27 @@ pub(super) fn build<'a>(
     } else {
         HashSet::new()
     };
-    let openings: HashMap<_, _> = events
+    let mut invocations: HashMap<_, _> = events
         .clone()
         .filter_map(EventRef::canonical)
         .filter_map(|stored| match &stored.event.fact {
-            Fact::InvocationOpened { input, .. } => {
-                Some((&stored.event.invocation.invocation_id, input))
-            }
+            Fact::InvocationOpened { input, .. } => Some((
+                &stored.event.invocation.invocation_id,
+                InvocationSpan {
+                    input,
+                    requests: HashMap::new(),
+                },
+            )),
             _ => None,
         })
         .collect();
-    let mut requests = HashMap::new();
     for event in events.clone() {
         let stored = match event {
             EventRef::Canonical(stored) => stored,
             EventRef::ModelItems(items) => {
-                let request: &mut RequestSpan<'_> = requests
-                    .get_mut(&(&items.invocation.invocation_id, &items.step_id))
+                let request = invocations
+                    .get_mut(&items.invocation.invocation_id)
+                    .and_then(|invocation| invocation.requests.get_mut(&items.step_id))
                     .ok_or_else(|| {
                         RunError::ReconciliationRequired("accepted items lack request".into())
                     })?;
@@ -123,15 +127,15 @@ pub(super) fn build<'a>(
             ..
         } = &stored.event.fact
         {
-            let opening = openings
-                .get(&stored.event.invocation.invocation_id)
+            let invocation = invocations
+                .get_mut(&stored.event.invocation.invocation_id)
                 .ok_or_else(|| {
                     RunError::ReconciliationRequired("model request lacks canonical opening".into())
                 })?;
-            let resolved = resolve_model_purpose(opening, *purpose)
+            let resolved = resolve_model_purpose(invocation.input, *purpose)
                 .map_err(|reason| RunError::ReconciliationRequired(reason.into()))?;
-            requests.insert(
-                (&stored.event.invocation.invocation_id, step_id),
+            invocation.requests.insert(
+                step_id,
                 RequestSpan {
                     purpose: resolved,
                     source: *source_high_water,
@@ -148,8 +152,9 @@ pub(super) fn build<'a>(
         }
         match &stored.event.fact {
             Fact::ModelObserved { step_id, event } => {
-                if let Some(request) =
-                    requests.get_mut(&(&stored.event.invocation.invocation_id, step_id))
+                if let Some(request) = invocations
+                    .get_mut(&stored.event.invocation.invocation_id)
+                    .and_then(|invocation| invocation.requests.get_mut(step_id))
                     && let Some(builder) = request.builder.as_mut()
                 {
                     builder.push(event.clone())?;
@@ -161,8 +166,9 @@ pub(super) fn build<'a>(
                 }
             }
             Fact::ModelCompleted { step_id, .. } | Fact::ModelInterrupted { step_id, .. } => {
-                if let Some(request) =
-                    requests.get_mut(&(&stored.event.invocation.invocation_id, step_id))
+                if let Some(request) = invocations
+                    .get_mut(&stored.event.invocation.invocation_id)
+                    .and_then(|invocation| invocation.requests.get_mut(step_id))
                 {
                     request.end = stored.sequence;
                     if let Some(builder) = request.builder.take()
@@ -177,31 +183,19 @@ pub(super) fn build<'a>(
                 }
             }
             Fact::InvocationEnded { .. } => {
-                for ((invocation, _), request) in &mut requests {
-                    if *invocation == &stored.event.invocation.invocation_id
-                        && request.end == u64::MAX
-                    {
-                        request.end = stored.sequence;
+                if let Some(invocation) =
+                    invocations.get_mut(&stored.event.invocation.invocation_id)
+                {
+                    for request in invocation.requests.values_mut() {
+                        if request.end == u64::MAX {
+                            request.end = stored.sequence;
+                        }
                     }
                 }
             }
             _ => {}
         }
     }
-    let compact_invocations: HashSet<_> = events
-        .clone()
-        .filter_map(EventRef::canonical)
-        .filter_map(|stored| {
-            matches!(
-                &stored.event.fact,
-                Fact::InvocationOpened {
-                    input: InvocationInput::ContextCompact { .. },
-                    ..
-                }
-            )
-            .then_some(&stored.event.invocation.invocation_id)
-        })
-        .collect();
     for event in events {
         let stored = match event {
             EventRef::Canonical(stored) => stored,
@@ -244,7 +238,10 @@ pub(super) fn build<'a>(
                 continue;
             }
         };
-        if compact_invocations.contains(&stored.event.invocation.invocation_id) {
+        let invocation = invocations.get(&stored.event.invocation.invocation_id);
+        if invocation.is_some_and(|invocation| {
+            matches!(invocation.input, InvocationInput::ContextCompact { .. })
+        }) {
             continue;
         }
         match &stored.event.fact {
@@ -260,11 +257,11 @@ pub(super) fn build<'a>(
                 if custom_operations.contains(*parent) {
                     mark_custom(&mut message);
                 }
-                let release = requests
-                    .iter()
-                    .filter_map(|((invocation, _), request)| {
-                        (*invocation == &stored.event.invocation.invocation_id
-                            && request.purpose == ModelPurpose::Main
+                let release = invocation
+                    .into_iter()
+                    .flat_map(|invocation| invocation.requests.values())
+                    .filter_map(|request| {
+                        (request.purpose == ModelPurpose::Main
                             && request.source < stored.sequence
                             && stored.sequence <= request.end)
                             .then_some(request.end)
@@ -342,7 +339,7 @@ pub(super) fn build<'a>(
                 item_acceptance: true,
                 ..
             } => {
-                let request = requests.get(&(&stored.event.invocation.invocation_id, step_id));
+                let request = invocation.and_then(|invocation| invocation.requests.get(step_id));
                 if matches!(&stored.event.fact, Fact::ModelCompleted { .. })
                     && request.is_some_and(|request| request.item_acceptance)
                 {
@@ -351,10 +348,7 @@ pub(super) fn build<'a>(
                     }
                     continue;
                 }
-                match requests
-                    .get(&(&stored.event.invocation.invocation_id, step_id))
-                    .map(|request| request.purpose)
-                {
+                match request.map(|request| request.purpose) {
                     Some(ModelPurpose::Summary) => continue,
                     Some(ModelPurpose::Main) => {}
                     None => {
@@ -607,6 +601,11 @@ fn mark_custom(message: &mut Message) {
             options["openai"] = serde_json::json!({"toolKind":"custom"});
         }
     }
+}
+
+struct InvocationSpan<'a> {
+    input: &'a InvocationInput,
+    requests: HashMap<&'a String, RequestSpan<'a>>,
 }
 
 struct RequestSpan<'a> {
