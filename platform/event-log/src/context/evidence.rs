@@ -20,9 +20,10 @@
 use super::selection::Selection;
 use super::{SourceEvidence, invalid};
 use crate::{StoreError, sequence_number};
-use futures_util::TryStreamExt;
-use sha2::{Digest, Sha256};
 use sqlx::SqliteConnection;
+
+mod scan;
+pub(crate) use scan::register;
 
 /// The same scoped digest as complete prefix(), without retaining source rows.
 /// Even a single old giant observation is hashed in bounded SQL BLOB slices.
@@ -58,96 +59,22 @@ pub(super) async fn digests(
     selection: &Selection,
     throughs: &[u64],
 ) -> Result<Vec<String>, StoreError> {
-    let Some(through) = throughs.last().copied() else {
+    if throughs.is_empty() {
         return Ok(Vec::new());
-    };
+    }
     let session = selection
         .session
         .as_deref()
         .ok_or_else(|| invalid("context requires a Session"))?;
-    let encoded = serde_json::to_vec(&selection.scope)?;
-    let mut digest = Sha256::new();
-    digest.update(b"maka.log-prefix.v1\0");
-    digest.update((encoded.len() as u64).to_be_bytes());
-    digest.update(encoded);
-    let mut boundaries = throughs.iter().copied().peekable();
-    let mut result = Vec::new();
-    let mut finish = |digest: &Sha256, sequence: u64| -> Result<(), StoreError> {
-        if let Some(&boundary) = boundaries.peek() {
-            if sequence > boundary {
-                return Err(invalid("coverage is not a selected source high-water"));
-            }
-            if sequence == boundary {
-                let mut prefix = digest.clone();
-                // The high-water suffix lets overlapping prefixes share the
-                // stream while still binding each digest to its exact cut.
-                prefix.update(boundary.to_be_bytes());
-                result.push(format!("sha256:{:x}", prefix.finalize()));
-                boundaries.next();
-            }
-        }
-        Ok(())
-    };
-    finish(&digest, 0)?;
-    let filter = Selection::predicate("e", "?4");
-    let columns = "e.sequence, length(CAST(e.event_json AS BLOB)),
-        CASE WHEN length(CAST(e.event_json AS BLOB)) <= 65536 THEN CAST(e.event_json AS BLOB) END";
-    let mut after = 0i64;
-    loop {
-        let mut oversized = None;
-        {
-            let mut rows =
-                sqlx::query_as::<_, (i64, i64, Option<Vec<u8>>)>(sqlx::AssertSqlSafe(format!(
-                    "SELECT {columns} FROM runtime_events e
-             WHERE e.sequence > ?1 AND e.sequence <= ?2
-             AND json_extract(e.event_json,'$.invocation.session_id') = ?3 AND {filter}
-             UNION ALL SELECT {columns} FROM session_history_members h
-             JOIN runtime_events e ON e.sequence = h.sequence
-             WHERE h.session_id = ?3 AND h.sequence > ?1 AND h.sequence <= ?2 AND {filter}
-             ORDER BY sequence"
-                )))
-                .bind(after)
-                .bind(through as i64)
-                .bind(session)
-                .bind(&selection.lineage)
-                .fetch(&mut *connection);
-            while let Some((sequence, bytes, payload)) = rows.try_next().await? {
-                if sequence <= after {
-                    return Err(invalid("source selection repeats or reorders a record"));
-                }
-                let bytes = sequence_number(bytes)?;
-                digest.update(sequence_number(sequence)?.to_be_bytes());
-                digest.update(bytes.to_be_bytes());
-                after = sequence;
-                if let Some(payload) = payload {
-                    digest.update(payload);
-                    finish(&digest, sequence_number(sequence)?)?;
-                } else {
-                    oversized = Some((sequence, bytes));
-                    break;
-                }
-            }
-        }
-        let Some((sequence, bytes)) = oversized else {
-            break;
-        };
-        let mut offset = 0u64;
-        while offset < bytes {
-            let slice: Vec<u8> = sqlx::query_scalar(
-                "SELECT substr(CAST(event_json AS BLOB), ?, 65536) FROM runtime_events WHERE sequence = ?",
-            ).bind((offset + 1) as i64).bind(sequence).fetch_one(&mut *connection).await?;
-            if slice.is_empty() {
-                return Err(invalid("source bytes disappeared"));
-            }
-            offset += slice.len() as u64;
-            digest.update(slice);
-        }
-        finish(&digest, sequence_number(sequence)?)?;
-    }
-    if boundaries.peek().is_some() {
-        return Err(invalid("coverage is not a selected source high-water"));
-    }
-    Ok(result)
+    let result: String = sqlx::query_scalar("SELECT context_source_digests(?, ?, ?, ?)")
+        .bind(session)
+        .bind(&selection.lineage)
+        .bind(serde_json::to_vec(&selection.scope)?)
+        .bind(serde_json::to_string(throughs)?)
+        .fetch_one(connection)
+        .await?;
+    serde_json::from_str::<Result<Vec<String>, String>>(&result)?
+        .map_err(StoreError::InvalidTransition)
 }
 
 pub(super) async fn high_water(

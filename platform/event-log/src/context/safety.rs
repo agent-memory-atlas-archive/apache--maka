@@ -96,6 +96,8 @@ async fn require_safe_through_policy(
         crate::model_items::accepted_calls!(), "
          SELECT EXISTS(SELECT 1 FROM runtime_events e
          WHERE json_extract(e.event_json, '$.invocation.session_id') = ?1
+         AND (e.kind = 'invocation_opened' OR e.kind = 'tool_dispatched'
+           OR e.kind = 'model_requested' OR e.kind = 'model_completed')
          AND (?2 IS NULL OR e.invocation_id != ?2) AND (
            (e.kind = 'invocation_opened' AND NOT EXISTS(SELECT 1 FROM runtime_events t
               WHERE t.invocation_id = e.invocation_id AND t.kind = 'invocation_ended'))

@@ -37,7 +37,7 @@ pub(crate) async fn read(
         return Ok(None);
     }
     let mut builder = StepBuilder::for_step(step).map_err(invalid)?;
-    let mut rows = sqlx::query_scalar::<_, String>("SELECT event_json FROM runtime_events WHERE invocation_id=? AND kind='model_observed' AND json_extract(event_json,'$.fact.step_id')=? ORDER BY sequence")
+    let mut rows = sqlx::query_scalar::<_, String>("SELECT event_json FROM runtime_events WHERE invocation_id=? AND kind='model_observed' AND CAST(json_extract(event_json,'$.fact.step_id') AS TEXT)=? ORDER BY sequence")
         .bind(invocation).bind(step).fetch(connection);
     while let Some(json) = rows.try_next().await? {
         let event: RuntimeEvent = serde_json::from_str(&json)?;
@@ -91,7 +91,7 @@ pub(crate) async fn project(
     let mut builder = StepBuilder::for_step(&step_id).map_err(invalid)?;
     let mut items = Vec::new();
     let mut scratch = 0usize;
-    let mut rows = sqlx::query_as::<_, (i64, String)>("SELECT sequence,event_json FROM runtime_events WHERE invocation_id=?1 AND kind='model_observed' AND json_extract(event_json,'$.fact.step_id')=?2 AND sequence<?3 ORDER BY sequence")
+    let mut rows = sqlx::query_as::<_, (i64, String)>("SELECT sequence,event_json FROM runtime_events WHERE invocation_id=?1 AND kind='model_observed' AND CAST(json_extract(event_json,'$.fact.step_id') AS TEXT)=?2 AND sequence<?3 ORDER BY sequence")
         .bind(&invocation.invocation_id).bind(&step_id).bind(sequence as i64).fetch(connection);
     while let Some((position, json)) = rows.try_next().await? {
         let event: RuntimeEvent = serde_json::from_str(&json)?;

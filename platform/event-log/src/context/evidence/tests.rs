@@ -91,6 +91,13 @@ async fn streamed_boundaries_match_complete_prefixes_and_reject_unselected_cuts(
     log.connection
         .run(move |connection| {
             Box::pin(async move {
+                // A UDF's temporary rusqlite view must not remove hooks owned
+                // by SQLx when it releases the borrowed connection.
+                let updates = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let observed = updates.clone();
+                connection.lock_handle().await?.set_update_hook(move |_| {
+                    observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                });
                 let mut tx = connection.begin().await?;
                 let selection = Selection::session("session");
                 let throughs: Vec<_> = expected.iter().map(|prefix| prefix.high_water).collect();
@@ -108,9 +115,10 @@ async fn streamed_boundaries_match_complete_prefixes_and_reject_unselected_cuts(
                     [actual.last().unwrap().clone()]
                 );
                 assert!(
-                    digests(&mut tx, &selection, &[foreign, last])
-                        .await
-                        .is_err(),
+                    matches!(
+                        digests(&mut tx, &selection, &[foreign, last]).await,
+                        Err(StoreError::InvalidTransition(_))
+                    ),
                     "a valid last cut must not hide an unselected intermediate cut"
                 );
                 assert!(digests(&mut tx, &selection, &[last + 1]).await.is_err());
@@ -118,6 +126,7 @@ async fn streamed_boundaries_match_complete_prefixes_and_reject_unselected_cuts(
                     .bind(large_event)
                     .execute(&mut *tx)
                     .await?;
+                assert!(updates.load(std::sync::atomic::Ordering::Relaxed) > 0);
                 let changed = digests(&mut tx, &selection, &throughs).await?;
                 assert_eq!(
                     changed[0], actual[0],
@@ -179,7 +188,7 @@ async fn duplicate_copied_membership_at_a_cut_cannot_reuse_its_original_digest()
             configuration: None,
             input: InvocationInput::Message {
                 source_messages: Vec::new(),
-                content: "native copied-session message".into(),
+                content: "native copied-session message".repeat(3000).into(),
                 request_fingerprint: None,
             },
         },
@@ -192,7 +201,7 @@ async fn duplicate_copied_membership_at_a_cut_cannot_reuse_its_original_digest()
             .unwrap();
     }
     let prefix = log
-        .scoped_prefix(Selection::session("copy").scope, 10, 8192)
+        .scoped_prefix(Selection::session("copy").scope, 10, 256 * 1024)
         .await
         .unwrap();
     log.connection
@@ -206,19 +215,22 @@ async fn duplicate_copied_membership_at_a_cut_cannot_reuse_its_original_digest()
                         .digest,
                     prefix.digest
                 );
-                sqlx::query(
-                    "INSERT INTO session_history_members(session_id,sequence) VALUES('copy',?)",
-                )
-                .bind(prefix.high_water as i64)
-                .execute(&mut *tx)
-                .await?;
-                let error = selected(&mut tx, &selection, prefix.high_water)
-                    .await
-                    .unwrap_err();
-                assert!(
-                    error.to_string().contains("source selection repeats"),
-                    "{error}"
-                );
+                // Both the small terminal at the requested cut and the
+                // oversized opening before it must reject repeated membership.
+                for duplicate in [prefix.high_water, prefix.events[0].sequence] {
+                    sqlx::query(
+                        "INSERT INTO session_history_members(session_id,sequence) VALUES('copy',?)",
+                    )
+                    .bind(duplicate as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                    let error = selected(&mut tx, &selection, prefix.high_water)
+                        .await
+                        .unwrap_err();
+                    assert!(error.to_string().contains("source selection repeats"), "{error}");
+                    sqlx::query("DELETE FROM session_history_members WHERE session_id='copy' AND sequence=?")
+                        .bind(duplicate as i64).execute(&mut *tx).await?;
+                }
                 tx.rollback().await?;
                 Ok(())
             })

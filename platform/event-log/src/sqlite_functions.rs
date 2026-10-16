@@ -34,9 +34,10 @@ pub(crate) async fn register(connection: &mut SqliteConnection) -> Result<(), St
     let borrowed = unsafe { rusqlite::Connection::from_handle(locked.as_raw_handle().as_ptr()) }?;
     let registered = crate::sessions::register_functions(&borrowed)
         .and_then(|()| crate::message_identity::register(&borrowed))
-        .and_then(|()| crate::transcript::navigation::register(&borrowed));
-    // With rusqlite's optional hooks features, wrapper Drop also removes hooks.
-    // Register once at startup before any hooks exist, never during operations.
+        .and_then(|()| crate::transcript::navigation::register(&borrowed))
+        .and_then(|()| crate::context::evidence::register(&borrowed));
+    // rusqlite 0.39 removes hooks only for an owned connection; this borrowed
+    // wrapper leaves SQLx's connection and hooks intact.
     drop(borrowed);
     registered
 }
