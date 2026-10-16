@@ -192,12 +192,16 @@ impl EntryDeclaration {
     }
 
     /// Check the entire activation batch before publishing any actual exports.
-    pub fn check_exports(&self, actual: &BTreeMap<String, Contract>) -> Result<(), Error> {
-        for (name, contract) in actual {
+    pub fn check_exports<T>(
+        &self,
+        actual: &BTreeMap<String, T>,
+        contract: impl Fn(&T) -> &Contract,
+    ) -> Result<(), Error> {
+        for (name, value) in actual {
             if !self
                 .exports
                 .get(name)
-                .is_some_and(|declared| declared.contract.accepts(contract))
+                .is_some_and(|declared| declared.contract.accepts(contract(value)))
             {
                 return Err(Error::Contract(format!(
                     "undeclared or changed export: {name}"

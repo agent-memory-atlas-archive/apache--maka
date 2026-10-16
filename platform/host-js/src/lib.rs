@@ -78,12 +78,7 @@ impl backend::Module for Module {
             )
             .map_err(message)?;
             entry
-                .check_exports(
-                    &actual
-                        .iter()
-                        .map(|(name, actual)| (name.clone(), actual.contract.clone()))
-                        .collect(),
-                )
+                .check_exports(&actual, |actual| &actual.contract)
                 .map_err(message)?;
             let mut exports = BTreeMap::new();
             for (name, actual) in actual {

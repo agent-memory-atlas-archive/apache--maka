@@ -375,12 +375,7 @@ impl<T> Runtime<T> {
                 return Err(Error::Lifecycle("activation is not loading"));
             }
             if let Some(entry) = &self.instance(activation)?.entry {
-                entry.check_exports(
-                    &batch
-                        .iter()
-                        .map(|(name, value)| (name.clone(), value.contract.clone()))
-                        .collect(),
-                )?;
+                entry.check_exports(&batch, |value| &value.contract)?;
                 for name in entry.imports.keys() {
                     self.bind(activation, name)?;
                 }
