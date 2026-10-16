@@ -220,27 +220,28 @@ test('browser IPC isolates owned renderer documents and their native parents', a
     assert.deepEqual(mainController.navigations, ['https://main.example/']);
     assert.deepEqual(workHubController.navigations, ['https://workhub.example/']);
 
-    // An ordinary session remains foreground-only even in an auxiliary renderer.
-    // Hiding also revokes a read already waiting on the page.
+    // An ordinary selected Session can operate with its browser hidden.
+    // Hiding does not revoke a read already waiting on the page.
     setBridgeFactoryForTest(() => ({
       connect: async () => ({ getCurrentUrl: async () => 'https://workhub.example/' }) as never,
       close: async () => undefined,
       send: async () => undefined,
       waitForEvent: async () => undefined,
     }));
+    let finishReadOrdinary!: () => void;
     let reading!: () => void;
     const started = new Promise<void>((resolve) => { reading = resolve; });
     const pendingRead = withBrowserPage(workHubKey, 'snapshot', async () => {
       reading();
-      return new Promise<never>(() => {});
+      return new Promise<void>((resolve) => { finishReadOrdinary = resolve; });
     });
-    const revoked = assert.rejects(pendingRead, BrowserActionRevokedError);
     await started;
     workHubVisible = false;
     browserIpc.refreshVisibility();
-    await revoked;
+    finishReadOrdinary();
+    await pendingRead;
     for (const kind of ['observe', 'navigate', 'mutate'] as const) {
-      assert.equal(await browserViewHost().canDrive(workHubKey, kind), false);
+      assert.equal(await browserViewHost().canDrive(workHubKey, kind), true);
     }
     assert.equal(await browserViewHost().canDrive(mainKey, 'observe'), true);
     workHubVisible = true;
@@ -248,14 +249,14 @@ test('browser IPC isolates owned renderer documents and their native parents', a
     // Reparenting follows the current native window, not the initial dock.
     windows.set(workHub, floatingWindow);
     floatingWindow.visible = false;
-    assert.equal(await browserViewHost().canDrive(workHubKey, 'navigate'), false);
+    assert.equal(await browserViewHost().canDrive(workHubKey, 'navigate'), true);
     floatingWindow.visible = true;
     floatingWindow.minimized = true;
-    assert.equal(await browserViewHost().canDrive(workHubKey, 'observe'), false);
+    assert.equal(await browserViewHost().canDrive(workHubKey, 'observe'), true);
     floatingWindow.minimized = false;
     assert.equal(await browserViewHost().canDrive(workHubKey, 'navigate'), true);
 
-    // The reserved coordination identity alone gets background access, still
+    // Background access still requires a selected Session and is
     // fenced by Host epoch, live selection, and renderer lifetime.
     const coordinationKey = desktopSessionResourceKey({ ...scope, sessionId: WORKHUB_COORDINATION_SESSION_ID });
     workHubVisible = false;
@@ -358,8 +359,16 @@ test('browser IPC isolates owned renderer documents and their native parents', a
 
     // Closing Main destroys its WebContents before selection cleanup runs.
     // Electron rejects fromWebContents on that destroyed native object.
-    emit('browser:active-session', main, scope, 'main-session', 'main-document', 5);
-    emit('browser:setViewport', main, scope, { sessionId: 'main-session', rect: mainRect }, 'main-document', 5);
+    emit('browser:active-session', main, scope, 'main-session', 'main-document', 6);
+    emit('browser:setViewport', main, scope, { sessionId: 'main-session', rect: mainRect }, 'main-document', 6);
+    emit('browser:setViewport', main, scope, { sessionId: 'main-session', rect: null }, 'main-document', 6);
+    assert.equal(mainController.viewports.at(-1), null);
+    assert.equal(await browserViewHost().canDrive(mainKey, 'mutate'), true);
+    const hiddenLease = browserViewHost().beginAction(mainKey);
+    assert.ok(hiddenLease, 'collapsed ordinary browser gets a background rendering lease');
+    await hiddenLease.ready;
+    await hiddenLease.release();
+    assert.equal(mainController.viewports.at(-1), null, 'automation does not open the panel');
     assert.doesNotThrow(() => main.destroy());
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(mainController.disposed, true, 'closing Main still releases its owned browser page');
