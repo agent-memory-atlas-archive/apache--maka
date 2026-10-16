@@ -46,6 +46,9 @@ pub(super) const BODY: &str = "COALESCE(CASE json_extract(payload, '$.type')
                         SELECT '▱ ' || json_extract(value, '$.path')
                             FROM json_each(payload, '$.directoryReferences') WHERE json_type(value, '$.path') = 'text'))
                     WHEN 'assistant' THEN json_extract(payload, '$.text')
+                    WHEN 'model_interruption' THEN json_extract(payload, '$.message')
+                    WHEN 'turn_state' THEN CASE WHEN json_extract(payload, '$.status') = 'failed' THEN
+                        COALESCE(NULLIF(json_extract(payload, '$.failureMessage'), ''), NULLIF(json_extract(payload, '$.errorClass'), ''), 'failed') END
                     WHEN 'tool_call' THEN COALESCE(json_extract(payload, '$.intent'), json_extract(payload, '$.args.intent'), '')
                     WHEN 'tool_result' THEN CASE json_extract(payload, '$.content.kind')
                         WHEN 'text' THEN json_extract(payload, '$.content.text')
@@ -226,6 +229,7 @@ impl EventLog {
                         "user" => Role::User, "assistant" => Role::Assistant,
                         "tool_call" => Role::ToolCall, "tool_result" => Role::ToolResult,
                         "context_compacted" => Role::Compaction,
+                        "turn_state" | "model_interruption" => Role::Failure,
                         _ => return Err(invalid("invalid history text role")),
                     };
                     let attachments = if start == 0 && role == Role::User {

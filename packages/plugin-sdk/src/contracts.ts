@@ -11699,7 +11699,7 @@ export const contracts = {
                 description:
                   'Canonical message author/kind; the field identifies body versus thinking.\nTool body JSON contributes string values, never its keys.',
                 type: 'string',
-                enum: ['compaction', 'user', 'assistant', 'tool_call', 'tool_result'],
+                enum: ['compaction', 'failure', 'user', 'assistant', 'tool_call', 'tool_result'],
               },
               HistoryTool: {
                 description:
@@ -22818,7 +22818,7 @@ export const contracts = {
               },
               HistorySourceRole: {
                 description:
-                  'Presentation role of the exact row, including diagnostics omitted from the\nordinary conversation window. This carries no execution authority.',
+                  'Presentation role of the exact row. This carries no execution authority.',
                 type: 'string',
                 enum: ['user', 'assistant', 'tool_call', 'tool_result', 'failure'],
               },

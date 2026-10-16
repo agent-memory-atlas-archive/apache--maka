@@ -4606,7 +4606,7 @@ export type HistoryTurnOutcome = 'completed' | 'failed' | 'aborted';
  * Canonical message author/kind; the field identifies body versus thinking.
  * Tool body JSON contributes string values, never its keys.
  */
-export type Role = 'compaction' | 'user' | 'assistant' | 'tool_call' | 'tool_result';
+export type Role = 'compaction' | 'failure' | 'user' | 'assistant' | 'tool_call' | 'tool_result';
 /**
  * Recorded Host settlement for presentation; returned is not business success.
  * Foreign/provider results do not establish this Host evidence.
@@ -4847,8 +4847,7 @@ export type AgentHistorySourcePage =
       kind: 'ready';
     };
 /**
- * Presentation role of the exact row, including diagnostics omitted from the
- * ordinary conversation window. This carries no execution authority.
+ * Presentation role of the exact row. This carries no execution authority.
  */
 export type HistorySourceRole = 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'failure';
 export type SourceFormat = 'text' | 'json' | 'image_descriptor';

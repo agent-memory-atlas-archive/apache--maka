@@ -1821,3 +1821,156 @@ async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_read
     assert_eq!(chunks[1].text, body);
     reopened.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn failed_turn_and_retry_diagnostics_are_visible_with_exact_sources_and_fences() {
+    use maka_agent_ports::session::history::{
+        HistoryView, SourceField, SourcePosition, SourceRole,
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("failures.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    log.create_session("failed", "create", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    log.append(&event("failed", opening())).await.unwrap();
+    log.append(&event("failed", request("first")))
+        .await
+        .unwrap();
+    let retry_fence = log
+        .append(&event(
+            "failed",
+            Fact::ModelInterrupted {
+                step_id: "step-first".into(),
+                status: ModelInterruption::RetryableFailure,
+                diagnostic: Some("Connection lost 中😀; retry permitted".into()),
+            },
+        ))
+        .await
+        .unwrap();
+    log.append(&event("failed", request("second")))
+        .await
+        .unwrap();
+    log.append(&event(
+        "failed",
+        Fact::ModelInterrupted {
+            step_id: "step-second".into(),
+            status: ModelInterruption::Failed,
+            diagnostic: Some("Provider rejected request".into()),
+        },
+    ))
+    .await
+    .unwrap();
+    // A terminal failure with no message still exposes its recorded class.
+    let through = end(
+        &log,
+        "failed",
+        InvocationOutcome::Failed {
+            class: "provider_rejected".into(),
+            message: None,
+        },
+    )
+    .await;
+    assert!(log.prepare_transcript("failed", through, 32).await.unwrap());
+    for view in [HistoryView::Text, HistoryView::Conversation] {
+        let mut position = Position::Start;
+        let mut failures = BTreeMap::<u64, String>::new();
+        for _ in 0..64 {
+            let Page::Ready { chunks, after, .. } = log
+                .history_view("failed", through, position, false, view, 17, Some(1), 8192)
+                .await
+                .unwrap()
+            else {
+                panic!("prepared history")
+            };
+            for chunk in chunks {
+                if chunk.role != Role::Failure {
+                    continue;
+                }
+                let source = log
+                    .history_source(
+                        "failed",
+                        through,
+                        chunk.sequence,
+                        SourceField::Body,
+                        None,
+                        SourcePosition::After {
+                            offset: chunk.offset,
+                        },
+                        chunk.text.len().max(4),
+                        8192,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(source.role, SourceRole::Failure);
+                assert!(source.fields.contains(&SourceField::Body));
+                assert_eq!(source.text, chunk.text);
+                failures
+                    .entry(chunk.sequence)
+                    .or_default()
+                    .push_str(&chunk.text);
+            }
+            let Some(cursor) = after else { break };
+            position = Position::After { cursor };
+        }
+        assert_eq!(
+            failures.values().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "Connection lost 中😀; retry permitted",
+                "Provider rejected request",
+                "provider_rejected",
+            ]
+        );
+        let Page::Ready { chunks, .. } = log
+            .history_view(
+                "failed",
+                retry_fence,
+                Position::Tail,
+                false,
+                view,
+                8192,
+                Some(16),
+                8192,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("prepared history")
+        };
+        assert_eq!(
+            chunks
+                .iter()
+                .filter(|chunk| chunk.role == Role::Failure)
+                .map(|chunk| chunk.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Connection lost 中😀; retry permitted"]
+        );
+    }
+    log.close().await.unwrap();
+    // Simulate the prior cache projection, then apply the diagnostic-body upgrade.
+    let db = Connection::open(&path).unwrap();
+    db.execute(
+        "UPDATE transcript_text SET body = x'' WHERE role IN ('turn_state', 'model_interruption')",
+        [],
+    )
+    .unwrap();
+    db.execute("DELETE FROM _sqlx_migrations WHERE version = 21", [])
+        .unwrap();
+    drop(db);
+    let log = EventLog::open(&path).await.unwrap();
+    let Page::Ready { chunks, .. } = log
+        .history_text("failed", through, Position::Tail, false, 8192, 16, 8192)
+        .await
+        .unwrap()
+    else {
+        panic!("prepared history")
+    };
+    assert_eq!(
+        chunks
+            .iter()
+            .filter(|chunk| chunk.role == Role::Failure)
+            .count(),
+        3
+    );
+}

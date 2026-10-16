@@ -33,7 +33,7 @@ use sqlx::Connection;
 fn source_sql() -> String {
     format!("WITH original AS (SELECT
     CASE ?3
-    WHEN 'body' THEN CASE WHEN json_extract(payload, '$.type') IN ('user', 'assistant', 'tool_call', 'tool_result') THEN {body} END
+    WHEN 'body' THEN CASE WHEN json_extract(payload, '$.type') IN ('user', 'assistant', 'tool_call', 'tool_result', 'model_interruption') OR (json_extract(payload, '$.type') = 'turn_state' AND json_extract(payload, '$.status') = 'failed') THEN {body} END
     WHEN 'thinking' THEN CASE WHEN json_extract(payload, '$.type') = 'assistant' THEN json_extract(payload, '$.thinking.text') END
     WHEN 'tool_name' THEN CASE WHEN json_extract(payload, '$.type') = 'tool_call' THEN json_extract(payload, '$.toolName') END
     WHEN 'failure_message' THEN CASE WHEN json_extract(payload, '$.type') = 'turn_state' AND json_extract(payload, '$.status') = 'failed' THEN json_extract(payload, '$.failureMessage') END
@@ -178,7 +178,9 @@ impl EventLog {
                         } else { vec![SourceField::Body] }),
                         "tool_call" => (SourceRole::ToolCall, vec![SourceField::ToolName, SourceField::Body, SourceField::Arguments]),
                         "tool_result" => (SourceRole::ToolResult, if operation { vec![SourceField::Body, SourceField::Result, SourceField::Receipt] } else { vec![SourceField::Body, SourceField::Result] }),
+                        "model_interruption" => (SourceRole::Failure, vec![SourceField::Body]),
                         "turn_state" => (SourceRole::Failure, [
+                            Some(SourceField::Body),
                             error_class.then_some(SourceField::ErrorClass),
                             failure_message.then_some(SourceField::FailureMessage),
                         ].into_iter().flatten().collect()),

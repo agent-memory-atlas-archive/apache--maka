@@ -220,6 +220,7 @@ impl Read {
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Compaction,
+    Failure,
     User,
     Assistant,
     ToolCall,
@@ -312,8 +313,7 @@ pub enum SourceFormat {
     Json,
     ImageDescriptor,
 }
-/// Presentation role of the exact row, including diagnostics omitted from the
-/// ordinary conversation window. This carries no execution authority.
+/// Presentation role of the exact row. This carries no execution authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "HistorySourceRole")]

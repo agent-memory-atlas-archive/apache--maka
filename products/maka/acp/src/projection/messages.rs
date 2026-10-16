@@ -124,6 +124,7 @@ mod tests {
             "!"
         );
         let mut chunk = HistoryChunk {
+            compaction: None,
             attachments: Vec::new(),
             timing: None,
             field: HistoryField::Body,
@@ -153,6 +154,7 @@ mod tests {
     fn missing_history_fragment_is_rejected() {
         let mut projection = Projection::default();
         let chunk = HistoryChunk {
+            compaction: None,
             attachments: Vec::new(),
             timing: None,
             field: HistoryField::Body,
@@ -172,6 +174,7 @@ mod tests {
     fn attachment_only_user_message_keeps_safe_descriptions_during_replay() {
         let mut projection = Projection::default();
         let chunk = HistoryChunk {
+            compaction: None,
             attachments: vec![maka_agent_api::contract::HistoryAttachment {
                 name: "photo.png".into(),
                 mime_type: "image/png".into(),
@@ -201,6 +204,41 @@ mod tests {
                 .get("ref")
                 .is_none()
         );
+        assert!(projection.chunk(&chunk).unwrap().is_empty());
+    }
+    #[test]
+    fn diagnostic_history_replays_as_marked_text_without_tool_metadata() {
+        let mut projection = Projection::default();
+        let mut chunk = HistoryChunk {
+            compaction: None,
+            attachments: Vec::new(),
+            timing: None,
+            field: HistoryField::Body,
+            message_id: "failure".into(),
+            turn_id: "turn".into(),
+            timestamp: 0,
+            role: Role::Failure,
+            sequence: 1,
+            offset: 0,
+            total_bytes: 16,
+            text: "Provider ".into(),
+            tool: None,
+        };
+        assert!(projection.chunk(&chunk).unwrap().is_empty());
+        chunk.offset = 9;
+        chunk.text = "offline".into();
+        let updates = projection.chunk(&chunk).unwrap();
+        assert_eq!(updates.len(), 1);
+        let update = serde_json::to_value(&updates[0]).unwrap();
+        assert_eq!(update["sessionUpdate"], "agent_message");
+        assert_eq!(update["content"][0]["text"], "Provider offline");
+        assert_eq!(update["_meta"]["maka"]["role"], "failure");
+        chunk.offset = 0;
+        chunk.text = "Provider offline".into();
+        assert!(projection.chunk(&chunk).unwrap().is_empty());
+        chunk.role = Role::Compaction;
+        chunk.text.clear();
+        chunk.total_bytes = 0;
         assert!(projection.chunk(&chunk).unwrap().is_empty());
     }
 }

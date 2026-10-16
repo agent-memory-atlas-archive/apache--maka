@@ -362,7 +362,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
 }
 
 #[tokio::test]
-async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
+async fn failure_search_reads_original_diagnostic_fields_and_visible_body() {
     let dir = tempfile::tempdir().unwrap();
     let log = EventLog::open(&dir.path().join("failure.sqlite"))
         .await
@@ -433,7 +433,11 @@ async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
             assert_eq!(page.role, SourceRole::Failure);
             assert_eq!(
                 page.fields,
-                [SourceField::ErrorClass, SourceField::FailureMessage]
+                [
+                    SourceField::Body,
+                    SourceField::ErrorClass,
+                    SourceField::FailureMessage
+                ]
             );
             assert_eq!(page.format, SourceFormat::Text);
             assert!(page.tool.is_none());
@@ -445,8 +449,8 @@ async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
             position = SourcePosition::After { offset };
         }
         assert_eq!(collected, expected);
-        assert!(
-            log.history_source(
+        let body = log
+            .history_source(
                 "failed",
                 through,
                 hit.sequence,
@@ -454,11 +458,12 @@ async fn failure_search_reads_original_diagnostic_fields_without_a_body_row() {
                 None,
                 SourcePosition::Start,
                 8192,
-                64 * 1024
+                64 * 1024,
             )
             .await
-            .is_err()
-        );
+            .unwrap();
+        assert_eq!(body.role, SourceRole::Failure);
+        assert_eq!(body.text, message[..message.floor_char_boundary(256)]);
         assert!(
             log.history_source(
                 "failed",

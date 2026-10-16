@@ -417,7 +417,9 @@ const messageSchema = object(
     pending: { type: 'boolean' },
     id: string,
     contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
-    role: { enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result', 'compaction'] },
+    role: {
+      enum: ['user', 'assistant', 'thinking', 'tool_call', 'tool_result', 'compaction', 'failure'],
+    },
     compaction: object({ durationMs: { type: 'integer', minimum: 0, maximum: 9007199254740991 } }),
     timestamp: {
       anyOf: [{ type: 'integer', minimum: 0, maximum: 9007199254740991 }, { type: 'null' }],

@@ -78,12 +78,17 @@ impl Projection {
         if text.len() as u64 != chunk.total_bytes {
             return Ok(vec![]);
         }
-        let (_, _, text, meta) = self.assembly.take().expect("complete field");
+        let (_, _, text, mut meta) = self.assembly.take().expect("complete field");
         let kind = match (chunk.role, chunk.field) {
             (Role::User, _) => MessageKind::User,
             (Role::Assistant, HistoryField::Thinking) => MessageKind::Thinking,
             (Role::Assistant, HistoryField::Body) => MessageKind::Text,
-            _ => return self.tool_chunk(chunk, &text),
+            (Role::Failure, _) => {
+                meta["maka"]["role"] = json!("failure");
+                MessageKind::Text
+            }
+            (Role::ToolCall | Role::ToolResult, _) => return self.tool_chunk(chunk, &text),
+            (Role::Compaction, _) => return Ok(vec![]),
         };
         self.text(&chunk.turn_id, &chunk.message_id, kind, &text, true, meta)
     }
