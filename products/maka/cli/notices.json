@@ -362,7 +362,7 @@
     "plugins/skills/skill-outcomes/package.ts": "53bc921690d32469fe16d118080da14f452663a304076c603cf98ae11b840ff1",
     "plugins/skills/skills/package.ts": "60fea4d965f482f7f857599c67f6d03c2e3bb190aca3a70954cfd476edd24782",
     "plugins/ui/command-palette/desktop.ts": "34a0290018219df2800f6078065aff4b9c85f2ff2515b9441be56730279c64ef",
-    "plugins/ui/command-palette/index.ts": "868601eb53de5c1a945908f74589724913185b3cdd256a679d2e27bc152e0f7a",
+    "plugins/ui/command-palette/index.ts": "05d16a2f9a3838ba78368435442b963e52e6d9e0420be4187fa592f8a29169d3",
     "plugins/ui/command-palette/locale.ts": "2fd5323f99d7599b7b6b1b9e946c69320089d2081ccb63e81e2ad067ef159a24",
     "plugins/ui/command-palette/package.ts": "3aa5e34adc76ab1c1590a3d95bcaf5a6a1017c96def87387ed544464ec07403b",
     "plugins/ui/command-palette/tui.ts": "e99f9e9d8e834ed62330cce69c2675a76c1e9443951234d0d06feb5394ec8715",
