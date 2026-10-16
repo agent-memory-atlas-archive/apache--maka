@@ -423,15 +423,13 @@ impl NativeComponent<dyn Widget> for Component {
                 ));
             }
         };
-        let declaration = props.clone();
         let props: SelectionMenuProps = serde_json::from_value(props.clone())
             .map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
         Ok(Frame {
             revision,
             state: json!({"revision":revision}),
             surface: None,
-            view: NativeView::<dyn Widget>::new(Rc::new(Recipe(props)), BTreeMap::new(), vec![])?
-                .with_declaration(declaration)?,
+            view: NativeView::<dyn Widget>::new(Rc::new(Recipe(props)), BTreeMap::new(), vec![])?,
         }
         .output(vec![]))
     }

@@ -132,7 +132,6 @@ impl NativeComponent<dyn Widget> for Root {
                     BTreeMap::from([("back".into(), json!(true))]),
                     vec![],
                 )?
-                .with_declaration(source.borrow().clone())?
             }
             View::ReadingSlot(props)
             | View::HiddenReadingSlot(props, _)
@@ -1021,6 +1020,47 @@ fn refresh(presenter: &mut Presenter) {
         .dispatch(&presenter.root, revision, "back", json!({"kind":"click"}))
         .unwrap();
     presenter.settle().unwrap();
+}
+
+#[test]
+fn changed_scene_content_rejects_pending_geometry_with_the_same_inputs_and_slots() {
+    let source = Rc::new(std::cell::RefCell::new(json!({
+        "kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,
+        "children":[
+            {"kind":"text","key":"text","text":"one","color":0xffffff},
+            {"kind":"button","key":"back","label":"Back"}
+        ]
+    })));
+    let (_runtime, mut presenter) = native(
+        View::ChangingScene(source.clone()),
+        Rc::new(Cell::new(true)),
+    );
+    let button_row = |presenter: &Presenter| {
+        presenter
+            .scene
+            .iter()
+            .find(|target| target.key == "back")
+            .unwrap()
+            .area
+            .y
+    };
+    flushed(&mut presenter, 20, 6);
+    assert_eq!(button_row(&presenter), 1);
+    let area = Rect::new(0, 0, 20, 6);
+    let pending = presenter.paint(area, &mut Buffer::empty(area)).unwrap();
+
+    source.borrow_mut()["children"][0]["text"] = json!("one\ntwo\nthree");
+    refresh(&mut presenter);
+    let current = flushed(&mut presenter, 20, 6);
+    assert_eq!(current[(0, 2)].symbol(), "t");
+    assert_eq!(button_row(&presenter), 3);
+    presenter.present(pending);
+    assert_eq!(button_row(&presenter), 3);
+
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown_settled().unwrap();
 }
 
 #[test]

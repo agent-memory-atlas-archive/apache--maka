@@ -731,7 +731,6 @@ fn markdown_palette(a: &maka_ui_runtime::markdown::MarkdownAppearance) -> crate:
 fn prepare_markdown(
     props: &serde_json::Value,
 ) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
-    let declaration = props.clone();
     let props: maka_ui_runtime::markdown::MarkdownProps = serde_json::from_value(props.clone())
         .map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
     if props.source.len() > 65536 {
@@ -765,15 +764,13 @@ fn prepare_markdown(
         Recipe(source, Some(document), props.selectable, RefCell::default()),
         BTreeMap::new(),
         vec![],
-    )?
-    .with_declaration(declaration)
+    )
 }
 
 fn prepare_diff(
     props: &serde_json::Value,
 ) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
     use maka_ui_runtime::diff::DiffProps;
-    let declaration = props.clone();
     let props: DiffProps = serde_json::from_value(props.clone())
         .map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
     let (text, rows) = diff::prepare(&props.content)?;
@@ -815,8 +812,7 @@ fn prepare_diff(
         Recipe(source, Some(document), true, RefCell::default()),
         BTreeMap::new(),
         vec![],
-    )?
-    .with_declaration(declaration)
+    )
 }
 
 fn finish(
@@ -895,7 +891,6 @@ impl NativeComponent<dyn Widget> for Component {
 fn prepare_source(
     props: &serde_json::Value,
 ) -> maka_ui_runtime::Result<maka_ui_runtime::PreparedScene> {
-    let declaration = props.clone();
     let props: SourceTextProps = serde_json::from_value(props.clone())
         .map_err(|error| maka_ui_runtime::Error::Invalid(error.to_string()))?;
     if props.source.len() > 65536 {
@@ -905,8 +900,7 @@ fn prepare_source(
         Recipe(props, None, true, RefCell::default()),
         BTreeMap::new(),
         vec![],
-    )?
-    .with_declaration(declaration)
+    )
 }
 #[cfg(test)]
 pub(super) fn compile(

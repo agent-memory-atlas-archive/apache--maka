@@ -159,7 +159,7 @@ pub(crate) fn prepare(source: &Value) -> maka_ui_runtime::Result<maka_ui_runtime
     let mut inputs = BTreeMap::new();
     node.metadata(&mut slots, &mut inputs)
         .map_err(maka_ui_runtime::Error::Invalid)?;
-    maka_ui_runtime::PreparedScene::new(node, inputs, slots)?.with_declaration(source.clone())
+    maka_ui_runtime::PreparedScene::new(node, inputs, slots)
 }
 pub(crate) fn view<V: Default + 'static>(node: Node) -> maka_ui_runtime::Result<NativeView<V>> {
     compile(&serde_json::to_value(node).unwrap())

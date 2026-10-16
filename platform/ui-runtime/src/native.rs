@@ -44,7 +44,6 @@ pub struct NativeView<V: ?Sized> {
     inputs: Rc<BTreeMap<String, Arc<jsonschema::Validator>>>,
     pub(crate) render_depth: u16,
     pub(crate) slot_render_depth: Rc<BTreeMap<String, u16>>,
-    declaration: Option<Rc<Value>>,
 }
 
 fn input_validators(
@@ -83,7 +82,6 @@ pub struct PreparedScene {
     visible: bool,
     depth: u16,
     slot_depth: BTreeMap<String, u16>,
-    declaration: Option<Value>,
 }
 impl PreparedScene {
     pub fn slots(&self) -> &[ComponentSlot] {
@@ -104,7 +102,6 @@ impl PreparedScene {
             visible: true,
             depth: 0,
             slot_depth: BTreeMap::new(),
-            declaration: None,
         })
     }
     pub fn with_hidden_slots(mut self, hidden: BTreeSet<String>) -> Result<Self> {
@@ -132,10 +129,6 @@ impl PreparedScene {
         self.slot_depth = slots;
         Ok(self)
     }
-    pub fn with_declaration(mut self, source: Value) -> Result<Self> {
-        self.declaration = Some(source);
-        Ok(self)
-    }
     pub fn finish<T: Send + 'static, V: ?Sized>(
         self,
         wrap: impl FnOnce(T) -> Rc<V>,
@@ -153,7 +146,6 @@ impl PreparedScene {
             root_visible: self.visible,
             render_depth: self.depth,
             slot_render_depth: Rc::new(self.slot_depth),
-            declaration: self.declaration.map(Rc::new),
         })
     }
 }
@@ -174,13 +166,7 @@ impl<V: ?Sized> NativeView<V> {
             inputs: Rc::new(inputs),
             render_depth: 0,
             slot_render_depth: Rc::new(BTreeMap::new()),
-            declaration: None,
         })
-    }
-    /// Retain declarative data for presentation identity comparisons.
-    pub fn with_declaration(mut self, source: Value) -> Result<Self> {
-        self.declaration = Some(Rc::new(source));
-        Ok(self)
     }
     pub(crate) fn components<'a>(&'a self, output: &mut Vec<super::frame::ComponentRef<'a>>) {
         output.extend(self.slots.iter().map(ComponentSlot::reference));
@@ -235,7 +221,6 @@ impl<V: ?Sized> NativeView<V> {
             && self.slots == previous.slots
             && self.hidden_slots == previous.hidden_slots
             && self.root_visible == previous.root_visible
-            && self.declaration == previous.declaration
             && self.render_depth == previous.render_depth
             && self.slot_render_depth == previous.slot_render_depth
     }
@@ -263,7 +248,6 @@ impl<V: ?Sized> Clone for NativeView<V> {
             inputs: self.inputs.clone(),
             render_depth: self.render_depth,
             slot_render_depth: self.slot_render_depth.clone(),
-            declaration: self.declaration.clone(),
         }
     }
 }

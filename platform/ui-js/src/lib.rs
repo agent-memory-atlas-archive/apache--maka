@@ -372,9 +372,8 @@ impl backend::Component for Component {
         self.execute(method, args, move |value| {
             // Validate number precision before compiler code observes the result.
             maka_plugin_core::json::exact_numbers(&value).map_err(Error::Invalid)?;
-            let mut output = component_output(value)?;
+            let output = component_output(value)?;
             let view = prepare(&output.frame.view)?;
-            let view = view.with_declaration(std::mem::take(&mut output.frame.view))?;
             Ok(output.map_view(|_| view))
         })
     }

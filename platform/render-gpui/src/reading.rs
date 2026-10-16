@@ -505,7 +505,6 @@ impl NativeComponent<dyn Widget> for Component {
             node,
             command: props.command.clone(),
         });
-        view = view.with_declaration(serde_json::to_value(&props).expect("reading props"))?;
         let events = event
             .map(|(key, input, origin)| match origin {
                 EventOrigin::Raw if key == OBSERVED => Emission {
