@@ -34,16 +34,17 @@ pub(super) async fn run(
         if cancellation.is_cancelled() {
             return Err(RunError::Cancelled);
         }
-        let batch = inner
-            .log
-            .prepare_prune_candidates(
+        let batch = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(RunError::Cancelled),
+            batch = inner.log.prepare_prune_candidates(
                 &input.invocation.session_id,
                 Some(&input.invocation.invocation_id),
                 128,
                 4 * 1024 * 1024,
                 cursor.as_ref(),
-            )
-            .await?;
+            ) => batch?,
+        };
         for candidate in batch.candidates {
             let Some(placeholder) = ArchivedPlaceholder::prepare(
                 candidate.event_id,

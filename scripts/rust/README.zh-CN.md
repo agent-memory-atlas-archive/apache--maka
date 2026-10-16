@@ -65,3 +65,27 @@ python3 scripts/rust/benchmark-long-task.py --kind engine \
 Host IPC。[Engine 夹具](../../plugins/agent/engine/tests/integration/long_task_perf.rs)
 和 [prune 夹具](../../platform/event-log/tests/archive/performance.rs) 提供工具稀疏、
 工具密集及投影大小等参数。测量时不要同时构建；CPU 剖析与耗时对比分开运行。
+
+测量 1,000 / 10,000 / 100,000 轮时，将 `MAKA_ENGINE_PERF_FIXTURE_DIR` 指向
+系统临时目录内的一次性目录，并用 `MAKA_ENGINE_PERF_FIXTURE_TAG` 明确标记版本。
+Engine 夹具走真实 append 校验，每 1,000 轮执行真实压缩；关闭后的 SQLite 快照
+按全部负载参数及夹具源码哈希缓存，修改夹具会使缓存失效。对夹具源码一致的保留
+可执行文件运行 `--kind engine --checkpoint --sizes 1000,10000,100000`。
+造数据与请求耗时分开，前者可能远长于实际测量过程。
+
+历史与取消测试使用 `--kind responsive`，并将 `MAKA_RESPONSIVENESS_FIXTURES`
+设为上述一次性 `.sqlite` 快照路径，以逗号分隔。它验证冷 transcript 准备、真实
+历史页，以及 admission 完成后 10 ms 和模型 HTTP 请求到达后的取消。第一个触发点
+不保证引擎仍处于准备阶段，需核对模型请求计数。停止耗时包括 Engine 完成和清理，
+并核对持久化的取消结果；不包含 EventLog 关闭时等待被放弃读取结束的时间。
+这些是存储／Engine API 指标，不是 GUI 或 Host IPC 延迟。上下文与裁剪读取在
+调用方取消后通过 SQLite progress handler 中断，并等事务清理完成后复用连接；
+双 reader 回收及事务恢复另有行为测试，不代表任意同步 Rust 计算都可立即中断。
+
+`--kind transcript --sizes 128,512` 使用保留的 release
+`maka-event-log --test transcript_index` 可执行文件，补测同一 invocation 内的
+大量模型步骤。每个样本从新副本生成 transcript，并逐条核对助手消息内容。
+
+`--kind executor --sizes 128,512` 用同一 transcript 可执行文件测量外部执行器
+的连续工具调用，并将全部持久化消息与 canonical replay 对比，覆盖工具进度、
+结果和最终 invocation 状态。

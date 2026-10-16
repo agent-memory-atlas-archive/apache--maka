@@ -48,6 +48,7 @@ pub(super) async fn selected(
     through: i64,
     boundary: bool,
 ) -> Result<Vec<StoredEvent>, StoreError> {
+    let mut executor_boundary = false;
     if boundary {
         let kind: String = sqlx::query_scalar(
             "SELECT kind FROM runtime_events WHERE sequence = ? AND invocation_id = ?",
@@ -56,6 +57,7 @@ pub(super) async fn selected(
         .bind(invocation)
         .fetch_one(&mut *tx)
         .await?;
+        executor_boundary = kind == "executor_observed";
         if matches!(
             kind.as_str(),
             "tool_dispatched" | "tool_rejected" | "tool_settled"
@@ -67,7 +69,25 @@ pub(super) async fn selected(
         "SELECT EXISTS(SELECT 1 FROM runtime_events WHERE invocation_id = ?1 AND sequence <= ?2 AND kind = 'executor_started')"
     ).bind(invocation).bind(through).fetch_one(&mut *tx).await?;
     if external {
-        return read(tx, sqlx::query(
+        let sql = if executor_boundary {
+            // A tool boundary needs only its own activity. Preserve SQLite's
+            // native JSON equality, including malformed non-string IDs.
+            "SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
+             WHERE invocation_id = ?1 AND sequence <= ?2 AND kind = 'invocation_opened'
+             UNION
+             SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
+             WHERE invocation_id = ?1 AND sequence <= ?2 AND kind = 'executor_started'
+             UNION
+             SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
+             WHERE invocation_id = ?1 AND sequence <= ?2 AND ?3 AND sequence = ?2
+             UNION
+             SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
+             WHERE invocation_id = ?1 AND sequence <= ?2
+               AND kind IN ('executor_observed','executor_completed')
+               AND json_extract(event_json, '$.fact.output.toolCallId') =
+                   (SELECT json_extract(event_json, '$.fact.output.toolCallId') FROM runtime_events WHERE sequence = ?2)
+             ORDER BY sequence LIMIT ?4"
+        } else {
             "SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
              WHERE invocation_id = ?1 AND sequence <= ?2 AND (
                  kind IN ('invocation_opened','executor_started')
@@ -77,7 +97,16 @@ pub(super) async fn selected(
                      OR json_extract(event_json, '$.fact.output.toolCallId') =
                          (SELECT json_extract(event_json, '$.fact.output.toolCallId') FROM runtime_events WHERE sequence = ?2))))
              ORDER BY sequence LIMIT ?4"
-        ).bind(invocation).bind(through).bind(boundary).bind((MAX_EVENTS + 1) as i64)).await;
+        };
+        return read(
+            tx,
+            sqlx::query(sql)
+                .bind(invocation)
+                .bind(through)
+                .bind(boundary)
+                .bind((MAX_EVENTS + 1) as i64),
+        )
+        .await;
     }
     // A failed/cancelled terminal can seal a request without a separate model
     // interruption (for example after a model-observation commit failure).
@@ -87,24 +116,55 @@ pub(super) async fn selected(
         None
     };
     let step = step.or(unresolved.as_deref());
-    // Bound count before retrieving payloads, then bound cumulative UTF-8 bytes
-    // from SQLite lengths before any event JSON is deserialized.
+    let ids = serde_json::to_string(if boundary {
+        std::slice::from_ref(&through)
+    } else {
+        &[]
+    })?;
+    read_step(tx, invocation, step, through, &ids, false).await
+}
+
+/// Merge only the opening, selected model step, and explicit boundary/ancestry.
+/// UNION removes overlapping identities before the bounded reader counts them.
+pub(super) async fn read_step(
+    tx: &mut SqliteConnection,
+    invocation: &str,
+    step: Option<&str>,
+    through: i64,
+    boundary_ids: &str,
+    include_completed: bool,
+) -> Result<Vec<StoredEvent>, StoreError> {
+    // CAST matches the observation index; the original equality also preserves
+    // selection semantics for malformed non-string step IDs.
     let query = sqlx::query(
         "SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
-         WHERE invocation_id = ?1 AND sequence <= ?3 AND (
-           kind = 'invocation_opened'
-           OR (?4 AND sequence = ?3)
-           OR (?2 IS NOT NULL AND (
-             (kind = 'model_requested' AND operation_id = ?2)
-             OR (kind = 'model_observed' AND json_extract(event_json, '$.fact.step_id') = ?2)
-           )))
-         ORDER BY sequence LIMIT ?5",
+WHERE invocation_id = ?1 AND sequence <= ?3 AND kind = 'invocation_opened'
+UNION
+SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
+WHERE invocation_id = ?1 AND sequence <= ?3
+  AND sequence IN (SELECT value FROM json_each(?4))
+UNION
+SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
+WHERE invocation_id = ?1 AND sequence <= ?3
+  AND ?2 IS NOT NULL AND kind = 'model_requested' AND operation_id = ?2
+UNION
+SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
+WHERE invocation_id = ?1 AND sequence <= ?3
+  AND ?6 AND ?2 IS NOT NULL AND kind = 'model_completed' AND operation_id = ?2
+UNION
+SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
+WHERE invocation_id = ?1 AND sequence <= ?3 AND ?2 IS NOT NULL
+  AND kind = 'model_observed'
+  AND CAST(json_extract(event_json, '$.fact.step_id') AS TEXT) = ?2
+  AND json_extract(event_json, '$.fact.step_id') = ?2
+ORDER BY sequence LIMIT ?5",
     )
     .bind(invocation)
     .bind(step)
     .bind(through)
-    .bind(boundary)
-    .bind((MAX_EVENTS + 1) as i64);
+    .bind(boundary_ids)
+    .bind((MAX_EVENTS + 1) as i64)
+    .bind(include_completed);
     read(tx, query).await
 }
 

@@ -65,14 +65,15 @@ pub(super) async fn capture(
     continuation_base: Option<u64>,
 ) -> Result<Option<Job>, RunError> {
     input.refresh_model(cancellation).await?;
-    let source = inner
-        .log
-        .prepare_context_compaction(
+    let source = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err(RunError::Cancelled),
+        source = inner.log.prepare_context_compaction(
             &input.invocation.session_id,
             Some(&input.invocation.invocation_id),
             mode,
-        )
-        .await?;
+        ) => source?,
+    };
     let has_new_history = source
         .tail
         .iter()

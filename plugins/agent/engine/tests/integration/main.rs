@@ -34,6 +34,7 @@ mod handoff_compaction;
 mod image_projection;
 mod lifetime;
 mod long_task_perf;
+mod long_task_responsiveness;
 mod model_interruption;
 mod pruning;
 mod session_import;

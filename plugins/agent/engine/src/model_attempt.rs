@@ -203,23 +203,26 @@ pub(super) async fn read_source(
     inner: &Inner,
     input: &RunContext,
     prior_unknown: bool,
+    cancellation: &CancellationToken,
 ) -> Result<ModelContextSource, RunError> {
-    if prior_unknown {
-        Ok(inner
-            .log
-            .read_manual_message_context(
-                &input.invocation.session_id,
-                &input.invocation.invocation_id,
-            )
-            .await?)
-    } else {
-        Ok(inner
-            .log
-            .read_model_context(
-                &input.invocation.session_id,
-                Some(&input.invocation.invocation_id),
-            )
-            .await?)
+    // Only abandon the read reply. Its snapshot remains owned by the log's
+    // independent reader until completion; no append or external effect is raced.
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(RunError::Cancelled),
+        source = async {
+            if prior_unknown {
+                inner.log.read_manual_message_context(
+                    &input.invocation.session_id,
+                    &input.invocation.invocation_id,
+                ).await
+            } else {
+                inner.log.read_model_context(
+                    &input.invocation.session_id,
+                    Some(&input.invocation.invocation_id),
+                ).await
+            }
+        } => Ok(source?),
     }
 }
 
@@ -306,7 +309,7 @@ pub(super) async fn execute_main(
                 // Accepted progress replaces the frozen retry prompt. Release it
                 // before materializing the next canonical source.
                 drop(retry.take());
-                let context = read_source(inner, input, prior_unknown).await?;
+                let context = read_source(inner, input, prior_unknown, cancellation).await?;
                 high_water = context.source_evidence.high_water;
                 source = RequestSource::from(&context);
                 let prompt = surface.apply(

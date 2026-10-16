@@ -110,7 +110,7 @@ async fn seed(
         ] {
             writes.push(EventWrite::plain(RuntimeEvent::new(invocation.clone(), fact)).unwrap());
         }
-        let output = if tool_count > 0 {
+        let output: maka_agent_facts::model::ModelStep = if tool_count > 0 {
             serde_json::from_value(
                 json!({"parts": calls, "finish_reason":"tool-calls", "usage":{}}),
             )
@@ -153,6 +153,37 @@ async fn seed(
             }
             builder.finish().unwrap()
         };
+        if tool_count > 0 {
+            for part in &output.parts {
+                let maka_agent_facts::model::ModelPart::ToolCall { call } = part else {
+                    unreachable!()
+                };
+                writes.push(
+                    EventWrite::plain(RuntimeEvent::new(
+                        invocation.clone(),
+                        Fact::ModelObserved {
+                            step_id: step.clone(),
+                            event: ModelEvent::ToolCall(call.clone()),
+                        },
+                    ))
+                    .unwrap(),
+                );
+            }
+            writes.push(
+                EventWrite::plain(RuntimeEvent::new(
+                    invocation.clone(),
+                    Fact::ModelObserved {
+                        step_id: step.clone(),
+                        event: ModelEvent::Finished {
+                            reason: ModelFinishReason::ToolCalls,
+                            usage: ModelUsage::default(),
+                            provider_options: None,
+                        },
+                    },
+                ))
+                .unwrap(),
+            );
+        }
         writes.push(
             EventWrite::plain(RuntimeEvent::new(
                 invocation.clone(),
@@ -206,7 +237,7 @@ async fn seed(
             if tool_count == 0 {
                 20
             } else {
-                4 + 2 * tool_count
+                5 + 3 * tool_count
             }
         );
         event_count += writes.len();

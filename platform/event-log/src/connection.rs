@@ -17,9 +17,19 @@
  * under the License.
  */
 
-use std::{future::Future, panic::AssertUnwindSafe, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    panic::AssertUnwindSafe,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 mod authority;
+#[cfg(test)]
+mod cancellation;
 pub use authority::ConnectionAuthority;
 
 use futures_util::{FutureExt, future::Shared};
@@ -284,29 +294,96 @@ impl OwnedConnection {
         + Send
         + 'static,
     ) -> Result<T, StoreError> {
+        self.read_job(operation, false).await
+    }
+
+    /// Pure database reads may stop when their observer disappears. The owner
+    /// still awaits operation and transaction cleanup before reusing a reader.
+    pub(crate) async fn read_interruptible<T: Send + 'static>(
+        &self,
+        operation: impl for<'c> FnOnce(&'c mut SqliteConnection) -> BoxFuture<'c, Result<T, StoreError>>
+        + Send
+        + 'static,
+    ) -> Result<T, StoreError> {
+        self.read_job(operation, true).await
+    }
+
+    async fn read_job<T: Send + 'static>(
+        &self,
+        operation: impl for<'c> FnOnce(&'c mut SqliteConnection) -> BoxFuture<'c, Result<T, StoreError>>
+        + Send
+        + 'static,
+        interruptible: bool,
+    ) -> Result<T, StoreError> {
         let permit = self
             .readers
             .clone()
             .acquire_owned()
             .await
             .map_err(|_| StoreError::ConnectionClosed)?;
-        let (reply, result) = oneshot::channel();
+        let (mut reply, result) = oneshot::channel();
         self.read_jobs
             .send(Box::new(move |connection| {
                 Box::pin(async move {
                     let _permit = permit;
+                    let mut clean = true;
                     let executed = match connection {
                         Ok(connection) => {
-                            AssertUnwindSafe(async { operation(connection).await })
-                                .catch_unwind()
-                                .await
+                            let cancel = Arc::new(AtomicBool::new(false));
+                            if interruptible {
+                                match connection.lock_handle().await {
+                                    Ok(mut locked) => {
+                                        let cancel = cancel.clone();
+                                        // Remember cancellation between statements, then consume
+                                        // it once so transaction rollback can run normally.
+                                        locked.set_progress_handler(1000, move || {
+                                            !cancel.swap(false, Ordering::Relaxed)
+                                        });
+                                    }
+                                    Err(error) => {
+                                        let _ = reply.send(Err(error.into()));
+                                        return false;
+                                    }
+                                }
+                            }
+                            let executed = {
+                                let operation =
+                                    AssertUnwindSafe(async { operation(&mut *connection).await })
+                                        .catch_unwind();
+                                tokio::pin!(operation);
+                                tokio::select! {
+                                    result = &mut operation => result,
+                                    () = reply.closed(), if interruptible => {
+                                        cancel.store(true, Ordering::Relaxed);
+                                        operation.await
+                                    }
+                                }
+                            };
+                            if interruptible {
+                                // The handle lock follows queued Transaction::drop rollbacks.
+                                clean = match connection.lock_handle().await {
+                                    Ok(mut locked) => {
+                                        locked.remove_progress_handler();
+                                        // SAFETY: the SQLx guard excludes worker FFI calls;
+                                        // this only reads the live handle's transaction state.
+                                        unsafe {
+                                            rusqlite::ffi::sqlite3_get_autocommit(
+                                                locked.as_raw_handle().as_ptr(),
+                                            ) != 0
+                                        }
+                                    }
+                                    Err(_) => false,
+                                };
+                            }
+                            executed
                         }
                         Err(error) => Ok(Err(error)),
                     };
-                    let reusable = !matches!(
-                        &executed,
-                        Err(_) | Ok(Err(StoreError::Sqlx(sqlx::Error::WorkerCrashed)))
-                    );
+                    let reusable = clean
+                        && !matches!(
+                            &executed,
+                            Err(_) | Ok(Err(StoreError::Sqlx(sqlx::Error::WorkerCrashed)))
+                        );
                     let result = executed.unwrap_or(Err(StoreError::OperationUnknown));
                     let _ = reply.send(result);
                     reusable

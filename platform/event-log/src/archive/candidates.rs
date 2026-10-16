@@ -41,7 +41,7 @@ impl EventLog {
         }
         let (session, current) = (session.to_owned(), current.map(str::to_owned));
         let cursor = cursor.cloned();
-        self.connection.run(move |connection| Box::pin(async move {
+        self.connection.read_interruptible(move |connection| Box::pin(async move {
             let mut tx = connection.begin().await?;
             if let Some(id) = &current {
                 let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runtime_events o WHERE invocation_id=? AND kind='invocation_opened'

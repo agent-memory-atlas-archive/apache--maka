@@ -80,7 +80,9 @@ pub(super) async fn run(
                     if !tools.code_idle() {
                         return None;
                     }
-                    let context = model_attempt::read_source(inner, input, false).await.ok()?;
+                    let context = model_attempt::read_source(inner, input, false, cancellation)
+                        .await
+                        .ok()?;
                     // Read the live source, but project from the successor's point of
                     // view: manual replay cuts distinguish current from inherited work.
                     let prompt = model_attempt::prompt(
@@ -144,7 +146,8 @@ pub(super) async fn run(
             {
                 compaction = CompactionBudget::Reshaped;
             }
-            let mut context = model_attempt::read_source(inner, input, prior_unknown).await?;
+            let mut context =
+                model_attempt::read_source(inner, input, prior_unknown, cancellation).await?;
             let mut prompt = model_attempt::prompt(
                 inner,
                 input,
@@ -184,7 +187,8 @@ pub(super) async fn run(
                 // Compaction makes its own logical requests. The next Main
                 // must observe any provider change made meanwhile.
                 input.refresh_model(cancellation).await?;
-                context = model_attempt::read_source(inner, input, prior_unknown).await?;
+                context =
+                    model_attempt::read_source(inner, input, prior_unknown, cancellation).await?;
                 prompt = model_attempt::prompt(
                     inner,
                     input,
@@ -311,7 +315,8 @@ pub(super) async fn run(
                 return Ok(maka_agent_facts::event::InvocationOutcome::Completed);
             }
             if !cancellation.is_cancelled() && lane.needs_confirmation() {
-                let context = model_attempt::read_source(inner, input, prior_unknown).await?;
+                let context =
+                    model_attempt::read_source(inner, input, prior_unknown, cancellation).await?;
                 let replay = model_attempt::prompt(
                     inner,
                     input,

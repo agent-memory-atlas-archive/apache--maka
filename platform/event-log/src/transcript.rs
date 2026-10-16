@@ -81,28 +81,37 @@ impl EventLog {
                     // Read only small boundary headers here. Canonical payloads are selected
                     // and budget-checked separately, one boundary at a time.
                     let boundaries = {
-                        let records = sqlx::query(
-                            "SELECT sequence, invocation_id, operation_id, kind FROM session_history_events runtime_events
-                 WHERE owner_session_id = ?1
-                   AND sequence > ?2 AND sequence <= ?3
-                   AND (kind = 'context_checkpoint_recorded' OR NOT EXISTS (SELECT 1 FROM runtime_events opening
-                       WHERE opening.invocation_id = runtime_events.invocation_id
+                        // The shared history view requires a whole-remainder sort here.
+                        // Merge the two ordered ownership paths before applying the limit.
+                        let eligible = "(e.kind = 'context_checkpoint_recorded' OR NOT EXISTS (SELECT 1 FROM runtime_events opening
+                       WHERE opening.invocation_id = e.invocation_id
                          AND opening.kind = 'invocation_opened'
                          AND json_extract(opening.event_json, '$.fact.input.kind') = 'context_compact'))
-                   AND (kind NOT IN ('model_completed', 'model_interrupted') OR
+                   AND (e.kind NOT IN ('model_completed', 'model_interrupted') OR
                        EXISTS (SELECT 1 FROM runtime_events request
              JOIN runtime_events opening ON opening.invocation_id = request.invocation_id
              AND opening.kind = 'invocation_opened'
-             WHERE request.kind = 'model_requested' AND request.invocation_id = runtime_events.invocation_id
-             AND request.operation_id = runtime_events.operation_id
+             WHERE request.kind = 'model_requested' AND request.invocation_id = e.invocation_id
+             AND request.operation_id = e.operation_id
              AND json_extract(opening.event_json, '$.fact.input.kind') IN ('message', 'continuation', 'handoff')
              AND json_extract(request.event_json, '$.fact.purpose') = 'main'))
-                   AND (kind IN ('message_imported', 'invocation_opened', 'message_steered', 'model_completed',
+                   AND (e.kind IN ('message_imported', 'invocation_opened', 'message_steered', 'model_completed',
                                 'model_interrupted', 'invocation_ended', 'context_checkpoint_recorded',
                                 'tool_dispatched', 'tool_rejected', 'tool_settled', 'executor_completed')
-                       OR (kind = 'executor_observed' AND json_extract(event_json, '$.fact.output.type') IN ('tool_start','tool_result')))
-                 ORDER BY sequence LIMIT ?4",
-                        )
+                       OR (e.kind = 'executor_observed' AND json_extract(e.event_json, '$.fact.output.type') IN ('tool_start','tool_result')))";
+                        let sql = format!(
+                            "SELECT e.sequence AS sequence, e.invocation_id, e.operation_id, e.kind
+                             FROM runtime_events e
+                             WHERE json_extract(e.event_json, '$.invocation.session_id') = ?1
+                               AND e.sequence > ?2 AND e.sequence <= ?3 AND {eligible}
+                             UNION ALL
+                             SELECT h.sequence AS sequence, e.invocation_id, e.operation_id, e.kind
+                             FROM session_history_members h CROSS JOIN runtime_events e ON e.sequence = h.sequence
+                             WHERE h.session_id = ?1 AND h.sequence > ?2 AND h.sequence <= ?3 AND {eligible}
+                             ORDER BY sequence LIMIT ?4"
+                        );
+                        // Only the static predicate is interpolated; all inputs remain bound.
+                        let records = sqlx::query(sqlx::AssertSqlSafe(sql))
                         .bind(&session)
                         .bind(progress)
                         .bind(fence)

@@ -116,20 +116,5 @@ pub(super) async fn selected(
         }
     }
     let ids = serde_json::to_string(&ids)?;
-    let query = sqlx::query(
-        "SELECT sequence, length(CAST(event_json AS BLOB)) FROM runtime_events
-         WHERE invocation_id = ?1 AND sequence <= ?3 AND (
-            kind = 'invocation_opened' OR sequence IN (SELECT value FROM json_each(?4))
-            OR (?2 IS NOT NULL AND (
-                (kind IN ('model_requested', 'model_completed') AND operation_id = ?2)
-                OR (kind = 'model_observed' AND json_extract(event_json, '$.fact.step_id') = ?2)
-            )))
-         ORDER BY sequence LIMIT ?5",
-    )
-    .bind(invocation)
-    .bind(step)
-    .bind(through)
-    .bind(ids)
-    .bind((evidence::MAX_EVENTS + 1) as i64);
-    evidence::read(tx, query).await
+    evidence::read_step(tx, invocation, step.as_deref(), through, &ids, true).await
 }

@@ -41,16 +41,20 @@ def records(kind, output):
     for line in output.splitlines():
         if line.startswith('{'):
             row = json.loads(line)
-            if row.get("benchmark") in ("engine_long_history", "archive_context") and not row.get("summary"):
+            if row.get("benchmark") in ("engine_long_history", "archive_context",
+                                        "long_history_preparation", "long_history_responsiveness",
+                                        "one_invocation_transcript", "executor_invocation_transcript") and not row.get("summary"):
                 if kind == "context":
                     row["history_turns"] = row["archived_count"]
+                elif kind in ("transcript", "executor"):
+                    row["history_turns"] = row["model_steps" if kind == "transcript" else "tool_calls"]
                 result.append(row)
     return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--kind", choices=["prune", "engine", "context"], required=True)
+    parser.add_argument("--kind", choices=["prune", "engine", "context", "responsive", "transcript", "executor"], required=True)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -65,15 +69,21 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
     prefix = {"prune": "MAKA_PRUNE_BENCH", "engine": "MAKA_ENGINE_PERF",
-              "context": "MAKA_CONTEXT_BENCH"}[args.kind]
-    environment[prefix + ("_ARCHIVES" if args.kind == "context" else "_TURNS")] = args.sizes
+              "context": "MAKA_CONTEXT_BENCH", "responsive": "MAKA_RESPONSIVENESS",
+              "transcript": "MAKA_TRANSCRIPT_BENCH", "executor": "MAKA_EXECUTOR_BENCH"}[args.kind]
+    if args.kind != "responsive":
+        suffix = {"context": "_ARCHIVES", "transcript": "_STEPS", "executor": "_STEPS"}.get(args.kind, "_TURNS")
+        environment[prefix + suffix] = args.sizes
     environment[prefix + "_REPETITIONS"] = "1"
     if args.kind == "engine":
         environment[prefix + "_CHECKPOINT"] = str(int(args.checkpoint))
     test = {"prune": "performance::long_history_prune",
             "engine": "long_task_perf::engine_long_history",
-            "context": "context_performance::archive_heavy_context"}[args.kind]
-    evidence = {"kind": args.kind, "sizes": args.sizes, "checkpoint": args.checkpoint,
+            "context": "context_performance::archive_heavy_context",
+            "responsive": "long_task_responsiveness::long_history_responsiveness",
+            "transcript": "performance::one_invocation_transcript",
+            "executor": "performance_executor::executor_invocation_transcript"}[args.kind]
+    evidence = {"kind": args.kind, "sizes": None if args.kind == "responsive" else args.sizes, "checkpoint": args.checkpoint,
                 "runs": args.runs, "cpu_count": os.cpu_count(),
                 "load_average": list(os.getloadavg()),
                 "environment": {k: v for k, v in environment.items() if k.startswith(prefix)},
@@ -95,6 +105,8 @@ def main():
                                             "exit_code": process.returncode, "log": str(output)})
                 result_file.write_text(json.dumps(evidence, indent=2) + "\n")
                 raise SystemExit(f"benchmark failed; inspect {output}")
+            if args.kind == "responsive":
+                evidence["sizes"] = ",".join(map(str, sorted({row["history_turns"] for row in rows})))
             work = [{key: value for key, value in row.items()
                      if not key.endswith("_ms") and key not in
                      ("repetition", "database_bytes", "database_wal_bytes", "fixture_cached")}
@@ -109,7 +121,7 @@ def main():
             for row in rows:
                 sample = dict(row, pair=pair + 1, revision=label)
                 evidence["samples"].append(sample)
-                key = (label, row["history_turns"], row.get("shape", "engine"),
+                key = (label, row["history_turns"], row.get("shape", row.get("phase", row.get("benchmark", "engine"))),
                        row.get("archived", args.checkpoint))
                 groups.setdefault(key, []).append(row)
             result_file.write_text(json.dumps(evidence, indent=2) + "\n")
@@ -118,7 +130,9 @@ def main():
     summary = []
     for key, rows in groups.items():
         metrics = {}
-        for metric in ["prune_ms", "context_ms", "request_receipt_ms", "engine_completion_ms"]:
+        for metric in ["prune_ms", "context_ms", "request_receipt_ms", "engine_completion_ms",
+                       "transcript_prepare_ms", "first_page_ms", "stop_ms", "concurrent_history_ms",
+                       "store_open_ms", "cancel_at_ms"]:
             if metric in rows[0]:
                 values = [row[metric] for row in rows]
                 metrics[metric] = dict(n=len(values), median=statistics.median(values),

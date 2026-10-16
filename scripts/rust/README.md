@@ -71,3 +71,35 @@ not Host IPC. The [Engine fixture](../../plugins/agent/engine/tests/integration/
 and [prune fixture](../../platform/event-log/tests/archive/performance.rs) expose
 workload settings for sparse tools, dense tools and projection sizes. Run without
 competing builds; collect CPU profiles separately from timing comparisons.
+
+For 1,000 / 10,000 / 100,000-turn scale probes, set `MAKA_ENGINE_PERF_FIXTURE_DIR`
+to a disposable directory under the system temporary directory and
+`MAKA_ENGINE_PERF_FIXTURE_TAG` to an explicit revision label. The Engine fixture
+uses real append validation and compacts every 1,000 turns. It caches closed
+SQLite snapshots using all workload settings and a hash of its own source;
+changing the fixture invalidates the cache. Run `--kind engine --checkpoint
+--sizes 1000,10000,100000` against retained executables with identical fixture
+source. Seeding is deliberately separate from request latency and can take much
+longer than the measured run.
+
+For history and cancellation, set `MAKA_RESPONSIVENESS_FIXTURES` to a
+comma-separated list of those disposable `.sqlite` snapshots and use
+`--kind responsive`. This checks cold transcript preparation, a real history
+page, and cancellation both 10 ms after admission and after model HTTP receipt.
+The first trigger does not guarantee the Engine is still preparing; inspect the
+recorded model request count. Stop timing includes Engine completion and cleanup,
+with a verified durable cancelled outcome, but excludes closing the EventLog and
+draining abandoned read snapshots. It measures the store/Engine APIs, not GUI or
+Host IPC latency. Context/prune reads interrupt abandoned SQLite work through a
+progress handler and await transaction cleanup before reuse. Separate behavior
+tests cover reclaiming both readers and transaction recovery; arbitrary
+synchronous Rust computation is not immediately interruptible.
+
+`--kind transcript --sizes 128,512` uses retained release
+`maka-event-log --test transcript_index` executables to check many model steps
+inside one invocation. It verifies every assistant message after preparing each
+fresh copy; this workload complements many-turn Engine fixtures.
+
+`--kind executor --sizes 128,512` uses the same transcript executable for
+sequential external tools. It compares every persisted message with canonical
+replay, including progress, results, and final invocation state.
