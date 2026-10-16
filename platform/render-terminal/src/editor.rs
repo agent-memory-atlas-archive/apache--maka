@@ -610,7 +610,9 @@ impl Editor {
                     self.top.saturating_sub(3)
                 };
                 if next == self.top {
-                    return false;
+                    // Keep an overflowing editor's wheel gesture at its edge,
+                    // matching desktop. Text that fits still yields to the page.
+                    return !self.single_line && self.layout.rows.len() > area.height as usize;
                 }
                 self.top = next;
             }

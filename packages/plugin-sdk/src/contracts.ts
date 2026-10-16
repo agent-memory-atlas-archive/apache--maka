@@ -3988,6 +3988,18 @@ export const contracts = {
             ],
             default: null,
           },
+          navigation: {
+            description: 'Yield suggestion navigation only for the original observed editor state.',
+            anyOf: [
+              {
+                $ref: '#/$defs/EditorNavigation',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           tabIndex: {
             type: 'integer',
             format: 'int16',
@@ -4639,6 +4651,24 @@ export const contracts = {
             type: 'string',
             enum: ['enter', 'primary_enter', 'control_enter'],
           },
+          EditorNavigation: {
+            type: 'object',
+            properties: {
+              owner: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              basedOn: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+            required: ['owner', 'basedOn'],
+          },
           EditorCommand: {
             type: 'object',
             properties: {
@@ -5254,6 +5284,178 @@ export const contracts = {
                 'worker_failed',
                 'clipboard_unavailable',
                 'paste_rejected',
+              ],
+            },
+          },
+        },
+        navigated: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          title: 'EditorNavigated',
+          type: 'object',
+          properties: {
+            key: {
+              $ref: '#/$defs/EditorNavigationKey',
+            },
+            observation: {
+              $ref: '#/$defs/EditorObservation',
+            },
+          },
+          additionalProperties: false,
+          required: ['key', 'observation'],
+          $defs: {
+            EditorNavigationKey: {
+              type: 'string',
+              enum: ['up', 'down', 'enter', 'tab', 'escape'],
+            },
+            EditorObservation: {
+              type: 'object',
+              properties: {
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                snapshot: {
+                  $ref: '#/$defs/EditorSnapshot',
+                },
+                receipt: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/EditorReceipt',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['revision', 'snapshot', 'receipt'],
+            },
+            EditorSnapshot: {
+              type: 'object',
+              properties: {
+                text: {
+                  $ref: '#/$defs/EditorTextRef',
+                },
+                selection: {
+                  $ref: '#/$defs/TextRange',
+                },
+                reversed: {
+                  type: 'boolean',
+                },
+                marked: {
+                  anyOf: [
+                    {
+                      $ref: '#/$defs/TextRange',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+              },
+              additionalProperties: false,
+              required: ['text', 'selection', 'reversed', 'marked'],
+            },
+            EditorTextRef: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                bytes: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'revision', 'bytes'],
+            },
+            TextRange: {
+              type: 'object',
+              properties: {
+                start: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+                end: {
+                  type: 'integer',
+                  format: 'uint',
+                  minimum: 0,
+                },
+              },
+              additionalProperties: false,
+              required: ['start', 'end'],
+            },
+            EditorReceipt: {
+              type: 'object',
+              properties: {
+                owner: {
+                  type: 'string',
+                },
+                sequence: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                revision: {
+                  type: 'integer',
+                  format: 'uint64',
+                  minimum: 0,
+                },
+                outcome: {
+                  $ref: '#/$defs/EditorOutcome',
+                },
+              },
+              additionalProperties: false,
+              required: ['owner', 'sequence', 'revision', 'outcome'],
+            },
+            EditorOutcome: {
+              oneOf: [
+                {
+                  type: 'object',
+                  properties: {
+                    status: {
+                      type: 'string',
+                      const: 'applied',
+                    },
+                  },
+                  required: ['status'],
+                  additionalProperties: false,
+                },
+                {
+                  type: 'object',
+                  properties: {
+                    reason: {
+                      $ref: '#/$defs/EditorConflict',
+                    },
+                    status: {
+                      type: 'string',
+                      const: 'conflict',
+                    },
+                  },
+                  additionalProperties: false,
+                  required: ['status', 'reason'],
+                },
+              ],
+            },
+            EditorConflict: {
+              type: 'string',
+              enum: [
+                'persistence',
+                'owner',
+                'representation',
+                'revision',
+                'composition',
+                'sequence',
               ],
             },
           },

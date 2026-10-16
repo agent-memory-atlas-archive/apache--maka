@@ -211,7 +211,7 @@ export function assistantPreferences<N extends Node>(
                 ...common,
                 appearance: props.theme.textarea,
                 softWrap: true,
-                terminalRows: { min: 3, max: 5 },
+                terminalRows: name === 'compaction' ? { min: 6, max: 12 } : { min: 3, max: 5 },
               } satisfies TextareaProps,
               { changed: 'changed' },
             );

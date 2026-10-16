@@ -270,6 +270,40 @@ impl Widget for Recipe {
         if !read_only
             && owner.visible
             && let Event::Key(key) = event
+            && key.modifiers.is_empty()
+            && let Some(navigation) = &self.props.navigation
+        {
+            owner.edit.refresh();
+            let observation = owner.edit.current_observation();
+            let navigation_key = match key.code {
+                KeyCode::Up => Some(EditorNavigationKey::Up),
+                KeyCode::Down => Some(EditorNavigationKey::Down),
+                KeyCode::Enter => Some(EditorNavigationKey::Enter),
+                KeyCode::Tab => Some(EditorNavigationKey::Tab),
+                KeyCode::Esc => Some(EditorNavigationKey::Escape),
+                _ => None,
+            };
+            if navigation.matches(&observation)
+                && let Some(key_value) = navigation_key
+            {
+                return Ok(if key.kind == KeyEventKind::Release {
+                    WidgetInput::Consumed(None)
+                } else {
+                    WidgetInput::Emitted(NativeInput {
+                        key: "navigate".into(),
+                        value: serde_json::to_value(EditorNavigated {
+                            key: key_value,
+                            observation,
+                        })
+                        .unwrap(),
+                        replaceable: false,
+                    })
+                });
+            }
+        }
+        if !read_only
+            && owner.visible
+            && let Event::Key(key) = event
             && key.code == KeyCode::Char('v')
             && key.modifiers == KeyModifiers::CONTROL
             && let Some(policy) = &self.props.file_paste
@@ -358,6 +392,18 @@ impl Widget for Recipe {
             .edit
             .editor
             .dragging()
+    }
+    fn handles_tab(&self, state: &dyn Any, _: &str) -> bool {
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        !self.props.disabled
+            && !self.props.read_only
+            && owner.visible
+            && owner.persistence_ready()
+            && self
+                .props
+                .navigation
+                .as_ref()
+                .is_some_and(|navigation| navigation.matches(&owner.edit.current_observation()))
     }
     fn capture(
         &self,
@@ -570,6 +616,7 @@ impl NativeComponent<dyn Widget> for Component {
                     maka_ui_runtime::checkpoint::observation_schema(),
                 ),
                 ("submit".into(), observation_schema()),
+                ("navigate".into(), navigation_schema()),
                 ("file_choose".into(), maka_ui_runtime::file::choose_schema()),
                 ("file_observe".into(), file_paste_schema()),
             ]),

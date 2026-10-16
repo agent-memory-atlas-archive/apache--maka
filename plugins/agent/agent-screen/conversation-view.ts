@@ -29,6 +29,7 @@ import { draftReady } from '../../shared/drafts.js';
 
 import {
   canExecute,
+  composerCommands,
   reviewTarget,
   selectedBackend,
   catalogPending,
@@ -263,6 +264,7 @@ export function conversationView<N extends Node>(
         ['service_approval', 'permissions', 'client_capability'].includes(
           reviewTarget(state)?.kind ?? '',
         ),
+      commands: composerCommands(state, locale, target),
       backend: canExecute(state) ? selectedBackend(state) : null,
       context: state.selected?.id ?? null,
       dataSource: state.selected?.dataSource ?? null,
@@ -307,7 +309,7 @@ export function conversationView<N extends Node>(
       autoFocus: !state.searchOpen && state.browse === null,
     },
     {
-      compact: 'compact',
+      command: 'command',
       sent: 'sent',
       submission: 'submission',
       setup: 'setup',

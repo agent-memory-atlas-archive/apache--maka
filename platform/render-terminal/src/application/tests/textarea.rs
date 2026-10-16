@@ -52,9 +52,9 @@ pub(super) fn editor_fixture() -> (tokio::runtime::Runtime, Input, Vec<Package>)
                         .replace("{kind:'button',key:'remove'", "{kind:'button',key:'reject',label:'Reject observation'},{kind:'button',key:'configure',label:'Configure editor'},{kind:'button',key:'remove'");
                     source.push_str("const normalFrame=frame;frame=(state)=>{const out=normalFrame(state);const editor=out.frame.view.children.find(node=>node.key==='editor');if(editor){editor.props={...editor.props,...state.options};delete editor.props.visible;delete editor.props.prefix;delete editor.props.readingViewport;}out.frame.view.children=out.frame.view.children.map(node=>node.key==='editor'?{kind:'stack',key:'presentation',direction:'column',gap:0,padding:0,background:out.frame.view.background,visible:state.options?.visible!==false,children:[node]}:node);if(state.options?.prefix)out.frame.view.children.unshift({kind:'text',key:'prefix',text:state.options.prefix,color:0xffffff});if(state.options?.readingViewport){const pane=out.frame.view.children.find(node=>node.key==='presentation');pane.scroll='manual';pane.layout={basis:6};pane.children.push({kind:'text',key:'long-tail',text:'tail\\n'.repeat(30),color:0xffffff});}if(state.reject&&state.observation)out.frame.view={kind:'invalid'};return out;};");
                 }
-                source = source.replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted'}")
+                source = source.replace("on:{changed:'changed'}", "on:{changed:'changed',submitted:'submitted',navigated:'navigated'}")
                     .replace("name:'changed',value:event.event", "name:event.name,value:event.event")
-                    .replace("else if(event.kind==='component')next.observation=event.event;", "else if(event.kind==='component'){next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}");
+                    .replace("else if(event.kind==='component')next.observation=event.event;", "else if(event.kind==='component'){if(event.name==='navigated'){next.navigation=event.event;next.navigations=(state.navigations??0)+1;}else next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;}");
                 files.insert(module.clone(), source.into_bytes());
             }
             _ => {}
@@ -1002,6 +1002,66 @@ fn completely_clipped_editor_cannot_receive_focus_or_physical_input() {
     close(&mut tui);
 }
 #[test]
+fn overflowing_editor_keeps_boundary_wheels_inside_its_scrollable_parent() {
+    let (_runtime, mut tui) = presenter();
+    dispatch(&mut tui, "configure", json!({"readingViewport":true}));
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Paste(
+        (0..20).map(|i| format!("\nrow {i:02}")).collect(),
+    ))
+    .unwrap();
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    let target = tui
+        .scene
+        .iter()
+        .find(|target| target.mount == mount)
+        .unwrap();
+    let point = target.area.visible();
+    let before = observation(&tui);
+    for direction in [MouseEventKind::ScrollUp, MouseEventKind::ScrollDown] {
+        for _ in 0..25 {
+            click(&mut tui, direction, point.x + 1, point.y + 1);
+            draw(&mut tui, 50, 20);
+            let state = tui.resources.owners[&tui.root.id()]
+                .state
+                .downcast_ref::<super::super::scroll::SceneState>()
+                .unwrap();
+            assert_eq!(state.scrolls["presentation"].offset, 0);
+        }
+    }
+    assert_eq!(observation(&tui), before);
+    close(&mut tui);
+}
+
+#[test]
+fn fitting_editor_leaves_wheel_scrolling_to_its_parent() {
+    let (_runtime, mut tui) = presenter();
+    dispatch(&mut tui, "configure", json!({"readingViewport":true}));
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    let point = tui
+        .scene
+        .iter()
+        .find(|target| target.mount == mount)
+        .unwrap()
+        .area
+        .visible();
+    click(
+        &mut tui,
+        MouseEventKind::ScrollDown,
+        point.x + 1,
+        point.y + 1,
+    );
+    let state = tui.resources.owners[&tui.root.id()]
+        .state
+        .downcast_ref::<super::super::scroll::SceneState>()
+        .unwrap();
+    assert!(state.scrolls["presentation"].offset > 0);
+    close(&mut tui);
+}
+
+#[test]
 fn unhandled_editor_page_key_reaches_its_original_scene_scroll_ancestor() {
     let (_runtime, mut tui) = presenter();
     dispatch(&mut tui, "configure", json!({"readingViewport":true}));
@@ -1075,6 +1135,68 @@ fn pointer_capture_survives_tab_focus_change_and_release_keeps_the_new_focus() {
     );
     assert!(tui.drag.is_none());
     assert!(tui.focus.as_ref().unwrap().same(&next));
+    close(&mut tui);
+}
+
+#[test]
+fn terminal_navigation_is_revision_bound_and_preserves_native_editing() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Paste("/co".into())).unwrap();
+    let original = observation(&tui);
+    let navigation =
+        json!({"owner":original["snapshot"]["text"]["owner"],"basedOn":original["revision"]});
+    dispatch(&mut tui, "configure", json!({"navigation":navigation}));
+    draw(&mut tui, 50, 20);
+    let focus = tui.focus.clone().unwrap();
+    for (index, code) in [
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Tab,
+        KeyCode::Enter,
+        KeyCode::Esc,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        tui.input_settled(key(code)).unwrap();
+        assert_eq!(observation(&tui), original);
+        assert!(tui.focus.as_ref().unwrap().same(&focus));
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["navigations"],
+            index + 1
+        );
+        assert_eq!(
+            tui.application.frame(&tui.root).unwrap().state["navigation"]["observation"],
+            original
+        );
+    }
+    tui.input_settled(Event::Paste("x".into())).unwrap();
+    tui.input_settled(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["navigations"],
+        5
+    );
+    assert_eq!(
+        observation(&tui)["snapshot"]["text"]["bytes"],
+        original["snapshot"]["text"]["bytes"].as_u64().unwrap() + 2
+    );
+    let current = observation(&tui);
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"navigation":{"owner":"retired-owner","basedOn":current["revision"]}}),
+    );
+    draw(&mut tui, 50, 20);
+    tui.input_settled(key(KeyCode::Up)).unwrap();
+    assert_eq!(
+        tui.application.frame(&tui.root).unwrap().state["navigations"],
+        5
+    );
+    assert_ne!(
+        observation(&tui)["snapshot"]["selection"],
+        current["snapshot"]["selection"]
+    );
     close(&mut tui);
 }
 
@@ -1513,13 +1635,13 @@ fn paste_then_enter_is_immediate_and_ordered_while_the_original_js_job_is_slow()
         let declaration = original.manifest().application.as_ref().unwrap().declaration().clone();
         let Implementation::JavaScript { module, .. } = &declaration.entries[&EntryTarget::Tui].implementation else { unreachable!() };
         let mut source = std::str::from_utf8(original.file(module).unwrap()).unwrap()
-            .replace("on:{changed:'changed',submitted:'submitted'}", "on:{changed:'changed',submitted:'submitted',checkpoint:'checkpoint'}");
+            .replace("on:{changed:'changed',submitted:'submitted',navigated:'navigated'}", "on:{changed:'changed',submitted:'submitted',checkpoint:'checkpoint'}");
         if original.manifest().id == "dynamic.app" {
             source = source.replace(
                 "if(event.key==='reject'){", "if(event.key==='reject'){const until=Date.now()+100;while(Date.now()<until){};",
             ).replace(
                 "next.observation=event.event;if(event.name==='submitted')next.submissions=(state.submissions??0)+1;",
-                "if(event.name==='checkpoint'){next.nativeReady=event.event.state.initialized;}else{next.observation=event.event;if(event.name==='submitted'){if(!state.nativeReady)throw new Error('submission preceded its original checkpoint');next.submissions=(state.submissions??0)+1;}}",
+                "if(event.name==='checkpoint'){next.nativeReady=event.event.state.initialized;}else{if(event.name==='navigated'){next.navigation=event.event;next.navigations=(state.navigations??0)+1;}else next.observation=event.event;if(event.name==='submitted'){if(!state.nativeReady)throw new Error('submission preceded its original checkpoint');next.submissions=(state.submissions??0)+1;}}",
             );
         }
         let package = support::package(&id, declaration, Some(source));

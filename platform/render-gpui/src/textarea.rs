@@ -51,6 +51,7 @@ pub struct TextareaOwner {
     open_menu: Option<menu::OpenMenu>,
     _menu_input: Option<Subscription>,
     submit: Option<SubmitKey>,
+    navigation: Option<EditorNavigation>,
     _keyboard: Option<Subscription>,
     checkpoint: Option<maka_ui_runtime::checkpoint::EditorCheckpoint>,
     persistence: Option<maka_ui_runtime::checkpoint::EditorPersistence>,
@@ -144,6 +145,7 @@ impl TextareaOwner {
                 open_menu: None,
                 _menu_input: None,
                 submit: props.submit,
+                navigation: props.navigation.clone(),
                 _keyboard: None,
                 checkpoint,
                 persistence: props.persistence.clone(),
@@ -185,16 +187,56 @@ impl TextareaOwner {
         let weak = owner.downgrade();
         let window_id = window.window_handle().window_id();
         let keyboard = cx.intercept_keystrokes(move |event, window, cx| {
-            if event.keystroke.key != "enter" || window.window_handle().window_id() != window_id {
+            if window.window_handle().window_id() != window_id
+                || !matches!(
+                    event.keystroke.key.as_str(),
+                    "up" | "down" | "enter" | "tab" | "escape"
+                )
+            {
                 return;
             }
-            let Ok(Some((input, observation))) = weak.update(cx, |owner, cx| {
+            let Ok(Some((input, key, value))) = weak.update(cx, |owner, cx| {
                 if !window
                     .input_focus_is_admitted(owner.state.read(cx).presentation().focus_handle())
                 {
                     return None;
                 }
+                if !owner.visible || !owner.accepts_text_input(window, cx) {
+                    return None;
+                }
+                owner.refresh(false, window, cx);
+                let observation = EditorObservation {
+                    revision: owner.revision,
+                    snapshot: owner.observation_snapshot(),
+                    receipt: owner.receipt.clone(),
+                };
                 let modifiers = &event.keystroke.modifiers;
+                if !modifiers.modified()
+                    && owner
+                        .navigation
+                        .as_ref()
+                        .is_some_and(|navigation| navigation.matches(&observation))
+                {
+                    let key = match event.keystroke.key.as_str() {
+                        "up" => Some(EditorNavigationKey::Up),
+                        "down" => Some(EditorNavigationKey::Down),
+                        "enter" => Some(EditorNavigationKey::Enter),
+                        "tab" => Some(EditorNavigationKey::Tab),
+                        "escape" => Some(EditorNavigationKey::Escape),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        return Some((
+                            owner.input.clone(),
+                            "navigate",
+                            serde_json::to_value(EditorNavigated { key, observation })
+                                .expect("native navigation"),
+                        ));
+                    }
+                }
+                if event.keystroke.key != "enter" {
+                    return None;
+                }
                 let matches = match owner.submit {
                     Some(SubmitKey::Enter) => !modifiers.modified(),
                     Some(SubmitKey::ControlEnter) => {
@@ -227,11 +269,8 @@ impl TextareaOwner {
                 owner.input.current.borrow().as_ref()?;
                 Some((
                     owner.input.clone(),
-                    EditorObservation {
-                        revision: owner.revision,
-                        snapshot: owner.observation_snapshot(),
-                        receipt: owner.receipt.clone(),
-                    },
+                    "submit",
+                    serde_json::to_value(observation).expect("native submit observation"),
                 ))
             }) else {
                 return;
@@ -239,16 +278,8 @@ impl TextareaOwner {
             window.prevent_default();
             cx.stop_propagation();
             // Leave the entity borrow before the original component dispatch.
-            if input
-                .capture_input(
-                    "submit",
-                    serde_json::to_value(observation).expect("native submit observation"),
-                    window,
-                    cx,
-                )
-                .is_err()
-            {
-                eprintln!("editor submit rejected");
+            if input.capture_input(key, value, window, cx).is_err() {
+                eprintln!("editor keyboard event rejected");
             }
         });
         owner.update(cx, |owner, cx| {
@@ -423,6 +454,7 @@ impl TextareaOwner {
         // This synchronous barrier is authoritative for command admission.
         self.refresh(false, window, cx);
         self.submit = props.submit;
+        self.navigation.clone_from(&props.navigation);
         let appearance_changed = self.projection.data != props.appearance;
         if appearance_changed {
             self.projection = super::appearance::TextareaProjection::new(&props.appearance);
@@ -1051,6 +1083,7 @@ impl NativeComponent<dyn Widget> for TextareaComponent {
                     maka_ui_runtime::checkpoint::observation_schema(),
                 ),
                 ("submit".into(), observation_schema()),
+                ("navigate".into(), navigation_schema()),
             ]),
             vec![],
         )?

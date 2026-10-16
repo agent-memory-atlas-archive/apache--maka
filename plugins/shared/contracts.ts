@@ -333,7 +333,14 @@ export interface ComposerSent {
   dataSource: AgentDataSource;
   attachments: string[];
 }
+export interface ComposerCommand {
+  id: string;
+  command: string;
+  label: string;
+  disabled: boolean;
+}
 export interface ComposerProps {
+  commands?: ComposerCommand[];
   approvalPending?: boolean;
   backend: ComposerBackend | null;
   sendLabel?: string;
@@ -1171,6 +1178,16 @@ export const composerContract = component(
   object(
     {
       approvalPending: { type: 'boolean' },
+      commands: {
+        type: 'array',
+        maxItems: 32,
+        items: object({
+          id: string,
+          command: string,
+          label: string,
+          disabled: { type: 'boolean' },
+        }),
+      },
       backend: composerBackend,
       sendLabel: string,
       context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },
@@ -1227,7 +1244,9 @@ export const composerContract = component(
         attachments: { type: 'array', maxItems: 8, items: string },
       }),
     ),
-    compact: withDefs(object({ context: string, dataSource: { $ref: '#/$defs/AgentDataSource' } })),
+    command: withDefs(
+      object({ context: string, dataSource: { $ref: '#/$defs/AgentDataSource' }, id: string }),
+    ),
     setup: object({ context: string }),
     readiness: withDefs({
       type: 'array',

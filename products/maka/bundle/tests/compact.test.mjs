@@ -109,8 +109,8 @@ for (const target of ['tui', 'desktop']) {
     c.event({
       kind: 'component',
       child: 'composer',
-      name: 'compact',
-      event: { context: 'session', dataSource: c.state.selected.dataSource },
+      name: 'command',
+      event: { context: 'session', dataSource: c.state.selected.dataSource, id: 'compact-open' },
     });
     assert.equal(c.state.dialog, 'compact');
     assert.deepEqual(c.out.actions[0].input, { sessionId: 'session' });
@@ -160,8 +160,8 @@ for (const target of ['tui', 'desktop']) {
       c.event({
         kind: 'component',
         child: 'composer',
-        name: 'compact',
-        event: { context: 'session', dataSource: c.state.selected.dataSource },
+        name: 'command',
+        event: { context: 'session', dataSource: c.state.selected.dataSource, id: 'compact-open' },
       });
     open();
     c.reply({ compactionPrompt: 'Default', defaultCompactionPrompt: 'Default' });
@@ -187,8 +187,8 @@ for (const target of ['tui', 'desktop'])
     c.event({
       kind: 'component',
       child: 'composer',
-      name: 'compact',
-      event: { context: 'session', dataSource: c.state.selected.dataSource },
+      name: 'command',
+      event: { context: 'session', dataSource: c.state.selected.dataSource, id: 'compact-open' },
     });
     c.reply({ compactionPrompt: 'Default', defaultCompactionPrompt: 'Default' });
     c.ready();

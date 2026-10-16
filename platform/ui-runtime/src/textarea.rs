@@ -53,6 +53,9 @@ pub struct TextareaProps {
     /// None preserves native multiline editing without a submit shortcut.
     #[serde(default)]
     pub submit: Option<SubmitKey>,
+    /// Yield suggestion navigation only for the original observed editor state.
+    #[serde(default)]
+    pub navigation: Option<EditorNavigation>,
     #[schemars(range(min = -1, max = 32767))]
     pub tab_index: i16,
     /// Offer native focus once when this original input becomes visible and
@@ -186,6 +189,40 @@ pub enum SubmitKey {
     ControlEnter,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorNavigation {
+    #[schemars(length(min = 1, max = 128))]
+    pub owner: String,
+    #[schemars(range(max = 9007199254740991u64))]
+    pub based_on: u64,
+}
+impl EditorNavigation {
+    pub fn matches(&self, observation: &EditorObservation) -> bool {
+        self.owner == observation.snapshot.text.owner
+            && self.based_on == observation.revision
+            && observation.snapshot.marked.is_none()
+    }
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorNavigationKey {
+    Up,
+    Down,
+    Enter,
+    Tab,
+    Escape,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditorNavigated {
+    pub key: EditorNavigationKey,
+    pub observation: EditorObservation,
+}
+pub fn navigation_schema() -> serde_json::Value {
+    serde_json::to_value(schemars::schema_for!(EditorNavigated)).expect("editor navigation schema")
+}
+
 /// Submit carries the same original editor observation as a change; it grants
 /// no text read and adds no second buffer or command owner.
 pub fn reduce(
@@ -206,7 +243,23 @@ pub fn reduce(
     };
     let mut files = None;
     let mut checkpoint = None;
+    let mut navigation = None;
     let call = match call {
+        crate::ComponentCall::Event {
+            state,
+            props,
+            key: "navigate",
+            input,
+            origin,
+        } => {
+            if !matches!(origin, crate::EventOrigin::Raw) {
+                return Err(crate::Error::Invalid(
+                    "editor navigation requires native origin".into(),
+                ));
+            }
+            navigation = Some(input.clone());
+            crate::ComponentCall::Update { state, props }
+        }
         crate::ComponentCall::Event {
             state,
             props,
@@ -299,6 +352,12 @@ pub fn reduce(
             value,
         });
     }
+    if let Some(value) = navigation {
+        output.events.push(crate::Emission {
+            name: "navigated".into(),
+            value,
+        });
+    }
     Ok(output.map_view(|props| TextareaView {
         props,
         file_request,
@@ -316,6 +375,7 @@ pub fn textarea_contract() -> Contract {
             events: BTreeMap::from([
                 ("changed".into(), observation_schema()),
                 ("submitted".into(), observation_schema()),
+                ("navigated".into(), navigation_schema()),
                 ("files".into(), file_paste_schema()),
                 ("checkpoint".into(), crate::checkpoint::observation_schema()),
             ]),

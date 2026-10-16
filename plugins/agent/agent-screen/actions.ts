@@ -1056,6 +1056,26 @@ export function controlSidebar(state: State, op: TerminalPaneCommand['op']) {
   }
 }
 
+// Aliases only name existing root actions; availability and labels stay in rootCommands.
+export function composerCommands(state: State, locale: string, target: 'tui' | 'desktop') {
+  const aliases: Partial<Record<RootCommand, string>> = {
+    'compact-open': 'compact',
+    create: 'new',
+    'model-setup': 'model',
+    settings: 'settings',
+    'help-open': 'help',
+    'skills-open': 'skills',
+    'plan-open': 'plan',
+    'goal-open': 'goal',
+    'recap-open': 'recap',
+    'usage-open': 'usage',
+    'terminal-open': 'terminal',
+  };
+  return rootCommands(state, locale, target).flatMap(({ kind, id, label, disabled }) =>
+    aliases[kind] ? [{ id, command: aliases[kind]!, label, disabled }] : [],
+  );
+}
+
 export function rootCommand(
   state: State,
   actions: Action[],

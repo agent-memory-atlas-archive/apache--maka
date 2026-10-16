@@ -109,6 +109,11 @@ function slot(node, key = 'draft') {
 async function client(target) {
   const { component } = await import(`../dist/packages/composer/${target}.js`);
   const props = {
+    commands: [
+      { id: 'compact-open', command: 'compact', label: '压缩上下文', disabled: false },
+      { id: 'create', command: 'new', label: 'New conversation', disabled: false },
+      { id: 'settings', command: 'settings', label: 'Settings', disabled: false },
+    ],
     backend: structuredClone(backend),
     context: 'session',
     dataSource,
@@ -539,18 +544,179 @@ for (const target of ['tui', 'desktop']) {
     c.ready('/compact');
     c.send('/compact');
     assert.deepEqual(c.out.events, [
-      { name: 'compact', value: { context: 'session', dataSource } },
+      { name: 'command', value: { context: 'session', dataSource, id: 'compact-open' } },
     ]);
     assert.deepEqual(c.editor().command.edit, { kind: 'reset', text: '' });
     c.clear();
-    c.ready('/compact is a command');
-    c.send('/compact is a command');
-    assert.deepEqual(c.out.actions[0].input, {
+    const prose = await client(target);
+    prose.ready('/compact is a command');
+    prose.send('/compact is a command');
+    assert.deepEqual(prose.out.actions[0].input, {
       sessionId: 'session',
       message: '/compact is a command',
       attachments: [],
       model: backend.model,
       thinkingLevel: null,
     });
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  const has = (c, key) => JSON.stringify(c.out.frame.view).includes(`"key":"${key}"`);
+  const resolvePrefix = (c, text, revision = 1) =>
+    c.reply(
+      {
+        status: 'succeeded',
+        value: { metadata: observed(text, revision).snapshot.text, text },
+      },
+      c.out.actions.find((item) => item.key.startsWith('prefix-')).key,
+    );
+  test(`${target} slash menu filters aliases and localized labels and keeps native text out of state`, async () => {
+    const c = await client(target);
+    c.ready('/');
+    resolvePrefix(c, '/');
+    assert.ok(has(c, 'slash:compact-open'));
+    assert.ok(has(c, 'slash:create'));
+    assert.deepEqual(c.editor().navigation, { owner: 'editor', basedOn: 1 });
+    c.emit('changed', observed('/压缩', 2));
+    assert.equal(c.editor().navigation, null);
+    resolvePrefix(c, '/压缩', 2);
+    assert.ok(has(c, 'slash:compact-open'));
+    assert.equal(has(c, 'slash:create'), false);
+    c.emit('changed', observed('x'.repeat(129), 3));
+    assert.deepEqual(c.out.actions, []);
+    assert.equal(has(c, 'slash-menu'), false);
+    assert.equal(JSON.stringify(c.state).includes('x'.repeat(129)), false);
+  });
+  test(`${target} slash reads coalesce and stale results cannot restore a menu`, async () => {
+    const c = await client(target);
+    c.ready('/');
+    const first = c.out.actions[0].key;
+    c.emit('changed', observed('/c', 2));
+    c.emit('changed', observed('/new', 3));
+    assert.deepEqual(c.out.actions, []);
+    c.reply(
+      { status: 'succeeded', value: { metadata: observed('/').snapshot.text, text: '/' } },
+      first,
+    );
+    assert.equal(has(c, 'slash-menu'), false);
+    assert.equal(c.out.actions.length, 1);
+    resolvePrefix(c, '/new', 3);
+    assert.ok(has(c, 'slash:create'));
+    assert.equal(has(c, 'slash:compact-open'), false);
+  });
+  test(`${target} slash keyboard selection executes locally without a model and Escape retains draft`, async () => {
+    const c = await client(target);
+    c.props.backend = null;
+    c.ready('/');
+    resolvePrefix(c, '/');
+    c.emit('navigated', { key: 'down', observation: observed('/') });
+    c.emit('navigated', { key: 'enter', observation: observed('/') });
+    c.reply({ status: 'succeeded', value: { metadata: observed('/').snapshot.text, text: '/' } });
+    assert.deepEqual(c.out.events, [
+      { name: 'command', value: { context: 'session', dataSource, id: 'create' } },
+    ]);
+    assert.equal(
+      c.out.actions.some((action) => action.binding === 'agent'),
+      false,
+    );
+    c.clear();
+    c.emit('changed', observed('/settings', 3));
+    resolvePrefix(c, '/settings', 3);
+    c.emit('navigated', { key: 'escape', observation: observed('/settings', 3) });
+    assert.equal(c.editor().navigation, null);
+    assert.equal(c.editor().command, null);
+    assert.equal(c.state.entries[0].observation.snapshot.text.bytes, 9);
+  });
+  test(`${target} click validates captured command and tab completes without executing`, async () => {
+    const c = await client(target);
+    c.ready('/co');
+    resolvePrefix(c, '/co');
+    c.emit('navigated', { key: 'tab', observation: observed('/co') });
+    assert.deepEqual(c.editor().command.edit, { kind: 'replace', text: '/compact' });
+    assert.deepEqual(c.out.events, []);
+    c.clear();
+    c.emit('changed', observed('/co', 3));
+    resolvePrefix(c, '/co', 3);
+    c.raw('slash:compact-open');
+    c.reply({
+      status: 'succeeded',
+      value: { metadata: observed('/co', 3).snapshot.text, text: '/co' },
+    });
+    assert.equal(c.out.events[0].value.id, 'compact-open');
+  });
+  test(`${target} unknown and disabled commands never submit and inactive captures retain drafts`, async () => {
+    for (const command of ['/unknown', '/compact']) {
+      const c = await client(target);
+      c.props.commands[0].disabled = true;
+      c.ready(command);
+      resolvePrefix(c, command);
+      assert.ok(has(c, 'slash-empty'));
+      c.send(command);
+      assert.equal(
+        c.out.actions.some((action) => action.binding === 'agent'),
+        false,
+      );
+      assert.equal(c.editor().command, null);
+      assert.deepEqual(c.out.events, []);
+    }
+    const c = await client(target);
+    c.ready('/compact');
+    c.emit('submitted', observed('/compact'));
+    const read = c.out.actions[0].key;
+    c.props.context = 'another';
+    c.update();
+    c.reply(
+      {
+        status: 'succeeded',
+        value: { metadata: observed('/compact').snapshot.text, text: '/compact' },
+      },
+      read,
+    );
+    assert.equal(c.editor('draft').command, null);
+    assert.equal(c.state.entries[0].notice, 'draftKept');
+    assert.equal(
+      c.out.events.some((event) => event.name === 'command'),
+      false,
+    );
+  });
+  test(`${target} stale navigation and IME retain normal editing; paths and multiline text send normally`, async () => {
+    const c = await client(target);
+    c.ready('/');
+    resolvePrefix(c, '/');
+    c.emit('navigated', { key: 'enter', observation: observed('/', 0) });
+    assert.deepEqual(c.out.actions, []);
+    const marked = observed('/', 2);
+    marked.snapshot.marked = { start: 0, end: 1 };
+    c.emit('changed', marked);
+    assert.equal(c.editor().navigation, null);
+    for (const text of ['/tmp/file', '/a\nb']) {
+      const normal = await client(target);
+      normal.ready(text);
+      normal.send(text);
+      assert.equal(normal.out.actions[0].input.message, text);
+    }
+  });
+}
+
+for (const target of ['tui', 'desktop']) {
+  test(`${target} command menu shows six rows and scrolls selection across the catalog`, async () => {
+    const c = await client(target);
+    c.props.commands = Array.from({ length: 10 }, (_, i) => ({
+      id: `command-${i}`,
+      command: `command${i}`,
+      label: `Command ${i}`,
+      disabled: false,
+    }));
+    c.ready('/');
+    c.reply({ status: 'succeeded', value: { metadata: observed('/').snapshot.text, text: '/' } });
+    const rows = () => [...JSON.stringify(c.out.frame.view).matchAll(/"key":"slash:command-\d+"/g)];
+    assert.equal(rows().length, 6);
+    c.emit('navigated', { key: 'up', observation: observed('/') });
+    assert.equal(rows().length, 6);
+    assert.ok(JSON.stringify(c.out.frame.view).includes('slash:command-9'));
+    c.emit('navigated', { key: 'enter', observation: observed('/') });
+    c.reply({ status: 'succeeded', value: { metadata: observed('/').snapshot.text, text: '/' } });
+    assert.equal(c.out.events[0].value.id, 'command-9');
   });
 }

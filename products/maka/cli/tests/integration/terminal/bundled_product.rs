@@ -699,6 +699,65 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
         tui.wait_for("Your name");
         tui.wait_for("Assistant tone");
         tui.wait_for("Compression prompt");
+        tui.wait_for("## Critical Context");
+        // Scroll the settings pane until the entire prompt editor fits, then
+        // keep wheeling inside it past both boundaries.
+        for _ in 0..24 {
+            let screen = tui.screen.snapshot().unwrap().screen;
+            let (row, line) = screen
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains("Compression prompt"))
+                .unwrap();
+            if row <= 4 {
+                break;
+            }
+            let column = line[..line.find("Compression prompt").unwrap()].width() + 2;
+            tui.send(format!("\x1b[<65;{column};{}M", row + 1).as_bytes());
+            tui.wait_until(|s| {
+                s.lines()
+                    .position(|line| line.contains("Compression prompt"))
+                    != Some(row)
+            });
+        }
+        let screen = tui.screen.snapshot().unwrap().screen;
+        let (row, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("Compression prompt"))
+            .unwrap();
+        assert!(row <= 4);
+        let column = line[..line.find("Compression prompt").unwrap()].width() + 4;
+        tui.send(
+            format!("\x1b[<64;{column};{}M", row + 3)
+                .repeat(80)
+                .as_bytes(),
+        );
+        tui.wait_for("You are a context summarization assistant.");
+        assert_eq!(
+            tui.screen
+                .snapshot()
+                .unwrap()
+                .screen
+                .lines()
+                .position(|line| line.contains("Compression prompt")),
+            Some(row)
+        );
+        tui.send(
+            format!("\x1b[<65;{column};{}M", row + 3)
+                .repeat(80)
+                .as_bytes(),
+        );
+        tui.wait_for("details are needed.");
+        assert_eq!(
+            tui.screen
+                .snapshot()
+                .unwrap()
+                .screen
+                .lines()
+                .position(|line| line.contains("Compression prompt")),
+            Some(row)
+        );
         if let Some(path) = std::env::var_os("MAKA_SETTINGS_EVIDENCE") {
             std::fs::create_dir_all(&path).unwrap();
             let path = std::path::PathBuf::from(path);

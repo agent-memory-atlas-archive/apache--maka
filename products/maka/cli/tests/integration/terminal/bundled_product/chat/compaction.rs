@@ -102,7 +102,17 @@ fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() 
     tui.wait_for("Deployment is still pending.");
     tui.wait_for("Workspace conversation");
     click(&mut tui, "Message…");
-    tui.send(b"/compact");
+    tui.send(b"/");
+    tui.wait_for("/compact");
+    tui.wait_for("/new");
+    evidence(&tui, "slash-candidates");
+    tui.send(b"\x1b[B");
+    tui.wait_for("› /help");
+    tui.send(b"co");
+    tui.wait_until(|s| s.contains("› /compact") && !s.contains("/help"));
+    evidence(&tui, "slash-filtered");
+    tui.send(b"\t");
+    tui.wait_until(|s| s.lines().filter(|line| line.contains("/compact")).count() >= 2);
     tui.send(b"\r");
     tui.wait_for("Compact context");
     tui.wait_for(GLOBAL_PROMPT);

@@ -6068,6 +6068,10 @@ export interface TextareaProps {
    * None preserves native multiline editing without a submit shortcut.
    */
   submit?: SubmitKey | null;
+  /**
+   * Yield suggestion navigation only for the original observed editor state.
+   */
+  navigation?: EditorNavigation | null;
   tabIndex: number;
   /**
    * Offer native focus once when this original input becomes visible and
@@ -6204,6 +6208,10 @@ export interface TerminalTextareaRows {
    * or the surface when none is declared. The minimum still applies.
    */
   maxViewportFraction?: number | null;
+}
+export interface EditorNavigation {
+  owner: string;
+  basedOn: number;
 }
 export interface EditorCommand {
   /**

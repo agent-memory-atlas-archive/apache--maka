@@ -91,12 +91,15 @@ impl Owner {
             marked: None,
         }
     }
-    pub fn observation(&mut self) -> NativeInput {
-        let observation = EditorObservation {
+    pub fn current_observation(&self) -> EditorObservation {
+        EditorObservation {
             revision: self.revision,
             snapshot: self.snapshot(),
             receipt: self.receipt.clone(),
-        };
+        }
+    }
+    pub fn observation(&mut self) -> NativeInput {
+        let observation = self.current_observation();
         let replaceable = self.receipt == self.observed_receipt;
         self.observed_receipt.clone_from(&self.receipt);
         NativeInput {
