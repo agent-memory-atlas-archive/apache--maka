@@ -19,6 +19,7 @@
 
 import { useId, useState, type ReactNode } from 'react';
 import { ChevronDown } from './icons.js';
+import { assistantChatCopy } from './assistant-chat-copy.js';
 import { useUiLocale } from './locale-context.js';
 
 /** Short and legacy messages stay plain; only authored summaries are collapsible. */
@@ -27,11 +28,7 @@ export function MessageSummary({ summary, children }: { summary?: string; childr
   const bodyId = useId();
   const locale = useUiLocale();
   if (!summary) return <>{children}</>;
-  const labels = locale === 'en'
-    ? { expand: 'Show details', collapse: 'Collapse' }
-    : locale === 'zh-TW'
-      ? { expand: '展開詳情', collapse: '收起' }
-      : { expand: '展开详情', collapse: '收起' };
+  const labels = assistantChatCopy(locale);
   return (
     <div className="maka-message-summary">
       <div className="maka-message-summary-preview">{summary}</div>

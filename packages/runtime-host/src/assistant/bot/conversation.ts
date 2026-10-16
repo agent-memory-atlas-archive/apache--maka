@@ -44,8 +44,11 @@ export async function publishBotConversationMessage(
   const existing = await stores.runtimeEventStore.readRuntimeEvents(header.id, runId);
   if (existing.length) {
     const text = existing.find((event) => event.refs?.storedMessageId === message.id);
-    if (text?.content?.kind !== 'text' || text.content.text !== message.text ||
-        text.content.summary !== (message.type === 'assistant' ? message.summary : undefined))
+    if (
+      text?.content?.kind !== 'text' ||
+      text.content.text !== message.text ||
+      text.content.summary !== (message.type === 'assistant' ? message.summary : undefined)
+    )
       throw Error('Assistant conversation ledger identity conflict');
     return;
   }
@@ -86,7 +89,9 @@ export async function publishBotConversationMessage(
       content: {
         kind: 'text',
         text: message.text,
-        ...(message.type === 'assistant' && message.summary !== undefined ? { summary: message.summary } : {}),
+        ...(message.type === 'assistant' && message.summary !== undefined
+          ? { summary: message.summary }
+          : {}),
         ...(message.type === 'user'
           ? {
               ...(message.displayText !== undefined ? { displayText: message.displayText } : {}),

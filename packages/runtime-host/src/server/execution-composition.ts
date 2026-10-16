@@ -470,7 +470,9 @@ export async function createExecutionRuntimeHostComposition(
         },
         readAvatarImage: async (sessionId, source, signal) => {
           const path = localImagePath(source);
-          return path === undefined ? downloadImage(source, signal) : readLocalImage(sessionId, path, signal);
+          return path === undefined
+            ? downloadImage(source, signal)
+            : readLocalImage(sessionId, path, signal);
         },
         appendConversation: async (sessionId, message) => {
           await sessionAdmission.run(sessionId, async (lease) => {

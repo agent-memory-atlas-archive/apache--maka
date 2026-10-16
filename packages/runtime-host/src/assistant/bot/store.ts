@@ -171,8 +171,10 @@ export class BotStore {
     const old = this.db.prepare('SELECT payload FROM outbox WHERE id=?').get(message.id);
     if (old) {
       const previous = JSON.parse(String(old.payload));
-      if (previous.text !== ('text' in message ? message.text : undefined) ||
-          previous.summary !== (message.type === 'assistant' ? message.summary : undefined))
+      if (
+        previous.text !== ('text' in message ? message.text : undefined) ||
+        previous.summary !== (message.type === 'assistant' ? message.summary : undefined)
+      )
         throw Error('Message ID has different text');
       return previous as StoredMessage;
     }
@@ -182,17 +184,33 @@ export class BotStore {
     return message;
   }
   /** Register the whole batch before delivery. Retries cannot extend or reorder a committed batch. */
-  queueVisibleBatch(batchId: string, texts: readonly (string | { summary?: string; text: string })[]): string[] {
+  queueVisibleBatch(
+    batchId: string,
+    texts: readonly (string | { summary?: string; text: string })[],
+  ): string[] {
     return this.transaction(() => {
-      const serialize = (items: typeof texts) => JSON.stringify(items.map((entry) => typeof entry === 'string' ? entry : {
-        text: entry.text, ...(entry.summary !== undefined ? { summary: entry.summary } : {}),
-      }));
+      const serialize = (items: typeof texts) =>
+        JSON.stringify(
+          items.map((entry) =>
+            typeof entry === 'string'
+              ? entry
+              : {
+                  text: entry.text,
+                  ...(entry.summary !== undefined ? { summary: entry.summary } : {}),
+                },
+          ),
+        );
       const payload = serialize(texts);
       const old = this.db.prepare('SELECT payload FROM outbox_batches WHERE id=?').get(batchId);
-      if (old && serialize(JSON.parse(String(old.payload))) !== payload) throw Error('Message ID has different batch content');
+      if (old && serialize(JSON.parse(String(old.payload))) !== payload)
+        throw Error('Message ID has different batch content');
       // Preserve single-message identities from before batch delivery was introduced.
       const legacyId = `bot-message:${batchId}`;
-      if (!old && texts.length !== 1 && this.db.prepare('SELECT 1 FROM outbox WHERE id=?').get(legacyId))
+      if (
+        !old &&
+        texts.length !== 1 &&
+        this.db.prepare('SELECT 1 FROM outbox WHERE id=?').get(legacyId)
+      )
         throw Error('Message ID already belongs to a single message');
       const timestamp = Date.now();
       const ids = texts.map((entry, index) => {
@@ -201,13 +219,19 @@ export class BotStore {
         const suffix = texts.length === 1 ? batchId : JSON.stringify([batchId, index]);
         const id = texts.length === 1 ? legacyId : `bot-batch-message:${suffix}`;
         this.queueVisible({
-          type: 'assistant', id,
-          turnId: texts.length === 1 ? `assistant-output:${suffix}` : `assistant-output:batch:${suffix}`,
-          ts: timestamp, text, ...(summary !== undefined ? { summary } : {}), modelId: 'assistant-bot',
+          type: 'assistant',
+          id,
+          turnId:
+            texts.length === 1 ? `assistant-output:${suffix}` : `assistant-output:batch:${suffix}`,
+          ts: timestamp,
+          text,
+          ...(summary !== undefined ? { summary } : {}),
+          modelId: 'assistant-bot',
         });
         return id;
       });
-      if (!old) this.db.prepare('INSERT INTO outbox_batches(id,payload) VALUES(?,?)').run(batchId, payload);
+      if (!old)
+        this.db.prepare('INSERT INTO outbox_batches(id,payload) VALUES(?,?)').run(batchId, payload);
       return ids;
     });
   }

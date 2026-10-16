@@ -185,7 +185,14 @@ export function registerDelegation(
     z.object({
       taskKey: z.string().trim().min(1).max(200),
       title: z.string().trim().min(1).max(120),
-      request: z.string().trim().min(1).max(8000).describe('User goal, relevant context and constraints to pass to the worker; not an invented plan or additional acceptance criteria.'),
+      request: z
+        .string()
+        .trim()
+        .min(1)
+        .max(8000)
+        .describe(
+          'User goal, relevant context and constraints to pass to the worker; not an invented plan or additional acceptance criteria.',
+        ),
     }),
     true,
     async (input: any, call: any) => {

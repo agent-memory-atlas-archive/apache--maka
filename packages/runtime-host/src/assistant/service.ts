@@ -56,7 +56,11 @@ export interface AssistantDependencies {
   llm: PluginLlmService;
   sessionQuery: PluginSessionQueryService;
   sources: PluginSourceService;
-  readAvatarImage?(sessionId: string, source: string, signal: AbortSignal): Promise<{ bytes: Uint8Array; mimeType: string }>;
+  readAvatarImage?(
+    sessionId: string,
+    source: string,
+    signal: AbortSignal,
+  ): Promise<{ bytes: Uint8Array; mimeType: string }>;
   appendConversation?(sessionId: string, message: StoredMessage): Promise<void>;
   stopSessions(): Promise<void>;
   markBackgroundSessions(sessionIds: readonly string[]): Promise<void>;

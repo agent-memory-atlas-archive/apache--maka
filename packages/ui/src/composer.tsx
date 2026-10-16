@@ -63,6 +63,7 @@ import {
   ThinkingLevelSelector,
 } from './chat-model-switcher.js';
 import { ComposerOptionsMenu } from './composer-options-menu.js';
+import { assistantChatCopy } from './assistant-chat-copy.js';
 import { useUiLocale } from './locale-context.js';
 import { getConversationCopy } from './conversation-copy.js';
 import { type ChatModelChoice, exactModelChoiceValue } from './chat-model-helpers.js';
@@ -2513,7 +2514,7 @@ export const Composer = forwardRef<
                   </DropdownMenu>
                 </span>
               ) : null}
-              <ComposerConfiguration compact={props.compactControls} label={locale === 'zh-CN' ? '聊天选项' : 'Chat options'}>
+              <ComposerConfiguration compact={props.compactControls} label={assistantChatCopy(locale).chatOptions}>
               {props.onPermissionModeChange ? (
                 <PermissionModeSelect
                   appearance="icon"

@@ -256,9 +256,18 @@ test('Bot receives bodies in batches, may consult history, sends multiple messag
     assert.match(batch.items[1].content, /第二条/);
     assert.equal(batch.hasMore, false);
     assert.equal((await invoke('InboxCheck')).items.length, 0);
-    await invoke('SendUser', { messageId: 'reply-1', messages: [{ summary: '好，我来安排。', text: '好，我来安排。' }] });
-    await invoke('SendUser', { messageId: 'reply-2', messages: [{ summary: '有结果再告诉你。', text: '有结果再告诉你。' }] });
-    await invoke('SendUser', { messageId: 'reply-2', messages: [{ summary: '有结果再告诉你。', text: '有结果再告诉你。' }] });
+    await invoke('SendUser', {
+      messageId: 'reply-1',
+      messages: [{ summary: '好，我来安排。', text: '好，我来安排。' }],
+    });
+    await invoke('SendUser', {
+      messageId: 'reply-2',
+      messages: [{ summary: '有结果再告诉你。', text: '有结果再告诉你。' }],
+    });
+    await invoke('SendUser', {
+      messageId: 'reply-2',
+      messages: [{ summary: '有结果再告诉你。', text: '有结果再告诉你。' }],
+    });
     const all = await invoke('InboxList', {});
     assert.equal(all.items.length, 2);
     assert.ok(all.items.every((m: any) => !('status' in m)));
@@ -369,7 +378,10 @@ test('message identities survive ambiguous publication and repeated input; forei
   assert.equal(f.visible.filter((m) => m.id === 'same').length, 1);
   await assert.rejects(f.send('same', '不同内容'), /different content/);
   await assert.rejects(
-    f.invoke('SendUser', { messageId: 'forged', messages: [{ summary: '不应发送', text: '不应发送' }] }),
+    f.invoke('SendUser', {
+      messageId: 'forged',
+      messages: [{ summary: '不应发送', text: '不应发送' }],
+    }),
     /belongs/,
   );
   await assert.rejects(f.invoke('InboxList'), /belongs/);
@@ -392,7 +404,9 @@ test('independent discovery retains the exact prompt and reports through Inbox, 
       assert.match((await invoke('InboxRead', { id: rows.items[0].id })).content, /日程冲突/);
       await invoke('SendUser', {
         messageId: 'calendar',
-        messages: [{ summary: '明天两个安排冲突，要一起调整吗？', text: '明天两个安排冲突，要一起调整吗？' }],
+        messages: [
+          { summary: '明天两个安排冲突，要一起调整吗？', text: '明天两个安排冲突，要一起调整吗？' },
+        ],
       });
       await invoke('Sleep', {});
       processed = true;
@@ -726,11 +740,17 @@ test('SendUser delivers a batch in order, retries partial delivery once, and sta
   const f = await fixture();
   t.after(f.close);
   const texts = ['查到了。', '不是配置问题，是服务拒绝了请求。', '要我继续查具体原因吗？'];
-  const messages = texts.map((text, i) => i === 0 ? { text } : { summary: `摘要${i + 1}`, text });
+  const messages = texts.map((text, i) => (i === 0 ? { text } : { summary: `摘要${i + 1}`, text }));
   let done = false;
   f.runner(async ({ invoke, finish }) => {
     await invoke('InboxCheck');
-    for (const bad of [[], ['legacy string'], [{ summary: '', text: 'body' }], [{ summary: 'summary', text: ' ' }], [{ summary: 's', text: 'a'.repeat(48000) }]]) {
+    for (const bad of [
+      [],
+      ['legacy string'],
+      [{ summary: '', text: 'body' }],
+      [{ summary: 'summary', text: ' ' }],
+      [{ summary: 's', text: 'a'.repeat(48000) }],
+    ]) {
       await assert.rejects(invoke('SendUser', { messageId: 'invalid', messages: bad }));
     }
     assert.equal(f.visible.filter((m) => m.type === 'assistant').length, 0);
@@ -747,7 +767,12 @@ test('SendUser delivers a batch in order, retries partial delivery once, and sta
       texts,
     );
     await invoke('SendUser', { messageId: 'batch', messages });
-    for (const changed of [[{ ...messages[0], summary: 'changed' }, ...messages.slice(1)], messages.slice(0, 1), [...messages, { summary: 'extra', text: 'extra' }], [...messages].reverse()]) {
+    for (const changed of [
+      [{ ...messages[0], summary: 'changed' }, ...messages.slice(1)],
+      messages.slice(0, 1),
+      [...messages, { summary: 'extra', text: 'extra' }],
+      [...messages].reverse(),
+    ]) {
       await assert.rejects(
         invoke('SendUser', { messageId: 'batch', messages: changed }),
         /different batch/,
@@ -774,7 +799,10 @@ test('SendUser delivers a batch in order, retries partial delivery once, and sta
     f.visible.filter((m) => m.type === 'assistant').map((m) => m.text),
     texts,
   );
-  assert.deepEqual(f.visible.filter((m) => m.type === 'assistant').map((m) => m.summary), messages.map((m) => m.summary));
+  assert.deepEqual(
+    f.visible.filter((m) => m.type === 'assistant').map((m) => m.summary),
+    messages.map((m) => m.summary),
+  );
 });
 
 test('Batch registration is atomic and recovers pending bubbles in order after reopening', async (t) => {
@@ -902,7 +930,7 @@ test('restart reconciles a persisted queued wake without resubmitting or reading
   let queries = 0;
   let controller: BotController;
   const agent = {
-    snapshot: async () => ({ agent: { status: 'idle' } }),
+    snapshot: async () => ({ agent: { status: state === 'owned' ? 'running' : 'idle' } }),
     followup: async (_text: string, options: { messageId: string }) => {
       assert.equal(options.messageId, store.get<any>('wake').messageId);
       submissions++;
@@ -964,4 +992,104 @@ test('a completed Sleep clears an ambiguous wake error without submitting again'
     return status.bot.sleeping && status.bot.wakeError === null;
   });
   assert.equal(f.starts(), 1);
+});
+
+for (const interruptedStatus of ['idle', 'active', 'aborted']) {
+  test(`restart resumes an owned wake with ${interruptedStatus} worker without losing mail`, async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-owned-recovery-'));
+    let store = new BotStore(dir);
+    store.set('worker', 'worker');
+    store.set('wake', { messageId: 'old-wake', text: 'Resume Inbox' });
+    store.post({ id: 'mail', type: 'user_message', source: 'user', content: 'pending' });
+    store.close();
+    store = new BotStore(dir);
+    let submissions = 0;
+    let status = interruptedStatus;
+    let controller: BotController;
+    const agent = {
+      snapshot: async () => ({ agent: { status } }),
+      messageExecution: async (id: string) => ({
+        state: id === 'old-wake' ? 'owned' : 'not_admitted',
+      }),
+      followup: async (_text: string, options: { messageId: string }) => {
+        assert.notEqual(options.messageId, 'old-wake');
+        assert.equal(options.messageId, store.get<any>('wake').messageId);
+        submissions++;
+        status = 'running';
+        return { disposition: 'turn_started' };
+      },
+      whenIdle: async () => {
+        assert.equal(controller.checkInbox('recovered', 50).items.length, 1);
+        controller.sleep('turn');
+        assert.equal(controller.beforeFinish('turn').allow, true);
+        status = 'idle';
+      },
+      cancel: async () => {},
+    };
+    controller = new BotController(
+      {
+        agents: {
+          withInvocation: async (_: unknown, fn: () => unknown) => fn(),
+          resume: async () => agent,
+        },
+      } as any,
+      { fence() {}, get: () => ({ sessionId: 'owner', cwd: dir }) } as any,
+      store,
+    );
+    t.after(async () => {
+      await controller.close();
+      store.close();
+      await rm(dir, { recursive: true, force: true });
+    });
+    controller.start();
+    await until(() => controller.isSleeping());
+    assert.equal(submissions, 1);
+    assert.equal(store.get('error') ?? null, null);
+    assert.equal(store.get('wake'), null);
+  });
+}
+
+test('omitted wake resolution is retried without replacing its submission identity', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'bot-omitted-wake-'));
+  const store = new BotStore(dir);
+  store.set('worker', 'worker');
+  store.set('wake', { messageId: 'pending-wake', text: 'Resume Inbox' });
+  store.post({ id: 'mail', type: 'user_message', source: 'user', content: 'pending' });
+  let queries = 0;
+  let controller: BotController;
+  const agent = {
+    snapshot: async () => ({ agent: { status: 'running' } }),
+    messageExecution: async (id: string) => {
+      assert.equal(id, 'pending-wake');
+      return ++queries === 1 ? undefined : { state: 'owned' };
+    },
+    followup: async () => {
+      throw Error('must not resubmit');
+    },
+    whenIdle: async () => {
+      controller.checkInbox('recovered', 50);
+      controller.sleep('turn');
+      assert.equal(controller.beforeFinish('turn').allow, true);
+    },
+    cancel: async () => {},
+  };
+  controller = new BotController(
+    {
+      agents: {
+        withInvocation: async (_: unknown, fn: () => unknown) => fn(),
+        resume: async () => agent,
+      },
+    } as any,
+    { fence() {}, get: () => ({ sessionId: 'owner', cwd: dir }) } as any,
+    store,
+  );
+  t.after(async () => {
+    await controller.close();
+    store.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  controller.start();
+  await until(() => controller.isSleeping());
+  assert.equal(queries, 2);
+  assert.equal(store.get('error') ?? null, null);
 });

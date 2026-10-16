@@ -212,7 +212,25 @@ export class BotController {
             return;
           }
           this.store.set('wakeError', null);
-          if (resolution?.state === 'owned') break;
+          if (resolution?.state === 'owned') {
+            const currentStatus = ((await agent.snapshot()) as any)?.agent?.status;
+            if (
+              !this.store.get('sleepTurn') &&
+              ['idle', 'active', 'aborted'].includes(currentStatus)
+            ) {
+              // An admitted wake can outlive its interrupted execution. Keep its
+              // history, but persist a fresh identity before resuming unread mail.
+              wake = { ...wake, messageId: randomUUID() };
+              this.store.set('wake', wake);
+              continue;
+            }
+            break;
+          }
+          // Pending submissions may deliberately be omitted from query results.
+          if (!resolution) {
+            await delay(1000, undefined, { signal: this.abort.signal });
+            continue;
+          }
           if (resolution?.state === 'cancelled') {
             this.store.set('wake', null);
             throw Error('Bot wake was cancelled; Inbox is preserved');
@@ -269,8 +287,10 @@ export class BotController {
     this.store.set('sleepTurn', null);
     return {
       allow: false as const,
-      feedback: this.store.head() > this.deliveredThrough ? UNREAD_SLEEP_FEEDBACK :
-        '你是 Inbox 驱动的 Bot。普通文本不会发送给用户，也不会让你休眠。需要交流用 SendUser，无需继续时调用 Sleep。若 Inbox 还有未投递消息，用 InboxCheck 接收正文后自行决定如何处理；读取不要求回复或完成事情。',
+      feedback:
+        this.store.head() > this.deliveredThrough
+          ? UNREAD_SLEEP_FEEDBACK
+          : '你是 Inbox 驱动的 Bot。普通文本不会发送给用户，也不会让你休眠。需要交流用 SendUser，无需继续时调用 Sleep。若 Inbox 还有未投递消息，用 InboxCheck 接收正文后自行决定如何处理；读取不要求回复或完成事情。',
     };
   }
   async close() {

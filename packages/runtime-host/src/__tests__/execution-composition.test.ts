@@ -323,8 +323,14 @@ test('assistant messages enter a durable Inbox through real Host admission witho
         abortSignal: new AbortController().signal,
         emitOutput() {},
       };
-      await send.impl({ messageId: 'host-reply', messages: [{ summary: '已接手', text: '好的，我来安排。' }] }, call);
-      await send.impl({ messageId: 'host-reply', messages: [{ summary: '已接手', text: '好的，我来安排。' }] }, call);
+      await send.impl(
+        { messageId: 'host-reply', messages: [{ summary: '已接手', text: '好的，我来安排。' }] },
+        call,
+      );
+      await send.impl(
+        { messageId: 'host-reply', messages: [{ summary: '已接手', text: '好的，我来安排。' }] },
+        call,
+      );
       const replies = (await sessionStore.readMessages(chat.id)).filter(
         (row) => row.type === 'assistant',
       );
