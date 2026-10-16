@@ -31,6 +31,71 @@ const nodes = (node) =>
       ]
     : [];
 for (const target of ['tui', 'desktop']) {
+  test(`${target} active context keeps an explicit last-known reading alongside token speed`, async () => {
+    const { component } = await import(`../dist/packages/composer-footer/${target}.js`);
+    const props = {
+      theme,
+      locale: 'en',
+      sessionId: 'session',
+      dataSource: null,
+      running: true,
+      compacting: false,
+      metrics: {
+        modelId: 'fixture',
+        connectionId: 'connection',
+        contextTokens: 100000,
+        contextWindow: 200000,
+        approximate: true,
+        contextLastKnown: true,
+        outputTokensPerSecond: 15.6,
+      },
+    };
+    const last = component.mount(props);
+    const node = (out, key) => nodes(out.frame.view).find((node) => node.key === key);
+    assert.equal(node(last, 'session-context-text').text, 'Context ≈100k / 200k · 50% (last)');
+    assert.equal(node(last, 'session-rate-text').text, ' · 15.6 tok/s');
+    if (target === 'tui') {
+      assert.equal(
+        node(last, 'session-context-text').hint,
+        'Last known context usage; newer additions are not yet counted.',
+      );
+      assert.equal(node(last, 'metrics-percent-text').text, '≈50% (last)');
+      assert.equal(node(last, 'metrics-percent-rate').text, ' · 15.6 tok/s');
+      const noCapacity = component.mount({
+        ...props,
+        metrics: { ...props.metrics, contextWindow: null },
+      });
+      assert.equal(node(noCapacity, 'metrics-percent-text').text, 'Context ≈100k (last)');
+      assert.equal(node(noCapacity, 'metrics-percent-rate').text, ' · 15.6 tok/s');
+    }
+    const fresh = component.update(last.frame.state, {
+      ...props,
+      metrics: { ...props.metrics, contextTokens: 120000, contextLastKnown: false },
+    });
+    assert.equal(node(fresh, 'session-context-text').text, 'Context ≈120k / 200k · 60%');
+    const unknown = component.update(fresh.frame.state, {
+      ...props,
+      metrics: { ...props.metrics, contextTokens: null, contextLastKnown: false },
+    });
+    assert.equal(node(unknown, 'session-context-text').text, 'Context — / 200k');
+    assert.equal(node(unknown, 'session-rate-text').text, ' · 15.6 tok/s');
+    if (target === 'tui') {
+      assert.equal(node(unknown, 'metrics-percent-text').text, 'Context —');
+      assert.equal(node(unknown, 'metrics-percent-rate').text, ' · 15.6 tok/s');
+    }
+    const firstRequest = component.mount({ ...props, metrics: null });
+    assert.equal(node(firstRequest, 'session-context-text').text, 'Context —');
+    const idleUnknown = component.update(unknown.frame.state, {
+      ...props,
+      running: false,
+      metrics: { ...props.metrics, contextTokens: null, contextLastKnown: false },
+    });
+    assert.equal(node(idleUnknown, 'session-rate-text').text, '15.6 tok/s');
+    assert.equal(
+      nodes(idleUnknown.frame.view).filter((node) => node.key === 'session-context-text').length,
+      0,
+    );
+  });
   test(`${target} compaction tints only context and restores the ordinary footer`, async () => {
     const { component } = await import(`../dist/packages/composer-footer/${target}.js`);
     const props = {

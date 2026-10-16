@@ -34,10 +34,11 @@ use sqlx::{Connection, Row, SqliteConnection};
 pub struct ContextUsage {
     pub tokens: u64,
     pub approximate: bool,
+    pub last_known: bool,
 }
 
 impl EventLog {
-    /// Existing provider usage plus bounded additions since its completion.
+    /// Provider usage plus bounded additions, or an explicitly last-known reading.
     /// One read transaction; no prompt reconstruction, plugins or persisted meter.
     pub async fn context_usage(
         &self,
@@ -53,7 +54,10 @@ impl EventLog {
                     let selected = latest_main::read(&mut tx, &session).await?;
                     let usage = match &selected {
                         LatestMainContext::Selected(basis) => {
-                            additions(&mut tx, &session, basis).await?
+                            match additions(&mut tx, &session, basis).await? {
+                                Some(usage) => Some(usage),
+                                None => last_known(&mut tx, &session, basis).await?,
+                            }
                         }
                         _ => None,
                     };
@@ -63,6 +67,35 @@ impl EventLog {
             })
             .await
     }
+}
+
+async fn last_known(
+    connection: &mut SqliteConnection,
+    session: &str,
+    basis: &AcceptedMainContext,
+) -> Result<Option<ContextUsage>, StoreError> {
+    let (Some(input), Some(output)) = (basis.usage.input_tokens, basis.usage.output_tokens) else {
+        return Ok(None);
+    };
+    if !basis.projection_current {
+        return Ok(None);
+    }
+    // A checkpoint replaces the prompt baseline; its predecessor is no longer
+    // a meaningful reading of the active context, even as a last-known value.
+    let reset: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM runtime_events WHERE sequence>?1
+         AND json_extract(event_json,'$.invocation.session_id')=?2
+         AND kind='context_checkpoint_recorded')",
+    )
+    .bind(basis.sequence as i64)
+    .bind(session)
+    .fetch_one(connection)
+    .await?;
+    Ok((!reset).then_some(ContextUsage {
+        tokens: input.saturating_add(output).min(9_007_199_254_740_991),
+        approximate: output != 0,
+        last_known: true,
+    }))
 }
 
 async fn additions(
@@ -79,7 +112,7 @@ async fn additions(
     // Provider usage does not include locally produced results or notices that
     // arrived after its source cut, even if they precede response completion.
     // Retained items from a later interrupted request also invalidate this
-    // display estimate. Wait for fresh usage rather than invent another meter.
+    // display estimate. Until fresh usage, only the last-known reading is valid.
     let unobserved_progress: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM runtime_events c JOIN runtime_events r
          ON r.invocation_id=c.invocation_id AND r.operation_id=c.operation_id AND r.kind='model_requested'
@@ -173,6 +206,7 @@ async fn additions(
         // Provider output is a useful existing baseline, not an exact tokenizer
         // count of its future prompt encoding (reasoning/framing may differ).
         approximate: output != 0 || units != 0,
+        last_known: false,
     }))
 }
 

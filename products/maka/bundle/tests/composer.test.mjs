@@ -106,6 +106,14 @@ function slot(node, key = 'draft') {
     .map((child) => slot(child, key))
     .find(Boolean);
 }
+function findNode(node, key) {
+  if (!node || typeof node !== 'object') return;
+  if (node.key === key) return node;
+  return Object.values(node)
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .map((child) => findNode(child, key))
+    .find(Boolean);
+}
 async function client(target) {
   const { component } = await import(`../dist/packages/composer/${target}.js`);
   const props = {
@@ -508,6 +516,162 @@ for (const target of ['tui', 'desktop']) {
   });
 }
 
+test('active TUI Enter and queue button submit follow-ups and clear only after queued admission', async () => {
+  for (const input of ['enter', 'click']) {
+    const c = await client('tui');
+    c.props.running = true;
+    c.props.sendLabel = 'Queue for next turn';
+    c.ready('多刷一会');
+    assert.equal(c.editor().submit, 'enter');
+    if (input === 'enter') c.emit('submitted', observed('多刷一会'));
+    else {
+      c.raw('send');
+      c.reply({
+        status: 'succeeded',
+        value: { metadata: observed('多刷一会').snapshot.text, text: '' },
+      });
+    }
+    const read = c.out.actions.find((action) => action.key.startsWith('read-'));
+    c.reply(
+      {
+        status: 'succeeded',
+        value: { metadata: observed('多刷一会').snapshot.text, text: '多刷一会' },
+      },
+      read.key,
+    );
+    assert.deepEqual(c.out.actions[0].input, {
+      sessionId: 'session',
+      message: '多刷一会',
+      attachments: [],
+      model: backend.model,
+      thinkingLevel: null,
+    });
+    assert.equal(c.editor().command, null);
+    c.reply({
+      status: 'operation',
+      reply: returned({
+        kind: 'queued',
+        sessionId: 'session',
+        messageId: 'queued-followup',
+        revision: 7,
+      }),
+      caller,
+    });
+    assert.deepEqual(c.editor().command.edit, { kind: 'reset', text: '' });
+    assert.deepEqual(
+      c.out.events.filter((event) => event.name === 'sent'),
+      [{ name: 'sent', value: { context: 'session', dataSource, attachments: [] } }],
+    );
+    c.clear();
+    assert.equal(c.state.entries[0].delivery, null);
+    assert.equal(c.editor().persistence.metadata.historyAfter, 42);
+  }
+});
+
+test('TUI queue click captures the painted native draft before its changed observation arrives', async () => {
+  const c = await client('tui');
+  c.props.running = true;
+  c.ready('');
+  assert.equal(findNode(c.out.frame.view, 'send').disabled, false);
+  c.raw('send');
+  const capture = c.out.actions[0];
+  assert.deepEqual(capture.input, { start: 0, end: 0 });
+  assert.deepEqual(capture.resources.text, {
+    child: 'draft',
+    method: 'snapshot',
+    input: { kind: 'current' },
+  });
+  c.reply({
+    status: 'succeeded',
+    value: { metadata: observed('多刷一会', 2).snapshot.text, text: '' },
+  });
+  assert.deepEqual(c.out.actions[0].input, { start: 0, end: 12 });
+  assert.deepEqual(c.out.actions[0].resources.text.input, {
+    kind: 'at_revision',
+    owner: 'editor',
+    revision: 2,
+  });
+  c.reply({
+    status: 'succeeded',
+    value: { metadata: observed('多刷一会', 2).snapshot.text, text: '多刷一会' },
+  });
+  assert.deepEqual(c.out.actions[0].input, {
+    sessionId: 'session',
+    message: '多刷一会',
+    attachments: [],
+    model: backend.model,
+    thinkingLevel: null,
+  });
+  c.reply({
+    status: 'operation',
+    reply: returned({ kind: 'queued', sessionId: 'session', messageId: 'next', revision: 7 }),
+    caller,
+  });
+  assert.equal(c.editor().command.basedOn, 2);
+  assert.deepEqual(c.editor().command.edit, { kind: 'reset', text: '' });
+});
+
+test('an empty TUI queue click finishes without a latent send and a later draft needs its own intent', async () => {
+  const c = await client('tui');
+  c.props.running = true;
+  c.ready('');
+  c.raw('send');
+  c.reply({ status: 'succeeded', value: { metadata: observed('').snapshot.text, text: '' } });
+  assert.equal(c.state.entries[0].delivery, null);
+  assert.equal(c.state.entries[0].notice, 'empty');
+  c.emit('changed', observed('later', 2));
+  assert.equal(c.state.entries[0].delivery, null);
+  assert.equal(
+    c.out.actions.some((action) => action.binding === 'agent'),
+    false,
+  );
+  c.raw('send');
+  c.reply({
+    status: 'succeeded',
+    value: { metadata: observed('later', 2).snapshot.text, text: '' },
+  });
+  c.reply({
+    status: 'succeeded',
+    value: { metadata: observed('later', 2).snapshot.text, text: 'later' },
+  });
+  assert.equal(c.out.actions[0].input.message, 'later');
+});
+
+test('TUI current capture freezes its destination and a changed native revision keeps the newer draft', async () => {
+  const c = await client('tui');
+  c.props.running = true;
+  c.ready('');
+  c.raw('send');
+  c.reply({
+    status: 'succeeded',
+    value: { metadata: observed('captured', 2).snapshot.text, text: '' },
+  });
+  const read = c.out.actions[0];
+  c.emit('changed', observed('newer draft', 3));
+  c.reply({ status: 'failed', error: 'editor revision changed' }, read.key);
+  assert.equal(c.state.entries[0].delivery, null);
+  assert.equal(c.state.entries[0].notice, 'draftKept');
+  assert.equal(c.editor().command, null);
+  c.raw('send');
+  const capture = c.out.actions[0];
+  c.props.context = 'another-session';
+  c.update();
+  c.reply(
+    {
+      status: 'succeeded',
+      value: { metadata: observed('newer draft', 3).snapshot.text, text: '' },
+    },
+    capture.key,
+  );
+  assert.equal(c.out.actions[0].resources.text.child, 'draft');
+  c.reply({
+    status: 'succeeded',
+    value: { metadata: observed('newer draft', 3).snapshot.text, text: 'newer draft' },
+  });
+  assert.equal(c.out.actions[0].input.sessionId, 'session');
+  assert.equal(c.out.actions[0].input.message, 'newer draft');
+});
+
 test('pending approval keeps the entire composer border amber through focus and execution, then restores it', async () => {
   const c = await client('tui');
   const find = (node) =>
@@ -607,6 +771,137 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(c.out.actions[0].method, 'send');
     assert.equal(c.out.actions[0].input.message, '/skill:review-id');
   });
+  test(`${target} inline skill completion replaces only the cursor token in Unicode multiline drafts`, async () => {
+    for (const selection of ['click', 'enter', 'tab']) {
+      const c = await client(target);
+      const prefix = `请检查😀 ${'context '.repeat(20)}\n`;
+      const draft = `${prefix}/review more context\n保留后文`;
+      const observation = observed(draft);
+      observation.snapshot.selection = { start: prefix.length + 4, end: prefix.length + 4 };
+      c.ready(draft);
+      resolvePrefix(c, draft);
+      c.emit('changed', observation);
+      const search = c.out.actions.find((action) => action.method === 'skillCandidates');
+      assert.deepEqual(search.input, { sessionId: 'session', backend, query: 'rev' });
+      c.reply({ status: 'succeeded', value: { skills: [skill] } }, search.key);
+      assert.equal(has(c, 'slash:create'), false);
+      if (selection === 'click') c.raw('slash:skill:workspace:review');
+      else c.emit('navigated', { key: selection, observation });
+      assert.deepEqual(c.editor().command, {
+        owner: 'editor',
+        sequence: c.editor().command.sequence,
+        basedOn: 1,
+        edit: {
+          kind: 'replace_range',
+          range: { start: prefix.length, end: prefix.length + 7 },
+          text: '/skill:review-id',
+        },
+      });
+      assert.deepEqual(c.editor().inlineTokens, ['/skill:review-id']);
+      const { range, text } = c.editor().command.edit;
+      assert.equal(
+        draft.slice(0, range.start) + text + draft.slice(range.end),
+        `${prefix}/skill:review-id more context\n保留后文`,
+      );
+      assert.deepEqual(c.out.events, []);
+    }
+  });
+  test(`${target} inline completion follows cursor movement and does not intercept paths or IME`, async () => {
+    const c = await client(target);
+    const draft = 'before /rev after';
+    c.ready(draft);
+    resolvePrefix(c, draft);
+    assert.equal(c.editor().navigation, null);
+    const moved = observed(draft, 2);
+    moved.snapshot.text.revision = 1;
+    moved.snapshot.selection = { start: 11, end: 11 };
+    c.emit('changed', moved);
+    const search = c.out.actions.find((action) => action.method === 'skillCandidates');
+    assert.deepEqual(search.input, { sessionId: 'session', backend, query: 'rev' });
+    const marked = structuredClone(moved);
+    marked.revision = 3;
+    marked.snapshot.marked = { start: 8, end: 11 };
+    c.emit('changed', marked);
+    c.reply({ status: 'succeeded', value: { skills: [skill] } }, search.key);
+    c.raw('slash:skill:workspace:review');
+    assert.equal(c.editor().command, null);
+    assert.equal(c.editor().navigation, null);
+    for (const text of ['before /tmp/file', 'https://example.com/rev', 'before /skill:review-id']) {
+      const normal = await client(target);
+      normal.ready(text);
+      resolvePrefix(normal, text);
+      assert.equal(normal.editor().navigation, null);
+      normal.send(text);
+      assert.equal(normal.out.actions[0].input.message, text);
+    }
+  });
+  test(`${target} stale skill replies cannot populate another cursor token`, async () => {
+    const c = await client(target);
+    const draft = 'first /rev second /rev';
+    c.ready(draft);
+    resolvePrefix(c, draft);
+    const oldSearch = c.out.actions.find((action) => action.method === 'skillCandidates');
+    c.emit('navigated', { key: 'escape', observation: observed(draft) });
+    assert.equal(c.editor().navigation, null);
+    const moved = observed(draft, 2);
+    moved.snapshot.text.revision = 1;
+    moved.snapshot.selection = { start: 10, end: 10 };
+    c.emit('changed', moved);
+    const search = c.out.actions.find((action) => action.method === 'skillCandidates');
+    c.reply({ status: 'succeeded', value: { skills: [skill] } }, oldSearch.key);
+    c.raw('slash:skill:workspace:review');
+    assert.equal(c.editor().command, null);
+    c.reply({ status: 'succeeded', value: { skills: [skill] } }, search.key);
+    c.emit('navigated', { key: 'tab', observation: moved });
+    assert.deepEqual(c.editor().command.edit, {
+      kind: 'replace_range',
+      range: { start: 6, end: 10 },
+      text: '/skill:review-id',
+    });
+    assert.equal(c.editor().command.basedOn, 2);
+  });
+  test(`${target} skill descriptions longer than the terminal tooltip limit remain usable`, async () => {
+    const c = await client(target);
+    c.ready('/rev');
+    resolvePrefix(c, '/rev');
+    const search = c.out.actions.find((action) => action.method === 'skillCandidates');
+    c.reply(
+      { status: 'succeeded', value: { skills: [{ ...skill, description: '审查'.repeat(100) }] } },
+      search.key,
+    );
+    const button = findNode(c.out.frame.view, 'slash:skill:workspace:review');
+    assert.equal(button.label, `› /review  ${'审查'.repeat(100)}`);
+    if (target === 'tui') assert.equal(button.hint, '');
+    c.emit('navigated', { key: 'tab', observation: observed('/rev') });
+    assert.deepEqual(c.editor().command.edit, { kind: 'replace', text: '/skill:review-id ' });
+  });
+  test(`${target} completed skill literals reach the native editor before insertion and survive clear and undo`, async () => {
+    const c = await client(target);
+    c.ready('/rev');
+    resolvePrefix(c, '/rev');
+    const search = c.out.actions.find((action) => action.method === 'skillCandidates');
+    c.reply({ status: 'succeeded', value: { skills: [skill] } }, search.key);
+    assert.deepEqual(c.editor().inlineTokens, ['/skill:review-id']);
+    c.emit('navigated', { key: 'tab', observation: observed('/rev') });
+    assert.deepEqual(c.editor().inlineTokens, ['/skill:review-id']);
+    assert.deepEqual(c.editor().command.edit, { kind: 'replace', text: '/skill:review-id ' });
+    c.clear();
+    assert.deepEqual(c.editor().inlineTokens, ['/skill:review-id']);
+    const restored = '说明😀\n/skill:manual-id /skill:review-id /path/skill:ignored /skill:bad/ref';
+    c.emit('changed', observed(restored, 3));
+    resolvePrefix(c, restored, 3);
+    assert.deepEqual(c.editor().inlineTokens, ['/skill:review-id', '/skill:manual-id']);
+    c.emit('changed', observed('undo /skill:review-id ', 4));
+    assert.equal(c.state.entries[0].prefix.cached, null);
+    assert.deepEqual(c.editor().inlineTokens, ['/skill:review-id', '/skill:manual-id']);
+    c.emit('changed', observed('', 5));
+    assert.deepEqual(c.editor().inlineTokens, ['/skill:review-id', '/skill:manual-id']);
+    c.props.context = 'another-session';
+    c.update();
+    const another = c.state.entries.find((entry) => entry.context === 'another-session');
+    assert.deepEqual(c.editor(another.key).inlineTokens, []);
+    assert.deepEqual(c.editor('draft').inlineTokens, ['/skill:review-id', '/skill:manual-id']);
+  });
   test(`${target} failed skill searches preserve commands and retry when reopened`, async () => {
     const c = await client(target);
     c.ready('/');
@@ -668,10 +963,10 @@ for (const target of ['tui', 'desktop']) {
     resolvePrefix(c, '/压缩', 2);
     assert.ok(has(c, 'slash:compact-open'));
     assert.equal(has(c, 'slash:create'), false);
-    c.emit('changed', observed('x'.repeat(129), 3));
+    c.emit('changed', observed('x'.repeat(65537), 3));
     assert.deepEqual(c.out.actions, []);
     assert.equal(has(c, 'slash-menu'), false);
-    assert.equal(JSON.stringify(c.state).includes('x'.repeat(129)), false);
+    assert.equal(JSON.stringify(c.state).includes('x'.repeat(65537)), false);
   });
   test(`${target} slash reads coalesce and stale results cannot restore a menu`, async () => {
     const c = await client(target);

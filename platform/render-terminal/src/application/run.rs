@@ -317,7 +317,12 @@ pub fn run(
                 let mut paint_error = None;
                 let bytes = terminal::render(screen, |frame| {
                     match presenter.paint(frame.area(), frame.buffer_mut()) {
-                        Ok(painted) => scene = Some(painted),
+                        Ok(painted) => {
+                            if let Some(cursor) = painted.cursor_position() {
+                                frame.set_cursor_position(cursor);
+                            }
+                            scene = Some(painted);
+                        }
                         Err(error) => paint_error = Some(error.to_string()),
                     }
                 })

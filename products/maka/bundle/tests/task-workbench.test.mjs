@@ -1273,3 +1273,139 @@ test('pending and unknown submissions never replace canonical activity output', 
     assert.equal(c.state.visits.find((visit) => visit.id === id).submissions[0].status, status);
   }
 });
+
+test('viewing the selected latest tail clears unread only after its exact read receipt', async () => {
+  const timeline = await import('../dist/packages/timeline/tui.js');
+  const c = client()
+    .observe(4)
+    .history(page(4, [chunk(4, 'Latest answer')]));
+  c.state.selected.hasUnread = true;
+  c.raw('sidebar-toggle');
+  assert.equal(
+    c.state.selected.hasUnread,
+    true,
+    'selection and painting alone are not acknowledgement',
+  );
+  const props = c.find(c.reader()).props;
+  const mounted = timeline.component.mount(props, {});
+  const out = timeline.component.event(
+    mounted.frame.state,
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      event: {
+        readingRevision: 1,
+        pendingCommand: null,
+        receipt: mounted.frame.state.command
+          ? { sequence: mounted.frame.state.command.sequence }
+          : null,
+        viewport: {
+          readingRevision: 1,
+          atStart: false,
+          atEnd: true,
+          visibleChildKeys: ['message-' + props.messages.at(-1).id],
+        },
+      },
+    },
+    props,
+    {},
+  );
+  const seen = out.events.find((event) => event.name === 'markRead');
+  assert.ok(seen, 'the latest visible tail acknowledges its original message');
+  c.child(c.reader(), seen.name, seen.value);
+  const action = c.action('markRead');
+  assert.deepEqual(action.input, { sessionId: 'Task A', messageId: 'message-4' });
+  assert.equal(c.state.selected.hasUnread, true, 'the durable receipt owns read state');
+  c.event({
+    kind: 'action',
+    key: action.key,
+    event: {
+      status: 'operation',
+      reply: {
+        reference: { operation: 'read-tail' },
+        receipt: {
+          kind: 'recorded',
+          outcome: {
+            kind: 'returned',
+            value: {
+              kind: 'observed',
+              session: { ...c.state.selected, revision: 2, hasUnread: false },
+            },
+          },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    },
+  });
+  assert.equal(c.state.selected.hasUnread, false);
+  assert.equal(c.state.catalog.sessions.find((entry) => entry.id === 'Task A').hasUnread, false);
+});
+
+test('read acknowledgement cannot replace newer unread observations or clear a different session', () => {
+  const c = client()
+    .observe(4)
+    .history(page(4, [chunk(4, 'Old answer')]));
+  c.state.selected.hasUnread = true;
+  c.child(c.reader(), 'markRead', { sessionId: 'Task A', sequence: 4, field: 'body' });
+  const action = c.action('markRead');
+  assert.equal(action.input.messageId, 'message-4');
+  c.state.selected = { ...c.state.selected, revision: 3, hasUnread: true };
+  c.state.catalog.sessions[0] = c.state.selected;
+  c.event({
+    kind: 'action',
+    key: action.key,
+    event: {
+      status: 'operation',
+      reply: {
+        reference: { operation: 'old-read-tail' },
+        receipt: {
+          kind: 'recorded',
+          outcome: {
+            kind: 'returned',
+            value: {
+              kind: 'observed',
+              session: { ...c.state.selected, revision: 2, hasUnread: false },
+            },
+          },
+          cleanup: { kind: 'confirmed' },
+        },
+      },
+    },
+  });
+  assert.equal(c.state.selected.hasUnread, true);
+  assert.equal(c.state.catalog.sessions[0].hasUnread, true);
+  c.child(c.reader(), 'markRead', { sessionId: 'Task B', sequence: 4, field: 'body' });
+  assert.equal(c.action('markRead'), undefined);
+  c.child(c.reader(), 'markRead', { sessionId: 'Task A', sequence: 99, field: 'body' });
+  assert.equal(c.action('markRead'), undefined, 'an unexposed sequence cannot be acknowledged');
+});
+
+test('background readers, inspectors, dialogs and other pages disable read acknowledgements', () => {
+  for (const change of [
+    { inspector: 'outputs' },
+    { dialog: 'palette' },
+    { pages: ['settings'] },
+    { image: { sessionId: 'Task A', through: 4, sequence: 4 } },
+  ]) {
+    const c = client()
+      .observe(4)
+      .history(page(4, [chunk(4, 'Answer')]));
+    c.state.selected.hasUnread = true;
+    Object.assign(c.state, change);
+    c.raw('unhandled-test-key');
+    const reader = c.find(c.reader());
+    if (reader) assert.equal(reader.props.markReadEnabled, false);
+  }
+  const c = client()
+    .observe(4)
+    .history(page(4, [chunk(4, 'Answer')]));
+  c.state.selected.hasUnread = true;
+  const oldReader = c.reader();
+  c.select('Task B')
+    .observe(5)
+    .history(page(5, [chunk(5, 'Another answer')]));
+  assert.equal(c.find(oldReader).props.markReadEnabled, false);
+  c.child(oldReader, 'markRead', { sessionId: 'Task A', sequence: 4, field: 'body' });
+  assert.equal(c.action('markRead'), undefined);
+});

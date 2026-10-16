@@ -19,7 +19,7 @@
 
 use super::editing::{NativeSnapshot, TextSnapshot};
 use super::{LiveInput, Slots, Widget};
-use gpui_kit::base::input::{InputBase, RopeExt, TextareaState};
+use gpui_kit::base::input::{InlineToken, InputBase, RopeExt, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use maka_ui_runtime::{
@@ -98,6 +98,18 @@ impl TextareaOwner {
                 cx,
             );
             state.set_value(props.initial_text.clone(), window, cx);
+            state
+                .set_literal_tokens(
+                    props
+                        .inline_tokens
+                        .iter()
+                        .map(|text| InlineToken::new(text.clone(), text.clone()))
+                        .collect(),
+                    cx,
+                )
+                .expect("validated inline literals");
+            install_token_style(&mut state, &props.appearance);
+
             state.set_placeholder(props.placeholder.clone(), window, cx);
             state.set_context_menu_enabled(props.menu.is_some());
             // Entity references release before GPUI reclaims their values.
@@ -476,6 +488,17 @@ impl TextareaOwner {
                 self.projection.apply(state);
                 cx.notify();
             }
+            state
+                .set_literal_tokens(
+                    props
+                        .inline_tokens
+                        .iter()
+                        .map(|text| InlineToken::new(text.clone(), text.clone()))
+                        .collect(),
+                    cx,
+                )
+                .expect("validated inline literals");
+            install_token_style(state, &props.appearance);
             state.set_readonly(
                 props.read_only
                     || self
@@ -511,6 +534,8 @@ impl TextareaOwner {
             }
         } else {
             self.sequence = command.sequence;
+            let current = self.snapshot.text.to_string();
+            let value = command.edit.replacement(&current);
             if command.based_on != self.revision {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Revision,
@@ -527,19 +552,22 @@ impl TextareaOwner {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Composition,
                 }
-            } else if match &command.edit {
-                EditorEdit::Replace { text } | EditorEdit::Reset { text } => text.len() > 65536,
-                EditorEdit::Append { text } => {
-                    text.len() > 65536
-                        || self.snapshot.text.len().saturating_add(text.len())
-                            > maka_ui_runtime::textarea::MAX_BUFFER_BYTES
-                }
-            } {
+            } else if value
+                .as_ref()
+                .is_none_or(|value| value.len() > maka_ui_runtime::textarea::MAX_BUFFER_BYTES)
+            {
                 EditorOutcome::Conflict {
                     reason: EditorConflict::Representation,
                 }
             } else {
                 self.state.update(cx, |state, cx| match &command.edit {
+                    EditorEdit::ReplaceRange { range, text } => {
+                        state.set_selected_range(
+                            range.utf8_range(&current).expect("validated range"),
+                            cx,
+                        );
+                        state.replace(text.clone(), window, cx);
+                    }
                     EditorEdit::Replace { text } => state.replace_all(text.clone(), window, cx),
                     EditorEdit::Reset { text } => state.set_value(text.clone(), window, cx),
                     EditorEdit::Append { text } => {
@@ -1105,4 +1133,25 @@ pub(super) fn register(registry: &mut NativeRegistry<dyn Widget>) {
             )]))
         })
         .expect("unique native editor");
+}
+
+fn install_token_style(
+    state: &mut TextareaState,
+    appearance: &maka_ui_runtime::appearance::TextareaAppearance,
+) {
+    let foreground = super::appearance::color(appearance.text.foreground);
+    let background = super::appearance::color(appearance.selection);
+    state.install_token_presentation(
+        Some(Rc::new(move |token, _, _| {
+            div()
+                .px(px(4.))
+                .rounded(px(4.))
+                .bg(background)
+                .text_color(foreground)
+                .child(token.token().label().clone())
+                .into_any_element()
+        })),
+        None,
+        false,
+    );
 }

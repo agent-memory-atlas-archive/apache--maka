@@ -71,6 +71,9 @@ mod history_search;
 #[path = "tests/compaction.rs"]
 mod compaction;
 
+#[path = "tests/metrics.rs"]
+mod metrics;
+
 #[path = "tests/execution.rs"]
 mod execution;
 #[path = "tests/executor.rs"]
@@ -1005,6 +1008,7 @@ async fn actual_http_runs_overlap_and_observer_loss_does_not_cancel_execution() 
         let metrics = &completed["metrics"];
         assert_eq!(metrics["modelId"], "fixture-model");
         assert_eq!(metrics["contextTokens"], 3);
+        assert_eq!(metrics["contextLastKnown"], false);
         let (basis, _) = fixture.store.context_usage(&first).await.unwrap();
         let maka_event_log::context::LatestMainContext::Selected(basis) = basis else { panic!("missing accepted main request") };
         let seconds = basis.recorded_at.duration_since(basis.requested_at.unwrap()).unwrap().as_secs_f64();

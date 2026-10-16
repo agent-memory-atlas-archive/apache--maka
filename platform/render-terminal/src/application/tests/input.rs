@@ -1126,3 +1126,55 @@ fn ordinary_inputs_ctrl_v_normalizes_text_and_keeps_secret_menu_private() {
         close(&mut tui);
     }
 }
+
+#[test]
+fn physical_cursor_tracks_unicode_input_and_the_foreground_dialog() {
+    use ratatui::layout::Position;
+    for secret in [false, true] {
+        let (_runtime, mut tui) = input_presenter(secret, true);
+        draw(&mut tui, 50, 24);
+        tui.input_settled(Event::Paste("中🙂".into())).unwrap();
+        let focus = tui.focus.clone().unwrap();
+        let area = tui
+            .scene
+            .iter()
+            .find(|target| target.same(&focus))
+            .unwrap()
+            .area
+            .visible();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 50, 24));
+        let pending = tui.paint(buffer.area, &mut buffer).unwrap();
+        assert_eq!(
+            pending.cursor_position(),
+            Some(Position::new(
+                area.x + 1 + if secret { 2 } else { 4 },
+                area.y + 1
+            ))
+        );
+        tui.present(pending);
+        dispatch(&mut tui, "modalToggle", json!({"open":true}));
+        let pending = tui.paint(buffer.area, &mut buffer).unwrap();
+        assert_eq!(
+            pending.cursor_position(),
+            None,
+            "background editor must not anchor the new modal's IME"
+        );
+        tui.present(pending);
+        draw(&mut tui, 50, 24);
+        let query = tui.focus.clone().unwrap();
+        assert!(!query.same(&focus));
+        let area = tui
+            .scene
+            .iter()
+            .find(|target| target.same(&query))
+            .unwrap()
+            .area
+            .visible();
+        let pending = tui.paint(buffer.area, &mut buffer).unwrap();
+        assert_eq!(
+            pending.cursor_position(),
+            Some(Position::new(area.x + 1, area.y + 1))
+        );
+        close(&mut tui);
+    }
+}

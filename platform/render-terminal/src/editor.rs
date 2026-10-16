@@ -77,6 +77,7 @@ pub struct Editor {
     byte_limit: usize,
     limit_error: &'static str,
     text: String,
+    inline_tokens: Vec<String>,
     selection: Selection,
     undo: VecDeque<Edit>,
     redo: Vec<Edit>,
@@ -100,6 +101,7 @@ impl Default for Editor {
             byte_limit: MAX_TEXT_BYTES,
             limit_error: "composer-too-large",
             text: String::new(),
+            inline_tokens: Vec::new(),
             selection: Selection::default(),
             undo: VecDeque::new(),
             redo: Vec::new(),
@@ -132,6 +134,28 @@ impl Editor {
             ..Self::bounded(byte_limit, "input-too-large")
         }
     }
+    pub(crate) fn set_inline_tokens(&mut self, literals: &[String]) {
+        if self.inline_tokens != literals {
+            self.inline_tokens = literals.to_vec();
+        }
+    }
+    fn inline_token_ranges(&self) -> Vec<Range<usize>> {
+        maka_ui_runtime::textarea::inline_token_ranges(&self.text, &self.inline_tokens)
+    }
+    fn atomic_range(&self, mut range: Range<usize>) -> Range<usize> {
+        for token in self.inline_token_ranges() {
+            if range.is_empty() {
+                if token.start < range.start && range.start < token.end {
+                    return token.end..token.end;
+                }
+            } else if range.start < token.end && token.start < range.end {
+                range.start = range.start.min(token.start);
+                range.end = range.end.max(token.end);
+            }
+        }
+        range
+    }
+
     fn make_layout(&self, width: u16) -> Layout {
         if self.single_line {
             Layout::single_line(&self.text, width, self.masked)
@@ -183,7 +207,7 @@ impl Editor {
             .is_some_and(|anchor| anchor > self.selection.cursor)
     }
     pub(crate) fn selected_text(&self) -> &str {
-        &self.text[self.selection.range()]
+        &self.text[self.atomic_range(self.selection.range())]
     }
     pub(crate) fn select_all(&mut self) {
         self.selection.anchor = Some(0);
@@ -316,7 +340,7 @@ impl Editor {
             return true;
         }
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
-        let range = self.selection.range();
+        let range = self.atomic_range(self.selection.range());
         if self.text.len() - range.len() + text.len() > self.byte_limit {
             self.error = Some(self.limit_error);
             return true;
@@ -325,11 +349,17 @@ impl Editor {
         true
     }
 
+    /// Apply an already admitted byte range as one history entry.
+    pub(crate) fn replace_range(&mut self, range: Range<usize>, text: &str) {
+        self.replace(range, text);
+    }
+
     pub fn clear(&mut self) {
         self.replace(0..self.text.len(), "");
     }
 
     fn replace(&mut self, range: Range<usize>, inserted: &str) {
+        let range = self.atomic_range(range);
         self.error = None;
         if self.text[range.clone()] == *inserted {
             self.selection = Selection {
@@ -625,6 +655,40 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_literals_delete_atomically_from_edges_inside_and_partial_selection() {
+        let original = "🙂 /skill:技能 suffix";
+        let start = "🙂 ".len();
+        let end = start + "/skill:技能".len();
+        for (cursor, anchor, code) in [
+            (end, None, KeyCode::Backspace),
+            (start, None, KeyCode::Delete),
+            (start + 2, None, KeyCode::Delete),
+            (start + 5, Some(start + 2), KeyCode::Backspace),
+        ] {
+            let mut editor = Editor::default();
+            editor.set_inline_tokens(&["/skill:技能".into()]);
+            editor.insert(original);
+            editor.clear_history();
+            editor.selection = Selection {
+                cursor,
+                anchor,
+                upstream: false,
+            };
+            editor.key(KeyEvent::new(code, KeyModifiers::NONE));
+            assert_eq!(editor.text(), "🙂  suffix");
+            editor.undo(false);
+            assert_eq!(editor.text(), original);
+            assert!(editor.undo.is_empty());
+        }
+        let mut editor = Editor::default();
+        editor.set_inline_tokens(&["/skill:foo".into()]);
+        editor.insert("/skill:foo-extra");
+        editor.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(editor.text(), "/skill:foo-extr");
+    }
+
     use ratatui::{
         Frame, Terminal,
         backend::TestBackend,

@@ -2340,3 +2340,24 @@ fn resize_grip_changes_height_without_editing_text_or_selection() {
     );
     close(&mut tui);
 }
+
+#[test]
+fn physical_cursor_follows_the_rendered_multiline_caret_after_resize() {
+    use ratatui::layout::Position;
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 24);
+    tui.input_settled(Event::Paste("中🙂\n末".into())).unwrap();
+    for width in [50, 11, 32] {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, width, 24));
+        let pending = tui.paint(buffer.area, &mut buffer).unwrap();
+        let (x, y) = (0..24)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .find(|&(x, y)| buffer[(x, y)].symbol() == "末")
+            .expect("last edited line is painted");
+        assert_eq!(pending.cursor_position(), Some(Position::new(x + 2, y)));
+        tui.present(pending);
+        tui.settle().unwrap();
+    }
+    tui.surface_closed(&tui.surface(), Ok(())).unwrap();
+    tui.shutdown_settled().unwrap();
+}

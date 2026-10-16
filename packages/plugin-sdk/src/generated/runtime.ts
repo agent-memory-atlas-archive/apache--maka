@@ -1189,6 +1189,11 @@ export type ScrollbarEntrance = 'fade' | 'slide_and_fade';
 export type SubmitKey = 'enter' | 'primary_enter' | 'control_enter';
 export type EditorEdit =
   | {
+      range: TextRange;
+      text: string;
+      kind: 'replace_range';
+    }
+  | {
       text: string;
       kind: 'replace';
     }
@@ -6084,6 +6089,12 @@ export interface Elapsed {
 }
 export interface TextareaProps {
   appearance: TextareaAppearance;
+  /**
+   * Exact whitespace-delimited literals rendered and edited as atomic inline tokens.
+   *
+   * @maxItems 4096
+   */
+  inlineTokens?: string[];
   menu?: TextareaMenu | null;
   accessibilityLabel: string;
   readOnly: boolean;
@@ -6256,6 +6267,13 @@ export interface EditorCommand {
   sequence: number;
   basedOn: number;
   edit: EditorEdit;
+}
+/**
+ * Ordered UTF-16 code-unit offsets, shared by selections and range edits.
+ */
+export interface TextRange {
+  start: number;
+  end: number;
 }
 export interface FilePastePolicy {
   context: string;
@@ -6772,10 +6790,6 @@ export interface EditorSnapshot {
   selection: TextRange;
   reversed: boolean;
   marked: TextRange | null;
-}
-export interface TextRange {
-  start: number;
-  end: number;
 }
 export interface EditorReceipt {
   owner: string;
@@ -9899,6 +9913,10 @@ export interface AgentSessionMetrics {
   contextTokens?: number | null;
   contextWindow?: number | null;
   approximate: boolean;
+  /**
+   * The context count is the last completed request's baseline; newer additions are unknown.
+   */
+  contextLastKnown: boolean;
   /**
    * Provider output tokens divided by the model request's wall time.
    * Includes reasoning and time to first token; excludes tool/user waits.

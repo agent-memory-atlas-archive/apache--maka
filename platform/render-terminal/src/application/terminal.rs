@@ -196,7 +196,7 @@ impl Widget for Recipe {
             );
             paint::text(line, line_area, buffer, style);
         }
-        if focused
+        let cursor = if focused
             && owner.core.captured()
             && owner.core.scroll == 0
             && let Some(display) = &owner.core.display
@@ -208,7 +208,11 @@ impl Widget for Recipe {
                     .bg(color(self.0.caret))
                     .fg(color(self.0.background)),
             );
-        }
+            Some(point)
+        } else {
+            None
+        };
+        slots.native_cursor(cursor)?;
         slots.native_geometry(Box::new(Geometry {
             area,
             focused,

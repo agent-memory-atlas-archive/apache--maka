@@ -39,6 +39,10 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextareaProps {
     pub appearance: crate::appearance::TextareaAppearance,
+    /// Exact whitespace-delimited literals rendered and edited as atomic inline tokens.
+    #[serde(default)]
+    #[schemars(schema_with = "inline_tokens_schema")]
+    pub inline_tokens: Vec<String>,
     #[serde(default)]
     pub menu: Option<TextareaMenu>,
     #[schemars(length(min = 1, max = 512))]
@@ -80,6 +84,48 @@ pub struct TextareaProps {
     pub file_command: Option<FilePasteCommand>,
     #[serde(default)]
     pub persistence: Option<crate::checkpoint::EditorPersistence>,
+}
+
+fn inline_tokens_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    serde_json::json!({"type":"array","maxItems":4096,"items":{
+        "type":"string","minLength":1,"maxLength":512,"pattern":r"^\S+$"
+    }})
+    .try_into()
+    .expect("inline token schema")
+}
+
+/// Source byte spans for exact whole-word literals; no prefix matching.
+pub fn inline_token_ranges(text: &str, literals: &[String]) -> Vec<std::ops::Range<usize>> {
+    if literals.is_empty() {
+        return Vec::new();
+    }
+    let literals: std::collections::BTreeSet<&str> = literals.iter().map(String::as_str).collect();
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for word in text.split_whitespace() {
+        let offset = text[start..].find(word).expect("word in source") + start;
+        if literals.contains(word) {
+            ranges.push(offset..offset + word.len());
+        }
+        start = offset + word.len();
+    }
+    if !ranges.is_empty() {
+        use unicode_segmentation::UnicodeSegmentation;
+        let mut boundaries = text
+            .grapheme_indices(true)
+            .map(|(offset, _)| offset)
+            .chain(std::iter::once(text.len()))
+            .peekable();
+        ranges.retain(|range| {
+            [range.start, range.end].into_iter().all(|offset| {
+                while boundaries.peek().is_some_and(|boundary| *boundary < offset) {
+                    boundaries.next();
+                }
+                boundaries.peek() == Some(&offset)
+            })
+        });
+    }
+    ranges
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -328,6 +374,17 @@ pub fn reduce(
         ));
     }
     output.frame.state["persistence"] = identity;
+    if output.frame.view.inline_tokens.len() > 4096
+        || output.frame.view.inline_tokens.iter().any(|literal| {
+            literal.is_empty()
+                || literal.len() > 512
+                || literal.chars().any(|c| c.is_whitespace() || c.is_control())
+        })
+    {
+        return Err(crate::Error::Invalid(
+            "invalid inline token literals".into(),
+        ));
+    }
     let rows = output.frame.view.terminal_rows;
     if rows.min == 0
         || rows.min > rows.max
@@ -418,4 +475,31 @@ pub fn native() -> maka_plugin_core::package::NativeDefinition {
         serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
         [("Textarea", textarea_contract())],
     )
+}
+
+#[cfg(test)]
+mod inline_token_tests {
+    use super::*;
+
+    #[test]
+    fn inline_literals_match_whole_unicode_words_only() {
+        let text = "🙂 /skill:foo /skill:foo-extra\n/skill:技能 後";
+        let literals = vec!["/skill:foo".into(), "/skill:技能".into()];
+        let spans = inline_token_ranges(text, &literals);
+        assert_eq!(
+            spans
+                .iter()
+                .map(|range| &text[range.clone()])
+                .collect::<Vec<_>>(),
+            vec!["/skill:foo", "/skill:技能"]
+        );
+        assert_eq!(spans[0].start, "🙂 ".len());
+        assert_eq!(
+            inline_token_ranges("/skill:foo /skill:foo", &literals),
+            vec![0..10, 11..21]
+        );
+        assert!(inline_token_ranges(text, &[]).is_empty());
+
+        assert!(inline_token_ranges(" \u{301}x", &["\u{301}x".into()]).is_empty());
+    }
 }

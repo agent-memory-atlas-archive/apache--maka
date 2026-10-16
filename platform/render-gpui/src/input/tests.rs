@@ -962,3 +962,48 @@ fn native_utf8_capacity_covers_typed_text_and_explicit_commands(cx: &mut TestApp
     })
     .unwrap();
 }
+
+#[gpui::test]
+fn range_command_preserves_unicode_suffix_and_places_caret_after_replacement(
+    cx: &mut TestAppContext,
+) {
+    let MountedInput { owner, window, .. } = harness(cx, false);
+    let mut configured = props();
+    let id = cx.update(|cx| owner.read(cx).owner_id().to_owned());
+    for (sequence, edit) in [
+        EditorEdit::Reset {
+            text: "🙂e\u{301}/old suffix".into(),
+        },
+        EditorEdit::ReplaceRange {
+            range: TextRange { start: 5, end: 8 },
+            text: "new技能".into(),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        configured.command = Some(EditorCommand {
+            owner: id.clone(),
+            sequence: sequence as u64 + 1,
+            based_on: cx.update(|cx| owner.read(cx).revision),
+            edit,
+        });
+        cx.update_window(window, |_, window, cx| {
+            owner.update(cx, |owner, cx| owner.apply(&configured, window, cx))
+        })
+        .unwrap();
+    }
+    cx.update(|cx| {
+        let owner = owner.read(cx);
+        assert_eq!(
+            owner.receipt.as_ref().unwrap().outcome,
+            EditorOutcome::Applied
+        );
+        assert_eq!(
+            owner.state.read(cx).value().as_ref(),
+            "🙂e\u{301}/new技能 suffix"
+        );
+        assert_eq!(owner.snapshot.selection, TextRange { start: 10, end: 10 });
+        assert!(owner.state.read(cx).can_undo());
+    });
+}

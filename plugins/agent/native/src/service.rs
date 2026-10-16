@@ -319,6 +319,15 @@ impl Handler for Agent {
                             maka_event_log::context::LatestMainContext::Selected(basis),
                             usage,
                         )) => {
+                            let backend_matches = matches!(
+                                session.backend.as_ref().or(remembered_backend.as_ref()),
+                                Some(BackendPreference::Model { model_id, connection_id, .. })
+                                    if model_id == &basis.model_id
+                                        && basis.connection_id.as_ref() == Some(connection_id)
+                            );
+                            let usage = usage.filter(|usage| {
+                                !usage.last_known || (run.is_some() && backend_matches)
+                            });
                             let seconds = basis
                                 .requested_at
                                 .and_then(|at| basis.recorded_at.duration_since(at).ok())
@@ -333,6 +342,9 @@ impl Handler for Agent {
                                     .as_ref()
                                     .and_then(|context| context.model_context_window),
                                 approximate: usage.as_ref().is_some_and(|usage| usage.approximate),
+                                context_last_known: usage
+                                    .as_ref()
+                                    .is_some_and(|usage| usage.last_known),
                                 output_tokens_per_second: basis
                                     .usage
                                     .output_tokens

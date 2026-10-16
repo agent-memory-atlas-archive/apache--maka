@@ -37,6 +37,12 @@ pub struct EditorCommand {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EditorEdit {
+    /// Replace a bounded UTF-16 range in the current revision, preserving its suffix.
+    ReplaceRange {
+        range: TextRange,
+        #[schemars(length(max = 65536))]
+        text: String,
+    },
     Replace {
         #[schemars(length(max = 65536))]
         text: String,
@@ -54,9 +60,60 @@ pub enum EditorEdit {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+/// Ordered UTF-16 code-unit offsets, shared by selections and range edits.
 pub struct TextRange {
     pub start: usize,
     pub end: usize,
+}
+impl TextRange {
+    /// Convert protocol UTF-16 offsets to UTF-8, rejecting split graphemes.
+    pub fn utf8_range(&self, text: &str) -> Option<std::ops::Range<usize>> {
+        use unicode_segmentation::UnicodeSegmentation;
+        if self.start > self.end {
+            return None;
+        }
+        let mut offset = 0;
+        let mut start = None;
+        let mut end = None;
+        for (byte, grapheme) in text.grapheme_indices(true) {
+            if offset == self.start {
+                start = Some(byte);
+            }
+            if offset == self.end {
+                end = Some(byte);
+            }
+            offset += grapheme.encode_utf16().count();
+        }
+        if offset == self.start {
+            start = Some(text.len());
+        }
+        if offset == self.end {
+            end = Some(text.len());
+        }
+        Some(start?..end?)
+    }
+}
+impl EditorEdit {
+    /// Prospective native buffer, bounded per command and checked before mutation.
+    pub fn replacement(&self, current: &str) -> Option<String> {
+        let (Self::ReplaceRange { text, .. }
+        | Self::Replace { text }
+        | Self::Reset { text }
+        | Self::Append { text }) = self;
+        if text.len() > 65536 {
+            return None;
+        }
+        match self {
+            Self::ReplaceRange { range, text } => {
+                let range = range.utf8_range(current)?;
+                let mut value = current.to_owned();
+                value.replace_range(range, text);
+                Some(value)
+            }
+            Self::Append { text } => Some(format!("{current}{text}")),
+            Self::Replace { text } | Self::Reset { text } => Some(text.clone()),
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -137,4 +194,43 @@ pub use super::text::text_resource_type;
 
 fn nullable_schema<T: JsonSchema>(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     generator.subschema_for::<Option<T>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn range_replacement_uses_utf16_and_rejects_split_or_invalid_graphemes() {
+        let current = "🙂e\u{301}/old suffix";
+        assert_eq!(
+            TextRange { start: 5, end: 8 }.utf8_range(current),
+            Some(8..11)
+        );
+        let edit = EditorEdit::ReplaceRange {
+            range: TextRange { start: 5, end: 8 },
+            text: "new".into(),
+        };
+        assert_eq!(
+            edit.replacement(current).as_deref(),
+            Some("🙂e\u{301}/new suffix")
+        );
+        for range in [
+            TextRange { start: 1, end: 2 },
+            TextRange { start: 2, end: 3 },
+            TextRange { start: 8, end: 5 },
+            TextRange { start: 99, end: 99 },
+        ] {
+            assert!(range.utf8_range(current).is_none());
+        }
+        assert_eq!(TextRange { start: 0, end: 0 }.utf8_range(""), Some(0..0));
+        assert!(
+            EditorEdit::ReplaceRange {
+                range: TextRange { start: 0, end: 0 },
+                text: "x".repeat(65537),
+            }
+            .replacement(current)
+            .is_none()
+        );
+    }
 }

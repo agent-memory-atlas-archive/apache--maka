@@ -169,3 +169,5 @@ The local physical input groups, exact byte selections, per-hitbox retained geom
 同步上游后，菜单回调、解析确认和部分只读选区投影直接采用上游实现。仍保留上游尚未覆盖的物理输入隔离、精确字节选区、保留帧几何与局部主题投影；本次不合并独立性能分支，也不代表完成 gpui-shell 迁移。
 
 Participant enablement checks the current value before acquiring a write lease. Repeating the same admission state during layout must not invalidate retained rows under upstream's finer-grained entity-write tracking; real enablement changes retain the original revocation and group withdrawal path.
+
+Plain input modes can install an exact whitespace-delimited literal-token registry. The existing inline-token store derives annotations synchronously after native edits, initialization and history replay; active IME text remains provisional until commit. This reuses upstream chip geometry and atomic range expansion without replacing the native buffer, selection or undo owner. An absent registry preserves the existing explicit token API; an explicitly empty registry removes literal annotations, including during later undo. Tests cover Unicode surroundings, repeated references, partial selections, interior carets, both deletion directions, cut, completion, history and composition.

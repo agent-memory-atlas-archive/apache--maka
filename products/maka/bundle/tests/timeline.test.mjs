@@ -683,3 +683,106 @@ test('user-to-response spacing is one plain row above the response, not part of 
     );
   }
 });
+
+test('only an observed latest tail acknowledges the displayed message', () => {
+  const props = {
+    theme,
+    locale: 'en',
+    copyRequest: null,
+    browse: null,
+    timings: [],
+    markReadEnabled: true,
+    toolContext: { sessionId: 'session', through: 8 },
+    waitingTools: [],
+    liveTools: [],
+    source: null,
+    search: null,
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
+    live: false,
+    messages: [
+      {
+        id: 'answer',
+        contentKey: 'answer',
+        role: 'assistant',
+        text: 'Answer',
+        timestamp: null,
+        source: 8,
+        image: false,
+        continued: false,
+        tool: null,
+      },
+    ],
+  };
+  const observation = {
+    readingRevision: 1,
+    pendingCommand: null,
+    viewport: {
+      readingRevision: 1,
+      atStart: false,
+      atEnd: true,
+      visibleChildKeys: ['message-answer'],
+    },
+  };
+  const read = (changes = {}, observed = observation) => {
+    const current = { ...props, ...changes };
+    const mounted = component.mount(current, {});
+    assert.equal(
+      mounted.events.some((event) => event.name === 'markRead'),
+      false,
+    );
+    const out = component.event(
+      mounted.frame.state,
+      {
+        kind: 'component',
+        child: 'reading',
+        name: 'observed',
+        event: observed,
+      },
+      current,
+      {},
+    );
+    return out.events.find((event) => event.name === 'markRead');
+  };
+  assert.deepEqual(read(), {
+    name: 'markRead',
+    value: { sessionId: 'session', sequence: 8, field: 'body' },
+  });
+  assert.ok(
+    read({ messages: [{ ...props.messages[0], continued: true }] }),
+    'the visible final fragment of a long message still acknowledges its original identity',
+  );
+  for (const changes of [
+    { markReadEnabled: false },
+    { loading: true },
+    { latest: true },
+    { newer: true },
+    { browse: 1 },
+    { toolContext: null },
+    { messages: [{ ...props.messages[0], source: null }] },
+    { messages: [{ ...props.messages[0], role: 'thinking' }] },
+  ])
+    assert.equal(read(changes), undefined, JSON.stringify(changes));
+  assert.equal(read({}, { ...observation, pendingCommand: 1 }), undefined);
+  assert.equal(
+    read({ messages: [...props.messages, { ...props.messages[0], id: 'new-answer', source: 9 }] }),
+    undefined,
+    'a queued observation of the previous tail cannot acknowledge a newly appended message',
+  );
+  assert.equal(
+    read({}, { ...observation, viewport: { ...observation.viewport, visibleChildKeys: [] } }),
+    undefined,
+    'being at the end is insufficient without the actual tail in the visible children',
+  );
+  assert.equal(
+    read({}, { ...observation, viewport: { ...observation.viewport, atEnd: false } }),
+    undefined,
+  );
+  assert.equal(
+    read({}, { ...observation, viewport: { ...observation.viewport, readingRevision: 0 } }),
+    undefined,
+  );
+});

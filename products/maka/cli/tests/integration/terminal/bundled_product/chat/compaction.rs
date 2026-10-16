@@ -105,6 +105,28 @@ fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() 
     tui.send(b"\x01");
     tui.send(b"\x7f");
     tui.wait_for("Message…");
+    paste(&mut tui, "请用 /pty-visible 保留尾巴😀");
+    tui.wait_for("请用 /pty-visible 保留尾巴😀");
+    // Move back across the Unicode suffix to complete only the inline token.
+    tui.send(b"\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D");
+    tui.wait_for("PTY visible workspace skill");
+    tui.send(b"\t");
+    tui.wait_for("请用 /skill:pty-visible-skill 保留尾巴😀");
+    evidence(&tui, "inline-skill-completion");
+    tui.send(b"\x7f");
+    tui.wait_for("请用  保留尾巴😀");
+    assert!(
+        !tui.screen
+            .snapshot()
+            .unwrap()
+            .screen
+            .contains("/skill:pty-visible-skill")
+    );
+    tui.send(b"\x1a");
+    tui.wait_for("请用 /skill:pty-visible-skill 保留尾巴😀");
+    tui.send(b"\x01");
+    tui.send(b"\x7f");
+    tui.wait_for("Message…");
     paste(
         &mut tui,
         "Remember the Unicode decision and keep deployment pending.",

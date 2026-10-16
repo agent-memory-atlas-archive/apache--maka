@@ -33,6 +33,24 @@ pub(crate) struct Geometry {
     scrollbar: Option<Placement>,
 }
 impl Geometry {
+    /// Physical editing position from this pending frame, including wrap and clipping.
+    pub(crate) fn cursor_position(&self) -> Option<Position> {
+        if self.area.is_empty() {
+            return None;
+        }
+        let (row, column) = self
+            .layout
+            .cursor(self.selection.cursor, self.selection.upstream);
+        if row < self.top || row >= self.top + self.area.height as usize {
+            return None;
+        }
+        self.area.point(
+            column
+                .saturating_sub(self.left)
+                .min(self.area.width.saturating_sub(1) as usize),
+            row - self.top,
+        )
+    }
     pub(crate) fn paint_scrollbar(
         &self,
         buffer: &mut Buffer,
@@ -113,6 +131,7 @@ impl Editor {
         selected: Style,
         caret: Style,
     ) -> Geometry {
+        let tokens = self.inline_token_ranges();
         let mut area = area;
         let mut layout = self.make_layout(area.width);
         let scrollbar = if !self.single_line
@@ -193,6 +212,12 @@ impl Editor {
                     let style =
                         if cell.bytes.start < selection.end && cell.bytes.end > selection.start {
                             selected
+                        } else if tokens.iter().any(|token| {
+                            token.start <= cell.bytes.start && cell.bytes.end <= token.end
+                        }) {
+                            normal.add_modifier(
+                                ratatui::style::Modifier::BOLD | ratatui::style::Modifier::REVERSED,
+                            )
                         } else {
                             normal
                         };
@@ -267,6 +292,39 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_literal_style_stays_inside_source_cells() {
+        let mut editor = Editor::default();
+        editor.set_inline_tokens(&["/skill:foo".into()]);
+        editor.insert("x /skill:foo z");
+        let mut buffer = Buffer::empty(ratatui::layout::Rect::new(0, 0, 30, 1));
+        editor.paint_prepared(
+            ratatui::layout::Rect::new(0, 0, 30, 1).into(),
+            &mut buffer,
+            false,
+            Style::default(),
+            Style::default(),
+            Style::default(),
+        );
+        assert!(
+            !buffer[(0, 0)]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+        assert!(
+            buffer[(2, 0)]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD | ratatui::style::Modifier::REVERSED)
+        );
+        assert_eq!(buffer[(2, 0)].symbol(), "/");
+        assert!(
+            !buffer[(12, 0)]
+                .modifier
+                .contains(ratatui::style::Modifier::BOLD)
+        );
+    }
+
     use ratatui::layout::Rect;
     fn paint(editor: &Editor, area: Rect) -> (Geometry, Buffer) {
         let mut buffer = Buffer::empty(area);

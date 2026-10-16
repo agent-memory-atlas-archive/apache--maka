@@ -349,6 +349,9 @@ impl Widget for Recipe {
             );
         }
         let autofocus = owner.focus.pending();
+        if !self.props.disabled {
+            slots.native_cursor(geometry.cursor_position())?;
+        }
         slots.native_geometry(Box::new(geometry))?;
         if !self.props.disabled {
             slots.native_target("observe", area, self.props.tab_index, autofocus)?;

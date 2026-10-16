@@ -124,6 +124,15 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
     log.append(&completion("active", "main-step", "Finished main work"))
         .await
         .unwrap();
+    assert_eq!(
+        log.context_usage("session")
+            .await
+            .unwrap()
+            .1
+            .unwrap()
+            .tokens,
+        12
+    );
     let write = checkpoint(&log, "active", mode.clone()).await;
     let bad_terminal = event(
         "active",
@@ -148,6 +157,11 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
             .is_none()
     );
     log.append(&write).await.unwrap();
+    assert_eq!(
+        log.context_usage("session").await.unwrap().1,
+        None,
+        "a checkpoint must not expose the previous prompt as last-known current context"
+    );
     let commits = log.subscribe_commits();
     log.append(&write).await.unwrap();
     assert!(!commits.has_changed().unwrap());

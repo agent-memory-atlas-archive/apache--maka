@@ -22,7 +22,7 @@ use super::{CellRect, Placement, Presenter};
 use maka_plugin_core::runtime::Mount;
 use ratatui::{
     buffer::Buffer,
-    layout::{Rect, Size},
+    layout::{Position, Rect, Size},
     style::{Color, Modifier, Style},
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -280,6 +280,7 @@ impl Target {
 /// A pending scene is not input geometry until the embedding confirms a flush.
 /// 绘制成功并完成实际 flush 后，才发布对应的命中区域。
 pub struct PaintedScene {
+    cursor: Option<(Option<super::dialog::Scope>, Position)>,
     next_frame: Option<std::time::Instant>,
     tooltip: Option<(Option<super::dialog::Scope>, Placement, String, Style)>,
     pub(super) viewport: Rect,
@@ -298,6 +299,19 @@ pub struct PaintedScene {
     openings: Vec<super::dialog::Scope>,
     pub(super) input_path: Vec<super::dialog::Scope>,
     pub(super) foreground_path: Vec<super::dialog::Scope>,
+}
+
+impl PaintedScene {
+    /// The focused editor's physical cursor, used by terminal IME positioning.
+    pub fn cursor_position(&self) -> Option<Position> {
+        self.cursor
+            .as_ref()
+            .filter(|(scope, _)| {
+                self.editor_menu.is_none()
+                    && super::dialog::same_scope(scope, &self.foreground_path.last().cloned())
+            })
+            .map(|(_, position)| *position)
+    }
 }
 
 struct PaintedMount {
@@ -477,6 +491,19 @@ impl Slots<'_> {
                     owner: std::rc::Rc::downgrade(&owner.identity),
                 },
             );
+        Ok(())
+    }
+    /// Keep the physical cursor in the same output transaction as its editor.
+    pub fn native_cursor(&mut self, position: Option<Position>) -> maka_ui_runtime::Result<()> {
+        if !self.focused() {
+            return Ok(());
+        }
+        let scene = self.scene.as_deref_mut().ok_or_else(|| {
+            maka_ui_runtime::Error::Invalid("cannot position cursor while measuring".into())
+        })?;
+        scene.cursor = position
+            .filter(|position| scene.viewport.contains(*position))
+            .map(|position| (scene.input_scope.clone(), position));
         Ok(())
     }
     pub fn native_geometry(
@@ -688,6 +715,7 @@ impl Presenter {
                 .fg(Color::Rgb(235, 235, 240)),
         );
         let mut scene = PaintedScene {
+            cursor: None,
             next_frame: None,
             tooltip: None,
             viewport: area,

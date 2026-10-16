@@ -172,6 +172,7 @@ impl Widget for Recipe {
             ),
             &self.props.initial_text,
         );
+        edit.editor.set_inline_tokens(&self.props.inline_tokens);
         edit.clipboard(context.clone());
         Box::new(Owner {
             checkpoint,
@@ -187,6 +188,10 @@ impl Widget for Recipe {
         let owner = state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
+        owner
+            .edit
+            .editor
+            .set_inline_tokens(&self.props.inline_tokens);
         owner.files.commit(
             self.file_request.as_deref(),
             self.props.file_command.as_ref(),
@@ -673,6 +678,9 @@ impl Widget for Recipe {
             } else {
                 None
             };
+        if !self.props.disabled {
+            slots.native_cursor(geometry.cursor_position())?;
+        }
         slots.native_geometry(Box::new(Presented {
             editor: geometry,
             resize,

@@ -3941,6 +3941,19 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/TextareaAppearance',
           },
+          inlineTokens: {
+            description:
+              'Exact whitespace-delimited literals rendered and edited as atomic inline tokens.',
+            type: 'array',
+            maxItems: 4096,
+            items: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 512,
+              pattern: '^\\S+$',
+            },
+            default: [],
+          },
           menu: {
             anyOf: [
               {
@@ -4707,6 +4720,26 @@ export const contracts = {
           EditorEdit: {
             oneOf: [
               {
+                description:
+                  'Replace a bounded UTF-16 range in the current revision, preserving its suffix.',
+                type: 'object',
+                properties: {
+                  range: {
+                    $ref: '#/$defs/TextRange',
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'replace_range',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'range', 'text'],
+              },
+              {
                 type: 'object',
                 properties: {
                   text: {
@@ -4754,6 +4787,24 @@ export const contracts = {
                 required: ['kind', 'text'],
               },
             ],
+          },
+          TextRange: {
+            description: 'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
+            type: 'object',
+            properties: {
+              start: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              end: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['start', 'end'],
           },
           FilePastePolicy: {
             type: 'object',
@@ -4960,6 +5011,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -5169,6 +5222,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -5386,6 +5441,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -5541,6 +5598,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -6246,6 +6305,26 @@ export const contracts = {
           EditorEdit: {
             oneOf: [
               {
+                description:
+                  'Replace a bounded UTF-16 range in the current revision, preserving its suffix.',
+                type: 'object',
+                properties: {
+                  range: {
+                    $ref: '#/$defs/TextRange',
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'replace_range',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'range', 'text'],
+              },
+              {
                 type: 'object',
                 properties: {
                   text: {
@@ -6293,6 +6372,24 @@ export const contracts = {
                 required: ['kind', 'text'],
               },
             ],
+          },
+          TextRange: {
+            description: 'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
+            type: 'object',
+            properties: {
+              start: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              end: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['start', 'end'],
           },
           SubmitCopy: {
             type: 'object',
@@ -6406,6 +6503,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -7088,6 +7187,26 @@ export const contracts = {
           EditorEdit: {
             oneOf: [
               {
+                description:
+                  'Replace a bounded UTF-16 range in the current revision, preserving its suffix.',
+                type: 'object',
+                properties: {
+                  range: {
+                    $ref: '#/$defs/TextRange',
+                  },
+                  text: {
+                    type: 'string',
+                    maxLength: 65536,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'replace_range',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'range', 'text'],
+              },
+              {
                 type: 'object',
                 properties: {
                   text: {
@@ -7135,6 +7254,24 @@ export const contracts = {
                 required: ['kind', 'text'],
               },
             ],
+          },
+          TextRange: {
+            description: 'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
+            type: 'object',
+            properties: {
+              start: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+              end: {
+                type: 'integer',
+                format: 'uint',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['start', 'end'],
           },
           SubmitCopy: {
             type: 'object',
@@ -7248,6 +7385,8 @@ export const contracts = {
               required: ['owner', 'revision', 'bytes'],
             },
             TextRange: {
+              description:
+                'Ordered UTF-16 code-unit offsets, shared by selections and range edits.',
               type: 'object',
               properties: {
                 start: {
@@ -16013,6 +16152,11 @@ export const contracts = {
                   approximate: {
                     type: 'boolean',
                   },
+                  contextLastKnown: {
+                    description:
+                      "The context count is the last completed request's baseline; newer additions are unknown.",
+                    type: 'boolean',
+                  },
                   outputTokensPerSecond: {
                     description:
                       "Provider output tokens divided by the model request's wall time.\nIncludes reasoning and time to first token; excludes tool/user waits.",
@@ -16021,7 +16165,7 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['modelId', 'approximate'],
+                required: ['modelId', 'approximate', 'contextLastKnown'],
               },
               AgentRun: {
                 type: 'object',

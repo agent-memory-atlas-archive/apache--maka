@@ -232,7 +232,8 @@ async fn archive_atomic_retry_reopen_scope_and_source_integrity() {
         log.context_usage("session").await.unwrap().1,
         Some(maka_event_log::context::ContextUsage {
             tokens: 10,
-            approximate: false
+            approximate: false,
+            last_known: false,
         })
     );
     assert!(

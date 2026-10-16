@@ -738,6 +738,8 @@ export function handleComponent<N extends Node>(
       !mutationPending(state) &&
       conversationRoute(state) &&
       state.dialog === null &&
+      state.inspector === null &&
+      !state.source &&
       !state.image &&
       !state.searchOpen
     ) {

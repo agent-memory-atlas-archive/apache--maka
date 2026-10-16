@@ -848,6 +848,8 @@ pub struct SessionMetrics {
     pub context_tokens: Option<u64>,
     pub context_window: Option<u64>,
     pub approximate: bool,
+    /// The context count is the last completed request's baseline; newer additions are unknown.
+    pub context_last_known: bool,
     /// Provider output tokens divided by the model request's wall time.
     /// Includes reasoning and time to first token; excludes tool/user waits.
     pub output_tokens_per_second: Option<f64>,

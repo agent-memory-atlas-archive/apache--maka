@@ -68,6 +68,7 @@ function readingProps(
       !mutationPending(state) &&
       conversationRoute(state) &&
       state.dialog === null &&
+      state.inspector === null &&
       !state.source &&
       !state.image,
     search:

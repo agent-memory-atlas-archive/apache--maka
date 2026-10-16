@@ -188,34 +188,16 @@ export function navigation<N extends Node>(
                                 ui.box(
                                   `session-status-${index}-${at}`,
                                   [
-                                    ...(session.activity === 'working'
-                                      ? [
-                                          ui.activity(
-                                            `session-glyph-${index}-${at}`,
-                                            'orbit',
-                                            props.theme.accent,
-                                            '  ',
-                                            ' ',
-                                          ),
-                                        ]
-                                      : [
-                                          ui.text(
-                                            `session-glyph-${index}-${at}`,
-                                            session.activity === 'waiting'
-                                              ? props.theme.ascii
-                                                ? '  ! '
-                                                : '  ◇ '
-                                              : session.hasUnread
-                                                ? props.theme.ascii
-                                                  ? '  * '
-                                                  : '  ● '
-                                                : '    ',
-                                            13,
-                                            session.activity === 'waiting'
-                                              ? props.theme.warning
-                                              : props.theme.accent,
-                                          ),
-                                        ]),
+                                    ui.text(
+                                      `session-glyph-${index}-${at}`,
+                                      session.hasUnread
+                                        ? props.theme.ascii
+                                          ? '  * '
+                                          : '  ● '
+                                        : '    ',
+                                      13,
+                                      props.theme.accent,
+                                    ),
                                   ],
                                   { terminal: { basis: 4, shrink: false } },
                                 ),
@@ -1561,7 +1543,7 @@ export function timeline<N extends Node>(
         next.observation.viewport.readingRevision === next.observation.readingRevision &&
         next.observation.pendingCommand == null &&
         (!next.command || next.observation.receipt?.sequence === next.command.sequence)
-      )
+      ) {
         out.events.push({
           name: 'tailReady',
           value: {
@@ -1569,6 +1551,27 @@ export function timeline<N extends Node>(
             readingRevision: next.observation.readingRevision,
           },
         });
+        const tail = props.messages.at(-1);
+        if (
+          props.markReadEnabled &&
+          props.toolContext &&
+          !props.loading &&
+          !props.latest &&
+          !props.newer &&
+          tail?.source !== null &&
+          tail?.source !== undefined &&
+          next.observation.viewport.visibleChildKeys.includes('message-' + tail.id) &&
+          (tail.role === 'user' || tail.role === 'assistant')
+        )
+          out.events.push({
+            name: 'markRead',
+            value: {
+              sessionId: props.toolContext.sessionId,
+              sequence: tail.source,
+              field: 'body',
+            },
+          });
+      }
       const sourceDirection = scrollBoundary(next, input, 'source-reading');
       if (sourceDirection && props.source && !props.source.loading && !props.source.failed) {
         if (sourceDirection === 'up' && !props.source.atStart)
