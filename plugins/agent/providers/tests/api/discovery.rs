@@ -139,7 +139,7 @@ fn input(binding: &Definition, base: &str) -> Discovery {
 }
 
 #[tokio::test]
-async fn public_binding_uses_declared_paths_filters_and_envelopes() {
+async fn public_binding_uses_declared_paths_filters_envelopes_and_model_protocols() {
     for (provider, suffix, body, expected_path, expected_id) in [
         (
             "google",
@@ -190,6 +190,13 @@ async fn public_binding_uses_declared_paths_filters_and_envelopes() {
             "/v1/models",
             "future",
         ),
+        (
+            "commandcode",
+            "/provider/v1",
+            json!({"data":[{"id":"anthropic/claude-future"}]}),
+            "/provider/v1/models",
+            "anthropic/claude-future",
+        ),
     ] {
         let binding = binding(provider);
         let script = Script::new([body]);
@@ -203,6 +210,9 @@ async fn public_binding_uses_declared_paths_filters_and_envelopes() {
             [expected_id],
             "{provider}"
         );
+        if provider == "commandcode" {
+            assert_eq!(models[0].api_protocol, Some(ApiProtocol::AnthropicMessages));
+        }
         let requests = script.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(

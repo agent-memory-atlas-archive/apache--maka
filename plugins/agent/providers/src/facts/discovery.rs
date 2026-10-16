@@ -37,6 +37,8 @@ pub enum ModelDiscovery {
         #[serde(skip_serializing_if = "Option::is_none")]
         response_shape: Option<ResponseShape>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        model_protocols: Option<ModelProtocols>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         filter: Option<ModelFilter>,
     },
     Fireworks {
@@ -65,6 +67,12 @@ pub enum DiscoveryAuth {
 #[serde(rename_all = "kebab-case")]
 pub enum ResponseShape {
     ArrayOrData,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelProtocols {
+    Commandcode,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
