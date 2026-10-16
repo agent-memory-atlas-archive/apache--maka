@@ -17,16 +17,20 @@
  * under the License.
  */
 
-import type { InteractionQuestion } from '@maka/core/interaction';
+import type {
+  InteractionQuestion,
+  InteractionSandboxBoundaryRequest,
+} from '@maka/core/interaction';
 import type { InteractionPendingSnapshot } from '@maka/runtime-host/protocol';
 
 export interface MakaRunSessionResult {
   sessionId: string;
-  status: 'running' | 'needs_input' | 'completed' | 'failed' | 'idle';
+  status: 'running' | 'needs_input' | 'needs_approval' | 'completed' | 'failed' | 'idle';
   finalOutput?: string;
   error?: string;
   questions?: readonly InteractionQuestion[];
   pendingQuestionCount?: number;
+  approvalRequests?: readonly InteractionSandboxBoundaryRequest[];
   queued?: number;
 }
 

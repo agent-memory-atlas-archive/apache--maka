@@ -143,6 +143,22 @@ maka run --session "$session" --answer '["是",null]' --wait --json --yolo
 继续执行，无需 `--resume`。答案提交失败或结果不确定时不会自动重发；先重新读取当前问题，
 再决定下一步。存在多批待回答问题时会如实报告，无法唯一选择当前批次时拒绝提交答案。
 
+对于 Host 持有的会话执行，`--wait` 和 `--status` 遇到沙箱扩展请求会返回 `needs_approval`，
+并在 `approvalRequests` 中列出 `kind`、扩展范围 `expansion` 和理由 `justification`；内部请求
+ID 不暴露。查看范围后，选择批准或拒绝：
+
+```sh
+maka run --session "$session" --approve --wait --json
+maka run --session "$session" --deny --wait --json
+```
+
+上面两条命令是二选一，不能顺序执行。它们都继续原 Turn，要求会话中恰好有一个待处理沙箱
+请求；没有请求或存在多个请求时拒绝提交决定。它们无需 `--yolo`，也不能与之混用。批准通过
+Host 扩展受管沙箱边界，并保存供该会话后续执行使用，不会将会话切换为 bypass。命令针对
+本次连接时待处理的请求；结果
+不确定时不要自动重试，应先读取当前请求，再决定下一步。普通阻塞运行仍保留原有的沙箱
+边界自动拒绝行为。
+
 默认使用 queue，每条显式排队消息对应一个独立后续 Turn。steer 沿用 Host 当前 Turn 的追加
 机制，错过最后处理边界时可能进入后续 Turn。提交排队消息时的 `--wait` 跟踪该消息对应的执行；steer 配合 `--wait` 观察连接时选定的
 Turn，不保证追加消息一定在该 Turn 结束前消费。
@@ -153,7 +169,7 @@ run 的取消行为保持原样。显式停止 Host 执行可用 `maka run --ses
 查询成功时也退出 0，即使它报告的 Turn 已失败或取消；result/wait 仍以任务失败返回非零退出码。
 停止或查询成功不代表分配的任务已完成。
 
-权限、沙箱边界等会话 CLI 无法回答的交互会留在 Host 中等待。wait 会报告实际交互类型和恢复
+权限请求、MCP 表单等会话 CLI 无法回答的交互会留在 Host 中等待。wait 会报告实际交互类型和恢复
 命令：使用同一 Host 的交互式客户端处理，或显式停止该 Turn。后台提交成功不保证后续执行
 不会请求交互。
 

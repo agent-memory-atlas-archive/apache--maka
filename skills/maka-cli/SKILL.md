@@ -62,6 +62,7 @@ Interpret the structured result:
 | --- | --- |
 | `running` | Execution is not complete; wait when ready. |
 | `needs_input` | Read the questions and submit answers. This is a normal handoff, not failure. |
+| `needs_approval` | Review the sandbox expansion and justification, then approve or deny. |
 | `completed` | Read `finalOutput` and assess it against the assignment. |
 | `failed` | Read the error and report or address its cause before retrying. |
 | `idle` | No execution result is selected; do not infer that the assignment succeeded. |
@@ -75,6 +76,26 @@ maka run --session "$session" --answer '["Blue"]' --wait --json
 ```
 
 Use the returned options and the parent's task context. If the decision belongs to the user and the parent lacks an answer, ask the user. An answer continues the original tool call and Turn; do not use `--resume` for it. If another question arrives, repeat the handoff. When answer submission fails or its outcome is uncertain, read current status/questions before deciding whether to submit again. If multiple pending batches prevent unique selection, report the ambiguity.
+
+## Decide a sandbox request
+
+For Host-owned Session execution, wait/status return `needs_approval` and `approvalRequests`
+containing the requested expansion and justification. Decide from that scope and the parent's task
+authorization. Choose one of these alternatives:
+
+```sh
+maka run --session "$session" --approve --wait --json
+maka run --session "$session" --deny --wait --json
+```
+
+These answer only sandbox-boundary requests and continue the original Turn. They require exactly
+one pending sandbox request in the Session; ambiguity is rejected. Neither needs `--yolo`, and
+combining them with it is rejected. Approval expands the Host's saved managed boundary for subsequent Session execution rather than
+switching the Session to bypass. Ordinary blocking run still denies sandbox expansions.
+
+The command targets the single request pending when it attaches, which may differ from a request
+seen by an earlier invocation. Never automatically retry an uncertain decision; read the current
+request and choose again. Request IDs are tracked internally by the CLI.
 
 ## Add work or change direction
 
@@ -109,7 +130,7 @@ maka run --session "$session" --stop --json
 This targets the current Turn observed on attachment and needs no `--yolo`. A successful stop
 request exits 0; it does not mean the assignment succeeded. A successful status query also exits 0
 when it reports task failure. Wait/result continue to reflect task failure through their exit code.
-For permission, sandbox-boundary, or other unsupported interactions, wait reports the actual kind
+For permission requests, MCP forms, or other unsupported interactions, wait reports the actual kind
 and leaves the Host waiting; use an interactive client or explicitly stop the Turn. Do not
 repeatedly wait expecting the pending interaction to resolve itself.
 

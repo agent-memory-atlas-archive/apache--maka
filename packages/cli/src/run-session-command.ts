@@ -40,7 +40,8 @@ export async function runMakaSessionCommand(
   const sessionId = options.sessionId!;
   const executing =
     options.prompt !== undefined || options.answers !== undefined || options.resumeExecution;
-  if (executing && !allowDetach)
+  const decidingSandbox = options.sandboxDecision !== undefined;
+  if ((executing || decidingSandbox) && !allowDetach)
     throw new Error(
       'Session control execution requires a persistent installation; use the blocking legacy run path for temporary npx invocations',
     );
@@ -127,7 +128,23 @@ export async function runMakaSessionCommand(
           : 'running',
       };
     }
-    if (options.answers !== undefined) {
+    if (decidingSandbox) {
+      const pending = observer.approvals();
+      if (pending.length !== 1)
+        throw new Error(
+          `Expected one pending sandbox request, found ${pending.length}; no decision was submitted`,
+        );
+      const request = pending[0]!;
+      target = request.turnId;
+      assertActive();
+      // Submit only the identity observed by this invocation. Never retry an uncertain decision.
+      await connection.request('interaction.answer', {
+        sessionId,
+        interactionId: request.interactionId,
+        answer: { kind: 'sandbox_boundary', decision: options.sandboxDecision! },
+      });
+      observer.ignoreAnswered(request.interactionId);
+    } else if (options.answers !== undefined) {
       const pending = observer.snapshot.interactions.pending.filter(
         (p) => p.request.kind === 'question',
       );
@@ -206,7 +223,7 @@ export async function runMakaSessionCommand(
       }
     }
     assertActive();
-    if (options.status || (!executing && !options.wait && !options.result))
+    if (options.status || (!executing && !decidingSandbox && !options.wait && !options.result))
       return observer.status();
     if (options.noWait) return { sessionId, status: 'running' };
     if (!target && !messageId) target = await observer.latestTurn();
@@ -229,6 +246,8 @@ export async function runMakaSessionCommand(
       if (target) {
         const questions = observer.questions(target);
         if (questions.length) return observer.questionResult(questions);
+        const approvals = observer.approvals(target);
+        if (approvals.length) return observer.approvalResult(approvals);
         const turn = await connection.request('turn.query', { sessionId, turnId: target });
         if (terminal(turn.status)) {
           const result = await observer.result(target);
@@ -239,7 +258,10 @@ export async function runMakaSessionCommand(
           continue;
         }
         const unsupported = observer.snapshot.interactions.pending.find(
-          (p) => p.turnId === target && p.request.kind !== 'question',
+          (p) =>
+            p.turnId === target &&
+            p.request.kind !== 'question' &&
+            p.request.kind !== 'sandbox_boundary',
         );
         if (unsupported)
           throw new Error(
@@ -347,11 +369,36 @@ class SessionRunObserver {
     };
   }
 
+  approvals(turnId?: string): InteractionPendingSnapshot[] {
+    return this.snapshot.interactions.pending.filter(
+      (p) =>
+        p.request.kind === 'sandbox_boundary' &&
+        !this.#answered.has(p.interactionId) &&
+        (turnId === undefined || p.turnId === turnId),
+    );
+  }
+
+  approvalResult(pending: readonly InteractionPendingSnapshot[]): MakaRunSessionResult {
+    return {
+      sessionId: this.#sessionId,
+      status: 'needs_approval',
+      approvalRequests: pending.flatMap((p) =>
+        p.request.kind === 'sandbox_boundary' ? [p.request] : [],
+      ),
+    };
+  }
+
   status(): MakaRunSessionResult {
     const pending = this.questions();
     if (pending.length)
       return {
         ...this.questionResult(pending),
+        queued: this.snapshot.queue.followup.length + this.snapshot.queue.steering.length,
+      };
+    const approvals = this.approvals();
+    if (approvals.length)
+      return {
+        ...this.approvalResult(approvals),
         queued: this.snapshot.queue.followup.length + this.snapshot.queue.steering.length,
       };
     const root = this.snapshot.rootTurn;

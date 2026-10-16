@@ -156,6 +156,24 @@ uncertain answer submission is not automatically retried; read the current quest
 choosing what to do next. Multiple pending batches are reported, and an answer is refused when
 the current batch cannot be selected uniquely.
 
+For Host-owned Session execution, `--wait` and `--status` return `needs_approval` with
+`approvalRequests` when a sandbox expansion is pending. Each entry contains its `kind`, requested
+`expansion`, and `justification`; internal request IDs stay inside the CLI. Review the scope, then:
+
+```sh
+maka run --session "$session" --approve --wait --json
+maka run --session "$session" --deny --wait --json
+```
+
+These are alternative decisions, not a sequence to execute. Both continue the original Turn and
+require exactly one pending sandbox request in the Session; none or multiple are rejected without
+submitting a decision. They do not need `--yolo` and cannot be combined with it. Approval applies
+the requested expansion through the Host's managed boundary; it does not change the Session to
+bypass. The expanded boundary is saved for subsequent execution in the Session. The flags
+target the request pending when that CLI invocation attaches. Do not automatically
+retry a decision after an uncertain result: read the current requests before deciding again.
+Ordinary blocking runs retain their existing sandbox-boundary denial behavior.
+
 Queue is the default: each explicit queued message opens its own subsequent Turn. Steer uses the
 Host's existing current-Turn delivery and may carry over if it misses that Turn's last boundary.
 Submitting a queued prompt with `--wait` follows that message's execution. Steer with `--wait`
@@ -169,8 +187,8 @@ exits 0. A successful explicit or implicit status query also exits 0 even if it 
 or cancelled Turn; result/wait retain the task's failure exit code. Stop and status are not
 assertions that the assigned task succeeded.
 
-Permission, sandbox-boundary, and other interactions that this Session CLI cannot answer remain
-waiting in the Host. A wait reports the actual interaction kind and a recovery command: use an
+Permission requests, MCP forms, and other interactions that this Session CLI cannot answer
+remain waiting in the Host. A wait reports the actual interaction kind and a recovery command: use an
 interactive client on the same Host, or stop the Turn explicitly. Detached admission does not
 promise that subsequent execution will need no interaction.
 

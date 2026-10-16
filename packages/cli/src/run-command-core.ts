@@ -45,6 +45,7 @@ export interface MakaRunOptions {
   result?: true;
   resumeExecution?: true;
   stop?: true;
+  sandboxDecision?: 'allow' | 'deny';
   placement?: 'current_turn' | 'next_turn';
   answers?: readonly (string | null)[];
   prompt?: string;
@@ -162,6 +163,8 @@ const BOOLEAN_FLAGS = new Set([
   'queue',
   'steer',
   'stop',
+  'approve',
+  'deny',
 ]);
 
 export function parseMakaRunArgs(argv: readonly string[]): ParseMakaRunArgsResult {
@@ -221,11 +224,19 @@ export function parseMakaRunArgs(argv: readonly string[]): ParseMakaRunArgsResul
     Number(booleanFlags.has('result')) +
     Number(flags.has('answer')) +
     Number(resumeExecution) +
-    Number(booleanFlags.has('stop'));
+    Number(booleanFlags.has('stop')) +
+    Number(booleanFlags.has('approve')) +
+    Number(booleanFlags.has('deny'));
   if (actions > 1)
     return {
       kind: 'error',
-      message: 'choose one of --status, --result, --answer, --resume or --stop',
+      message: 'choose one of --status, --result, --answer, --approve, --deny, --resume or --stop',
+    };
+  if ((booleanFlags.has('approve') || booleanFlags.has('deny')) && booleanFlags.has('yolo'))
+    return {
+      kind: 'error',
+      message:
+        '--approve/--deny answer only the current sandbox request; do not combine with --yolo',
     };
   if (!sessionId && (actions || booleanFlags.has('queue') || booleanFlags.has('steer'))) {
     return { kind: 'error', message: 'session operations require --session <session-id>' };
@@ -309,6 +320,11 @@ export function parseMakaRunArgs(argv: readonly string[]): ParseMakaRunArgsResul
       ...(booleanFlags.has('result') ? { result: true as const } : {}),
       ...(resumeExecution ? { resumeExecution: true as const } : {}),
       ...(booleanFlags.has('stop') ? { stop: true as const } : {}),
+      ...(booleanFlags.has('approve')
+        ? { sandboxDecision: 'allow' as const }
+        : booleanFlags.has('deny')
+          ? { sandboxDecision: 'deny' as const }
+          : {}),
       ...(answers ? { answers } : {}),
       ...(booleanFlags.has('steer')
         ? { placement: 'current_turn' as const }
@@ -363,6 +379,7 @@ export async function runMakaTextCliCore(
         options.prompt !== undefined ||
         options.answers !== undefined ||
         options.resumeExecution ||
+        options.sandboxDecision !== undefined ||
         options.wait ||
         options.result;
       return result.status === 'failed' && returnsTaskOutcome ? 1 : 0;
@@ -641,14 +658,16 @@ function makaRunHelpText(cliCommand: string): string {
     '  --thinking <level>        off|on|minimal|low|medium|high|xhigh|max|default',
     '  --timeout <seconds>       Invocation timeout',
     '  --max-steps <count>       Tool-step cap',
-    '  --yolo                    Give full access; repeat for Session prompts, answers and resume',
+    '  --yolo                    Give full access; repeat for prompts, AskUser answers and resume',
     '  --session <session-id>    Select a Session (without a prompt: show its status)',
-    '  --wait                    Wait for this message/current Turn; return questions early',
+    '  --wait                    Wait for this message/current Turn; return input/approval early',
     '  --no-wait                 Submit and return (Host-owned execution only)',
     '  --status                  Read current Session status without executing',
     '  --result                  Read the latest Turn result without waiting',
     '  --stop                    Request stop for the current Turn (no --yolo needed)',
     '  --answer <json-array>     Answer the current AskUser, e.g. ["Yes",null]',
+    '  --approve                 Approve the single pending sandbox expansion',
+    '  --deny                    Deny the single pending sandbox expansion',
     '  --queue                   Queue this prompt as its own next Turn (default)',
     '  --steer                   Add this prompt to the current execution',
     '  --json                    Return a structured result, including the Session ID',
@@ -660,6 +679,7 @@ function makaRunHelpText(cliCommand: string): string {
     '',
     'Full-access Sessions: repeat --yolo when sending prompts (including --queue/--steer),',
     'answering with --answer, or resuming. Read-only --status/--wait/--result need no --yolo.',
+    '--approve/--deny decide a sandbox request without changing the Session to full access.',
   ].join('\n');
 }
 

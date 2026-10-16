@@ -50,9 +50,25 @@ describe('maka run argument parsing', () => {
       kind: 'run',
       options: { stdinPrompt: false, sessionId: 'session-1', answers: ['Yes', null] },
     });
+    for (const [flag, decision] of [
+      ['--approve', 'allow'],
+      ['--deny', 'deny'],
+    ] as const) {
+      const parsedDecision = parseMakaRunArgs(['--session', 's', flag, '--wait', '--json']);
+      assert.equal(parsedDecision.kind, 'run');
+      if (parsedDecision.kind === 'run')
+        assert.equal(parsedDecision.options.sandboxDecision, decision);
+    }
     for (const args of [
       ['--status'],
       ['--stop'],
+      ['--approve'],
+      ['--deny'],
+      ['--session', 's', '--approve', '--deny'],
+      ['--session', 's', '--approve', '--answer', '["Yes"]'],
+      ['--session', 's', '--approve', '--yolo'],
+      ['--session', 's', '--deny', '--yolo'],
+      ['--session', 's', '--approve', 'prompt'],
       ['--session', 's', '--stop', '--wait'],
       ['--session', 's', '--stop', '--no-wait'],
       ['--session', 's', '--stop', '--answer', '["Yes"]'],
@@ -100,6 +116,8 @@ describe('maka run argument parsing', () => {
       [['--stop'], 0],
       [['--result'], 1],
       [['--wait'], 1],
+      [['--approve'], 1],
+      [['--deny'], 1],
     ] as const) {
       const exit = await runMakaTextCliCore(
         ['--session', 's', ...flags],

@@ -307,10 +307,17 @@ test('real Host keeps AskUser alive across CLI processes and returns the origina
     );
     assert.equal(detachedBoundary.code, 0, detachedBoundary.stderr);
     const blocked = await cli(root, '--session', sessionId, '--wait', '--json');
-    assert.equal(blocked.code, 1);
-    assert.match(blocked.stderr, /Pending sandbox_boundary/);
-    assert.match(blocked.stderr, /--stop/);
-    assert.doesNotMatch(blocked.stderr, /MCP form/);
+    assert.equal(blocked.code, 0, blocked.stderr);
+    const approval = JSON.parse(blocked.stdout);
+    assert.equal(approval.status, 'needs_approval');
+    assert.deepEqual(approval.approvalRequests, [
+      {
+        kind: 'sandbox_boundary',
+        expansion: { network: { enabled: true } },
+        justification: 'Connect to the deterministic fake test endpoint.',
+      },
+    ]);
+    assert.deepEqual(Object.keys(approval).sort(), ['approvalRequests', 'sessionId', 'status']);
     const blockedSubscription = await probe.openSessionSubscription({
       sessionId,
       transcript: { kind: 'none' },
@@ -337,6 +344,155 @@ test('real Host keeps AskUser alive across CLI processes and returns the origina
     );
     assert.equal(afterStop.code, 0, afterStop.stderr);
     assert.match(JSON.parse(afterStop.stdout).finalOutput, /after-explicit-stop/);
+    // A lost decision response must not cause the CLI to answer the next queued request.
+    const uncertainTask = await cli(
+      root,
+      '--session',
+      sessionId,
+      FAKE_ASK_SANDBOX_BOUNDARY_PROMPT,
+      '--no-wait',
+    );
+    assert.equal(uncertainTask.code, 0, uncertainTask.stderr);
+    const firstPending = await cli(root, '--session', sessionId, '--wait', '--json');
+    assert.equal(JSON.parse(firstPending.stdout).status, 'needs_approval');
+    const nextPending = await cli(
+      root,
+      '--session',
+      sessionId,
+      FAKE_ASK_SANDBOX_BOUNDARY_PROMPT,
+      '--queue',
+      '--no-wait',
+    );
+    assert.equal(nextPending.code, 0, nextPending.stderr);
+    let uncertainDecisions = 0;
+    const lostResponse = new Proxy(probe, {
+      get(target, key) {
+        if (key === 'request')
+          return async (...args: Parameters<typeof probe.request>) => {
+            if (args[0] === 'interaction.answer') uncertainDecisions++;
+            const result = await Reflect.apply(probe.request, probe, args);
+            if (args[0] === 'interaction.answer')
+              throw new Error('Decision response lost after Host acceptance');
+            return result;
+          };
+        const value = Reflect.get(target, key, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    await assert.rejects(
+      () =>
+        runMakaSessionCommand(
+          lostResponse,
+          { sessionId, stdinPrompt: false, sandboxDecision: 'deny' },
+          { onSigint: () => () => {}, newId: randomUUID },
+        ),
+      /response lost/,
+    );
+    assert.equal(uncertainDecisions, 1);
+    const stillPending = await cli(root, '--session', sessionId, '--wait', '--json');
+    assert.equal(
+      JSON.parse(stillPending.stdout).status,
+      'needs_approval',
+      'the next request must remain unanswered',
+    );
+    const stopUncertainFollowup = await cli(root, '--session', sessionId, '--stop', '--json');
+    assert.equal(stopUncertainFollowup.code, 0, stopUncertainFollowup.stderr);
+    // Each sandbox decision comes from a later CLI process and continues the exact original Run.
+    for (const [flag, decision] of [
+      ['--deny', 'deny'],
+      ['--approve', 'allow'],
+    ] as const) {
+      const submitted = await cli(
+        root,
+        '--session',
+        sessionId,
+        FAKE_ASK_SANDBOX_BOUNDARY_PROMPT,
+        '--no-wait',
+      );
+      assert.equal(submitted.code, 0, submitted.stderr);
+      const waiting = await cli(root, '--session', sessionId, '--wait', '--json');
+      assert.equal(waiting.code, 0, waiting.stderr);
+      assert.equal(JSON.parse(waiting.stdout).status, 'needs_approval');
+      const current = await probe.openSessionSubscription({
+        sessionId,
+        transcript: { kind: 'none' },
+      });
+      await current.ready();
+      const pendingTurn = current.snapshot.rootTurn!;
+      await current.close();
+      const boundaryBefore = await probe.request('session.execution_boundary.query', { sessionId });
+      const observedStatus = await cli(root, '--session', sessionId, '--status', '--json');
+      assert.equal(observedStatus.code, 0, observedStatus.stderr);
+      assert.equal(JSON.parse(observedStatus.stdout).status, 'needs_approval');
+      // Ambiguous pending requests must not dispatch any decision or elevate permissions.
+      let decisionRequests = 0;
+      const ambiguous = new Proxy(probe, {
+        get(target, key) {
+          if (key === 'openSessionSubscription')
+            return async (...args: Parameters<typeof probe.openSessionSubscription>) => {
+              const actual = await probe.openSessionSubscription(...args);
+              return new Proxy(actual, {
+                get(subscription, property) {
+                  if (property === 'snapshot') {
+                    const snapshot = subscription.snapshot;
+                    const request = snapshot.interactions.pending.find(
+                      (p) => p.request.kind === 'sandbox_boundary',
+                    )!;
+                    return {
+                      ...snapshot,
+                      interactions: {
+                        ...snapshot.interactions,
+                        pending: [
+                          ...snapshot.interactions.pending,
+                          { ...request, interactionId: randomUUID() },
+                        ],
+                      },
+                    };
+                  }
+                  const value = Reflect.get(subscription, property, subscription);
+                  return typeof value === 'function' ? value.bind(subscription) : value;
+                },
+              });
+            };
+          if (key === 'request')
+            return async (...args: Parameters<typeof probe.request>) => {
+              if (args[0] === 'interaction.answer') decisionRequests++;
+              return Reflect.apply(probe.request, probe, args);
+            };
+          const value = Reflect.get(target, key, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      await assert.rejects(
+        () =>
+          runMakaSessionCommand(
+            ambiguous,
+            { sessionId, stdinPrompt: false, sandboxDecision: decision },
+            { onSigint: () => () => {}, newId: randomUUID },
+          ),
+        /found 2/,
+      );
+      assert.equal(decisionRequests, 0);
+      const decided = await cli(root, '--session', sessionId, flag, '--wait', '--json');
+      assert.equal(decided.code, 0, decided.stderr);
+      assert.equal(JSON.parse(decided.stdout).status, 'completed');
+      assert.match(
+        JSON.parse(decided.stdout).finalOutput,
+        new RegExp(`Fake sandbox boundary decision: ${decision}`),
+      );
+      const resumedTurn = await probe.request('turn.query', {
+        sessionId,
+        turnId: pendingTurn.turnId,
+      });
+      assert.equal(resumedTurn.status, 'completed');
+      assert.equal(resumedTurn.runId, pendingTurn.runId);
+      const boundaryAfter = await probe.request('session.execution_boundary.query', { sessionId });
+      assert.equal(boundaryAfter.kind, 'managed', 'approval must not switch the Session to bypass');
+      if (decision === 'deny') assert.deepEqual(boundaryAfter, boundaryBefore);
+      const duplicateDecision = await cli(root, '--session', sessionId, flag, '--wait', '--json');
+      assert.equal(duplicateDecision.code, 1);
+      assert.match(duplicateDecision.stderr, /found 0/);
+    }
     await subscription.close();
     await probe.close();
   } finally {
