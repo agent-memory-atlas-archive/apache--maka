@@ -43,3 +43,11 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+
+# Deno still uses sha2 0.10. Preserve its hardware backend until it migrates;
+# that version's assembly crate does not support Windows.
+[target.'cfg(all(target_arch = "aarch64", not(target_os = "windows")))'.dependencies]
+sha2-transitive = { package = "sha2", version = "0.10.9", features = ["asm"] }
+
+[package.metadata.cargo-machete]
+ignored = ["sha2-transitive"]
