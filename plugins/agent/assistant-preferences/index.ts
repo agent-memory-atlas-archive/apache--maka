@@ -261,26 +261,26 @@ export function assistantPreferences<N extends Node>(
             !state.fields.compaction.ready ||
             !!state.fields.compaction.command,
         ),
-        ui.button(
+        ui.toggle(
           'instructions',
-          `${t('assistant-instructions')}: ${state.saved?.workspaceInstructions ? text.settingOn : text.settingOff}`,
+          t('assistant-instructions'),
+          state.saved?.workspaceInstructions ?? false,
           busy || !state.saved,
-          false,
-          { background: 0, align: 'start' },
+          t('assistant-instructions-help'),
         ),
-        ui.button(
+        ui.toggle(
           'shell-titles',
-          `${t('assistant-shell-titles')}: ${state.saved?.shellTitles ? text.settingOn : text.settingOff}`,
+          t('assistant-shell-titles'),
+          state.saved?.shellTitles ?? false,
           busy || !state.saved,
-          false,
-          { background: 0, align: 'start' },
+          t('assistant-shell-titles-help'),
         ),
-        ui.button(
+        ui.toggle(
           'privacy',
-          `${t('assistant-privacy')}: ${state.saved?.incognitoActive ? text.settingOn : text.settingOff}`,
+          t('assistant-privacy'),
+          state.saved?.incognitoActive ?? false,
           busy || !state.saved,
-          false,
-          { background: 0, align: 'start' },
+          t('assistant-privacy-help'),
         ),
         ...(state.current
           ? [

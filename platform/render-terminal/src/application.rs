@@ -951,7 +951,8 @@ impl Presenter {
                     | paint::TargetKind::Focus(_)
                     | paint::TargetKind::Item { .. }
             ) {
-                if matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
+                if !matches!(target.kind, paint::TargetKind::Disabled)
+                    && matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
                 {
                     self.focus = Some(target);
                 }

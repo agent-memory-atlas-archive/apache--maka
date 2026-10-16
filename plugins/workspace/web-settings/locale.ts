@@ -73,6 +73,11 @@ export const copy = /* @__PURE__ */ createCopy(messages);
 export type Copy = ReturnType<typeof copy>;
 
 const terminalMessages = {
+  'web-enabled-help': [
+    'Allow the assistant to search and retrieve web pages.',
+    '允许助手搜索和读取网页。',
+    '允許助理搜尋和讀取網頁。',
+  ] as const,
   'web-source-tavily': tui_web_source_tavily,
   'web-source-model': tui_web_source_model,
   'web-check-timeout': tui_web_check_timeout,

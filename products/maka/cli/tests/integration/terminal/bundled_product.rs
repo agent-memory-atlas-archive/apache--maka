@@ -971,7 +971,44 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
             start,
             maka_agent_facts::context::DEFAULT_COMPACTION_PROMPT,
         );
+        tui.wait_until(|screen| !screen.contains("Select all"));
         settings_evidence(&tui, "settings");
+        let screen = tui.screen.snapshot().unwrap().screen;
+        let (row, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("Save compression prompt"))
+            .unwrap();
+        let column = line[..line.find("Save compression prompt").unwrap()].width() + 2;
+        tui.send(
+            format!("\x1b[<65;{column};{}M", row + 1)
+                .repeat(40)
+                .as_bytes(),
+        );
+        tui.wait_for("Privacy mode");
+        let is_private = |screen: &str, enabled: bool| {
+            screen.lines().any(|line| {
+                line.contains("Privacy mode")
+                    && line.contains(if enabled { "━●" } else { "○─" })
+            })
+        };
+        tui.wait_until(|screen| is_private(screen, false));
+        let screen = tui.screen.snapshot().unwrap().screen;
+        let (row, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("Privacy mode"))
+            .unwrap();
+        let column = line[..line.find("Privacy mode").unwrap()].width() + 2;
+        tui.send(format!("\x1b[<35;{column};{}M", row + 1).as_bytes());
+        tui.wait_for("still saved;");
+        tui.wait_for("configured provider.");
+        settings_evidence(&tui, "settings-switch-tooltip");
+        let column = line[..line.find("○─").unwrap()].width() + 1;
+        tui.send(format!("\x1b[<0;{column};{}M\x1b[<0;{column};{}m", row + 1, row + 1).as_bytes());
+        tui.wait_until(|screen| is_private(screen, true));
+        tui.send(b" ");
+        tui.wait_until(|screen| is_private(screen, false));
         tui.send(b"\x11");
         tui.finish();
         assert!(!String::from_utf8_lossy(&tui.output).contains("invalid UI activation"));

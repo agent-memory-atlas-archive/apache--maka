@@ -169,6 +169,8 @@ fn paint_button(
 #[derive(Clone)]
 pub(super) enum TargetKind {
     Hint,
+    /// Keep an existing focus anchor while a button awaits an operation result.
+    Disabled,
     SelectionCopy {
         text: std::rc::Rc<str>,
     },
@@ -724,30 +726,44 @@ impl Presenter {
             && super::dialog::same_scope(scope, &scene.foreground_path.last().cloned())
             && area.height > 1
         {
-            let width = (sanitize(hint).width() as u16)
+            let width = sanitize(hint)
+                .lines()
+                .map(UnicodeWidthStr::width)
+                .max()
+                .unwrap_or(0)
                 .saturating_add(2)
-                .min(area.width);
+                .min(usize::from(area.width.min(80))) as u16;
+            let padding = u16::from(width > 2);
+            let rows = lines(hint, width.saturating_sub(padding * 2));
+            let below = area.bottom().saturating_sub(anchor.visible().bottom());
+            let above = anchor.visible().y.saturating_sub(area.y);
+            let height = rows.len().min(usize::from(below.max(above))) as u16;
             let x = anchor.visible().x.min(area.right().saturating_sub(width));
-            let y = if anchor.visible().bottom() < area.bottom() {
+            let y = if height <= below {
                 anchor.visible().bottom()
             } else {
-                anchor.visible().y.saturating_sub(1).max(area.y)
+                anchor.visible().y.saturating_sub(height).max(area.y)
             };
-            let tooltip: Placement = Rect::new(x, y, width, 1).into();
-            buffer.set_stringn(
-                x,
-                y,
-                " ".repeat(usize::from(width)),
-                usize::from(width),
-                *style,
-            );
-            paint_button(
-                &truncated_line(hint, width.saturating_sub(2)),
-                tooltip,
-                buffer,
-                *style,
-                None,
-            );
+            // Tooltips wrap so explanations remain readable on narrow terminals.
+            // Reverse video keeps passive text hints distinct from the page below.
+            let style = style.add_modifier(Modifier::REVERSED);
+            for (row, line) in rows.iter().take(usize::from(height)).enumerate() {
+                let y = y + row as u16;
+                buffer.set_stringn(
+                    x,
+                    y,
+                    " ".repeat(usize::from(width)),
+                    usize::from(width),
+                    style,
+                );
+                buffer.set_stringn(
+                    x + padding,
+                    y,
+                    line,
+                    usize::from(width.saturating_sub(padding * 2)),
+                    style,
+                );
+            }
         }
         self.paint_editor_menu(area, buffer, &mut scene);
         scene.next_frame = cache.next_frame.get();
@@ -955,9 +971,22 @@ impl Presenter {
             .or(restored)
             .or(reading_focus)
             .or_else(|| {
-                self.focus
-                    .take()
-                    .and_then(|old| scene.targets.iter().find(|new| new.same(&old)).cloned())
+                self.focus.take().and_then(|old| {
+                    scene
+                        .targets
+                        .iter()
+                        .find(|new| {
+                            new.same(&old)
+                                || (matches!(
+                                    (&new.kind, &old.kind),
+                                    (TargetKind::Disabled, TargetKind::Action { .. })
+                                        | (TargetKind::Action { .. }, TargetKind::Disabled)
+                                ) && new.mount == old.mount
+                                    && new.key == old.key
+                                    && std::rc::Rc::ptr_eq(&new.owner, &old.owner))
+                        })
+                        .cloned()
+                })
             })
             .or_else(|| {
                 scene
@@ -1644,22 +1673,23 @@ impl Presenter {
                 if let Some(background) = background {
                     style = style.bg(color(*background));
                 }
-                if *disabled {
-                    style = style.add_modifier(Modifier::DIM);
-                    paint_button(&label, button_area, buffer, style, *align);
-                    return Ok(());
-                }
                 let target = Target {
-                    kind: match focus_child {
-                        Some(child) => TargetKind::Focus(self.freeze_focus_child(mount, child)?),
-                        None => TargetKind::Action {
-                            copy_text: copy_text.as_deref().map(Into::into),
-                        },
+                    kind: if *disabled {
+                        TargetKind::Disabled
+                    } else {
+                        match focus_child {
+                            Some(child) => {
+                                TargetKind::Focus(self.freeze_focus_child(mount, child)?)
+                            }
+                            None => TargetKind::Action {
+                                copy_text: copy_text.as_deref().map(Into::into),
+                            },
+                        }
                     },
                     ancestors: scene.ancestry.clone(),
                     revision: self.application.frame(mount)?.revision,
                     area: button_area,
-                    tab_index: 0,
+                    tab_index: if *disabled { -1 } else { 0 },
                     autofocus: false,
                     identity: TargetIdentity {
                         mount: mount.clone(),
@@ -1678,6 +1708,12 @@ impl Presenter {
                         scope: scene.input_scope.clone(),
                     },
                 };
+                if *disabled {
+                    style = style.add_modifier(Modifier::DIM);
+                    paint_button(&label, button_area, buffer, style, *align);
+                    scene.targets.push(target);
+                    return Ok(());
+                }
                 if !target.keyboard_reachable() {
                     return Ok(());
                 }

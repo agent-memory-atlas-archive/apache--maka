@@ -174,12 +174,12 @@ export function webSettings<N extends Node>(
     const content = ui.box(
       'web-content',
       [
-        ui.button(
+        ui.toggle(
           'enabled',
-          `${t('web-enabled')}: ${snapshot?.settings.enabled ? text.settingOn : text.settingOff}`,
+          t('web-enabled'),
+          snapshot?.settings.enabled ?? false,
           disabled || !snapshot,
-          false,
-          { background: 0, align: 'start' },
+          t('web-enabled-help'),
         ),
         ui.text('web-source-label', t('web-source'), 14, props.theme.muted),
         ...(['model', 'tavily'] as const).map((source) =>

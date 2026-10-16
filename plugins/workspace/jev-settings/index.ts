@@ -325,11 +325,12 @@ export function jevSettings<N extends Node>(
     const content = ui.box(
       'jev-content',
       [
-        ui.text('jev-help', t('jev-help'), 13, props.theme.muted),
-        ui.button(
+        ui.toggle(
           'enabled',
-          t('jev-enabled') + ': ' + (state.draft?.enabled ? text.settingOn : text.settingOff),
+          t('jev-enabled'),
+          state.draft?.enabled ?? false,
           disabled,
+          t('jev-help'),
         ),
         ...settingsFields.map(editor),
         ui.button(

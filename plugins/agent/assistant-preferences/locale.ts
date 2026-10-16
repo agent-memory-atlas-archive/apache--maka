@@ -67,6 +67,21 @@ const terminalMessages = {
   ],
   'assistant-name': tui_assistant_name,
   'assistant-privacy': tui_assistant_privacy,
+  'assistant-privacy-help': [
+    'Limits Recall, web retrieval, recaps, goals, plans and workflows. Chats are still saved; model requests still use your configured provider.',
+    '限制历史召回、联网检索、会话回顾、目标、计划和工作流。聊天仍会保存，模型请求仍发送给配置的服务商。',
+    '限制歷史召回、聯網檢索、工作階段回顧、目標、計畫和工作流程。聊天仍會儲存，模型請求仍傳送給設定的服務商。',
+  ],
+  'assistant-instructions-help': [
+    'Load global and workspace instruction files into the assistant context.',
+    '将全局与工作区指令文件加载到助手上下文。',
+    '將全域與工作區指令檔載入助理上下文。',
+  ],
+  'assistant-shell-titles-help': [
+    'Ask the model for a short title when it runs a shell command.',
+    '让模型在执行 Shell 命令时提供简短标题。',
+    '讓模型在執行 Shell 命令時提供簡短標題。',
+  ],
   'assistant-reload': tui_assistant_reload,
   'assistant-save': ['Save name', '保存称呼', '儲存稱呼'],
   'assistant-saved': tui_assistant_saved,
