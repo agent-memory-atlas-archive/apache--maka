@@ -918,6 +918,67 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
         );
         assert_eq!(chunks.len(), 10);
         assert!(before.is_none() && after.is_none());
+
+        let text_budget = if matches!(position, Position::Tail) {
+            &expected[expected.len() - 6..]
+        } else {
+            &expected[..6]
+        }
+        .iter()
+        .map(String::len)
+        .sum();
+        let bounded = log
+            .history_view(
+                "window",
+                through,
+                position,
+                false,
+                maka_agent_ports::session::history::HistoryView::Conversation,
+                text_budget,
+                None,
+                64 * 1024,
+            )
+            .await
+            .unwrap();
+        let encoded = serde_json::to_vec(&bounded).unwrap();
+        assert!(encoded.len() > 1024);
+        for budget in [encoded.len() - 1, encoded.len(), encoded.len() + 1] {
+            let limited = log
+                .history_view(
+                    "window",
+                    through,
+                    position,
+                    false,
+                    maka_agent_ports::session::history::HistoryView::Conversation,
+                    text_budget,
+                    None,
+                    budget,
+                )
+                .await
+                .unwrap();
+            let actual = serde_json::to_vec(&limited).unwrap();
+            assert!(actual.len() <= budget);
+            let Page::Ready { chunks, .. } = limited else {
+                panic!("prepared")
+            };
+            let count = if budget < encoded.len() { 5 } else { 6 };
+            assert_eq!(chunks.len(), count);
+            let texts = chunks
+                .iter()
+                .map(|chunk| chunk.text.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                texts,
+                if matches!(position, Position::Tail) {
+                    &expected[expected.len() - count..]
+                } else {
+                    &expected[..count]
+                }
+            );
+            if budget >= encoded.len() {
+                assert_eq!(actual, encoded);
+            }
+        }
     }
     let mut canonical = None;
     for budget in [4, 5, 7, 13, 128 * 1024] {

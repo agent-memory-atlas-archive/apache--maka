@@ -164,6 +164,7 @@ impl EventLog {
                 .bind(&session).bind(through_sql).bind(boundary).bind(inclusive)
                 .bind((max_chunks + 1) as i64).fetch_all(&mut *tx).await?;
             let mut chunks = Vec::new();
+            let mut chunks_json_bytes = 0;
             let mut bytes = 0;
             let mut projected = 0;
             let mut left = None;
@@ -252,19 +253,23 @@ impl EventLog {
                         ).bind(&session).bind(sql_number(sequence)?).fetch_one(&mut *tx).await?;
                         Some(maka_agent_ports::session::history::Compaction { duration_ms: sequence_number(duration)? })
                     } else { None };
-                    chunks.push(Chunk { field, timing, compaction,
+                    let chunk = Chunk { field, timing, compaction,
                         message_id: row.message, turn_id: row.turn, timestamp: row.timestamp, role,
                         sequence, offset: start, total_bytes: row.total, text: text.to_owned(), attachments, tool,
-                    });
+                    };
+                    chunks_json_bytes += serde_json::to_vec(&chunk)?.len();
+                    chunks.push(chunk);
                     }
                     // Bound the complete canonical delivery, including attachment
                     // descriptors and JSON escaping. A rejected candidate does not
                     // advance the source boundary or silently discard any metadata.
                     let (before, after) = boundaries(&mut tx, &session, through_sql, include_thinking, candidate_left, candidate_right).await?;
-                    let candidate = Page::Ready { through, chunks: std::mem::take(&mut chunks), before, after };
-                    let fits = serde_json::to_vec(&candidate)?.len() <= max_json_bytes;
-                    let Page::Ready { chunks: packed, .. } = candidate else { unreachable!() };
-                    chunks = packed;
+                    // The empty envelope includes []; each chunk adds its exact
+                    // encoded bytes, plus commas between elements. Cursor changes
+                    // still count even when this boundary emits no chunk.
+                    let envelope = Page::Ready { through, chunks: Vec::new(), before, after };
+                    let fits = serde_json::to_vec(&envelope)?.len() + chunks_json_bytes
+                        + chunks.len().saturating_sub(1) <= max_json_bytes;
                     if !fits {
                         if emit { chunks.pop(); }
                         if left.is_none() { return Err(invalid("history fragment exceeds JSON window budget")); }
