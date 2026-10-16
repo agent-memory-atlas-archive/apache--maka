@@ -242,7 +242,7 @@ export async function initializeMemory(
   );
   register(
     'MemoryIndexCreate',
-    'Standardize a request to organize an index: natural-language criterion plus an exact history cursor from MemoryRange. Runs an ordinary independent Maka Agent with its normal tools. It chooses searches, types and organization; no batch queue or content schema. Returns background progress immediately by default; use MemoryIndexRead to inspect completion. Set background=false only when explicitly waiting for the full result. New source arrivals remain incremental. New indexes automatically enable periodic maintenance (12 hours by default); change it with MemoryIndexControl. This does not enable proactive discovery.',
+    'Create an index from the user’s organizing requirements and a source-range cursor from MemoryRange. Starts a background organizing job by default; returns its identity and admission/progress, not a guarantee of completion. The index Agent chooses how to read and organize. New indexes enable maintenance every 12 hours by default; MemoryIndexControl changes that index’s schedule. Completion/failure feedback goes to the owning assistant. background=false waits for the result.',
     z.object({
       name: z.string().min(1).max(160),
       instructions: z.string().min(1).max(8000),
@@ -279,7 +279,7 @@ export async function initializeMemory(
   );
   register(
     'MemoryIndexCreateGroup',
-    'Organize numbered index definitions in ONE independent Agent Session. The Agent chooses order and reuses reads; criteria, ranges and checkpoints remain independent. Existing members accept number/indexId. A group occupies one job; capacity returns unstarted IDs for explicit retry. Background by default. New indexes automatically enable periodic maintenance (12 hours by default); change it with MemoryIndexControl, not InitiativeEnable.',
+    'Create or continue several numbered indexes in one organizing job. Each index retains its own requirements, content and coverage; existing members use number/indexId. Returns member IDs and job admission; capacity rejection includes unstarted IDs for retry. Background by default. New indexes enable 12-hour maintenance. Completion/failure feedback goes to the owning assistant; one member completing does not complete the group.',
     z.object({
       cursor: id,
       indexes: z
@@ -383,7 +383,7 @@ export async function initializeMemory(
   );
   register(
     'MemoryIndexMaintain',
-    'Ask the ordinary background Agent to continue organizing this index from its exact saved range. A grouped member reuses its one group job. Preserves unfinished work. Reevaluate time-dependent criteria even without source changes; unchanged content need not be rewritten. background=true returns admission/capacity immediately; default waits. Readers remain independent.',
+    'Run one organizing round for an existing index, reusing its unfinished range or shared group job. Does not change the maintenance schedule. Time-dependent criteria are reevaluated even without new source data. background=true returns job admission immediately; otherwise waits for the result. Use existing job progress/feedback to follow an active round rather than starting duplicate work.',
     z.object({ indexId: id, background: z.boolean().default(false) }),
     async (input: any, call: any) => {
       await visible(input.indexId);
@@ -398,7 +398,7 @@ export async function initializeMemory(
   );
   register(
     'MemoryIndexControl',
-    'Configure periodic index maintenance, not proactive discovery or user notifications. New indexes already default to maintenance every 12 hours; use this tool to change that schedule, never InitiativeEnable. Each due round reevaluates the criterion against current UTC, even without source changes, so rolling windows can expire old entries. pause stops future scheduled checks (an active round may finish); stop cancels the active organizing job and disables maintenance for ALL members sharing that job, preserving contents and checkpoints; resume schedules the next check after intervalMs. configure changes the interval without enabling a paused index. MemoryIndexMaintain runs one round now without changing this schedule setting.',
+    'Control maintenance of the specified index. configure changes its interval without enabling a paused index; pause stops future rounds but lets an active round finish; resume schedules the next round. stop cancels the shared organizing job and disables maintenance for ALL its member indexes. Contents and checkpoints are preserved. Returns affected state; it does not create a separate follow-up or user reminder. Use MemoryIndexMaintain for one immediate round.',
     z.object({
       indexId: id,
       action: z.enum(['pause', 'resume', 'configure', 'stop']),
@@ -409,7 +409,10 @@ export async function initializeMemory(
       store.assertIndexVisible(input.indexId, allowed);
       await controller.attach(input.indexId, call);
       await controller.control(input.indexId, input.action, input.intervalMs);
-      return controller.summary(input.indexId, allowed);
+      return {
+        ...controller.summary(input.indexId, allowed),
+        effect: { target: 'index_maintenance', action: input.action, indexId: input.indexId },
+      };
     },
     true,
   );

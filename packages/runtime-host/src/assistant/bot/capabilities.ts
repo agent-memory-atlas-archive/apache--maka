@@ -33,6 +33,7 @@ export const BOT_TOOLS = new Set([
   'MatterDelegationRecover',
   'MatterFeedbackRetry',
   'InitiativeEnable',
+  'InitiativeConfigure',
   'InitiativeControl',
   'InitiativeStatus',
   'MemoryIndexCreate',

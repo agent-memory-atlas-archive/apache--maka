@@ -36,7 +36,8 @@ test('heartbeat uses an independent exploration Session and exits normally witho
       assert.equal((await finish()).allow, true);
       checks++;
     });
-    await f.invoke('InitiativeEnable', { intervalMinutes: 1 });
+    await f.invoke('InitiativeConfigure', { intervalMinutes: 1 });
+    await f.invoke('InitiativeEnable', {});
     assert.equal(checks, 0); // enabling is not another unsolicited turn
     const names = f.tools.resolve('owner', []).tools.map((t: any) => t.name);
     assert.ok(!names.includes('InitiativeCheckpoint'));
@@ -284,6 +285,44 @@ test('master disable stops an active heartbeat and removes tools until explicitl
     assert.equal((await f.remote('assistant.binding')).state.sessionId, 'owner');
   } finally {
     release();
+    await f.close();
+  }
+});
+
+test('discovery enabling preserves cadence; explicit configuration preserves paused state and reports scope', async () => {
+  const f = await fixture();
+  try {
+    await f.remote('assistant.bind', { sessionId: 'owner' });
+    const configured = await f.invoke('InitiativeConfigure', { intervalMinutes: 360 });
+    assert.equal(configured.enabled, false);
+    assert.equal(configured.intervalMs, 21600000);
+    assert.equal(configured.nextAt, null);
+    assert.equal(configured.effect.target, 'assistant_proactive_discovery');
+    assert.equal(configured.effect.taskCreated, false);
+    const enabled = await f.invoke('InitiativeEnable', {});
+    assert.equal(enabled.enabled, true);
+    assert.equal(enabled.intervalMs, 21600000);
+    const again = await f.invoke('InitiativeEnable', {});
+    assert.equal(again.nextAt, enabled.nextAt, 'repeated enable must not postpone the next round');
+    assert.equal(again.revision, enabled.revision);
+    await assert.rejects(f.invoke('InitiativeEnable', { intervalMinutes: 30 }));
+    assert.equal((await f.invoke('InitiativeStatus')).intervalMs, 21600000);
+    await f.invoke('InitiativeControl', { action: 'pause' });
+    const changed = await f.invoke('InitiativeConfigure', { intervalMinutes: 30 });
+    assert.equal(changed.enabled, false);
+    assert.equal(changed.effect.before.intervalMs, 21600000);
+    assert.equal(changed.effect.after.intervalMs, 1800000);
+    assert.equal(changed.nextAt, null);
+    await assert.rejects(
+      f.invokeAs('unrelated-session', 'InitiativeConfigure', { intervalMinutes: 1 }),
+    );
+    const resumed = await f.invoke('InitiativeControl', { action: 'resume' });
+    assert.equal(resumed.intervalMs, 1800000);
+    assert.equal(resumed.enabled, true);
+    assert.equal(f.workers.size, 1, 'schedule operations do not start a task or exploration');
+    await assert.rejects(f.invoke('InitiativeConfigure', {}));
+    await assert.rejects(f.invoke('InitiativeConfigure', { intervalMinutes: 0 }));
+  } finally {
     await f.close();
   }
 });

@@ -819,6 +819,7 @@ test('Bot exposes index administration without giving it index writer tools', as
     'MemoryIndexCreateGroup',
     'MemoryIndexMaintain',
     'MemoryIndexControl',
+    'InitiativeConfigure',
     'MemoryIndexAddSources',
   ])
     assert.ok(names.includes(name), name);

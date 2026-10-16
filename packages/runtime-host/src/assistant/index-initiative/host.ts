@@ -118,25 +118,56 @@ export async function initializeInitiative(
       impl: async (input: any, call: any) =>
         JSON.parse(JSON.stringify(await impl(parameters.parse(input), call))),
     });
+  const scheduleReceipt = async (action: string, call: any, apply: () => Promise<any>) => {
+    const before = visible(call);
+    const state = await apply();
+    return {
+      ...state,
+      effect: {
+        target: 'assistant_proactive_discovery',
+        action,
+        before: before
+          ? { enabled: before.enabled, intervalMs: before.intervalMs, nextAt: before.nextAt }
+          : null,
+        after: { enabled: state.enabled, intervalMs: state.intervalMs, nextAt: state.nextAt },
+        taskCreated: false,
+      },
+    };
+  };
   register(
     'InitiativeEnable',
-    'Enable host-scheduled heartbeats for this assistant on explicit user request. Exploration runs in an independent background Session and reports findings to the Bot. Set cadence only as requested by the user. This controls proactive discovery, NOT index creation or periodic index maintenance. A request to update indexes every N hours is not authorization to enable discovery; use MemoryIndexControl for index maintenance.',
-    z.object({
-      intervalMinutes: z.number().int().min(1).max(10080).default(30),
-    }),
-    (input: any, call: any) => controller.enable(input, call),
+    'Enable general proactive discovery for this assistant when the user requests it. Preserves the existing interval (30 minutes on first setup) and an already enabled schedule. Findings go to the Bot. This creates no specific follow-up task or completion condition; a request to monitor one issue is not authorization to change global discovery. Use InitiativeConfigure to explicitly change its interval.',
+    z.object({}).strict(),
+    (_: any, call: any) => scheduleReceipt('enable', call, () => controller.enable({}, call)),
+  );
+  register(
+    'InitiativeConfigure',
+    'Change the general proactive-discovery interval for this assistant only when the user requests that configuration change. Preserves enabled/paused state; use InitiativeEnable to enable it. Does not schedule investigation of a particular issue or change index maintenance. Returns the previous and resulting configuration, not task progress.',
+    z
+      .object({
+        intervalMinutes: z
+          .number()
+          .int()
+          .min(1)
+          .max(10080)
+          .describe('Requested global discovery interval in minutes.'),
+      })
+      .strict(),
+    (input: any, call: any) =>
+      scheduleReceipt('configure', call, () => controller.configure(input, call)),
   );
   register(
     'InitiativeStatus',
-    'Read heartbeat scheduling metadata for this conversation.',
+    'Read this assistant’s general discovery schedule, current run and last error. Does not start exploration or report progress on a specific task.',
     z.object({}),
     (_: any, call: any) => visible(call) ?? { configured: false },
   );
   register(
     'InitiativeControl',
-    'Pause, resume, or request one immediate heartbeat only on a direct user request. Pause stops future heartbeats without cancelling the chat.',
+    'Pause/resume general proactive discovery, or request one immediate general exploration, on user request. Preserves its interval. Pause stops future heartbeats, not the chat or delegated tasks. check requests exploration; it does not return findings or track a specific issue. Results are reported separately to the Bot.',
     z.object({ action: z.enum(['pause', 'resume', 'check']) }),
-    (input: any, call: any) => controller.control(input.action, call),
+    (input: any, call: any) =>
+      scheduleReceipt(input.action, call, () => controller.control(input.action, call)),
   );
   ctx.systemPrompt.section({
     name: 'index-initiative.discovery',

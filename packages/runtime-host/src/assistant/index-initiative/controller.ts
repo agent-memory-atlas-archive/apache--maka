@@ -167,15 +167,29 @@ export class InitiativeController {
       const old = this.store.get();
       if (old && old.sessionId !== call.sessionId)
         throw Error('Only the assistant conversation may configure heartbeats');
+      if (old?.enabled && input.intervalMinutes === undefined) return old;
       const s = this.store.configure(
         { sessionId: call.sessionId, cwd: call.cwd },
-        input.intervalMinutes * 60000,
+        input.intervalMinutes === undefined
+          ? (old?.intervalMs ?? 1800000)
+          : input.intervalMinutes * 60000,
       );
       void this.tick();
       return s;
     } finally {
       this.enabling = false;
     }
+  }
+  async configure(input: { intervalMinutes: number }, call: any) {
+    this.ready();
+    const old = this.store.get();
+    if (old && old.sessionId !== call.sessionId)
+      throw Error('Only the assistant conversation may configure heartbeats');
+    return this.store.configure(
+      { sessionId: call.sessionId, cwd: call.cwd },
+      input.intervalMinutes * 60000,
+      old?.enabled ?? false,
+    );
   }
   async control(action: string, call: any) {
     this.ready();

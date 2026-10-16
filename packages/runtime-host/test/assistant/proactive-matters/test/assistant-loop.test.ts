@@ -165,6 +165,8 @@ test('Bot delegates for the visible owner and delivers task completion through S
   let task: any, failure: unknown;
   try {
     await f.remote('assistant.bind', { sessionId: 'owner' });
+    await f.invoke('InitiativeConfigure', { intervalMinutes: 360 });
+    const schedule = await f.invoke('InitiativeEnable', {});
     f.setRunner(async ({ prompt, invoke }: any) => {
       try {
         if (prompt.startsWith('Inbox 有新消息')) {
@@ -176,6 +178,10 @@ test('Bot delegates for the visible owner and delivers task completion through S
                 title: '检查验收',
                 request: '只读检查验收结果，告诉用户结论。',
               });
+              assert.deepEqual(task.effect, { target: 'task', action: 'delegate', id: task.id });
+              const discovery = await invoke('InitiativeStatus', {});
+              assert.equal(discovery.intervalMs, schedule.intervalMs);
+              assert.equal(discovery.nextAt, schedule.nextAt);
               const owned = await invoke('MatterTasks', {});
               assert.ok(JSON.stringify(owned).includes(task.id));
             } else if (row.type === 'task_update') {

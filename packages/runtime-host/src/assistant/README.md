@@ -84,3 +84,30 @@ The desktop entry and assistant messages share the avatar, displayed as a rounde
 This tool changes appearance only and does not send a message.
 
 运行中的持续任务在每次模型请求前获得当前任务 Inbox 的动态上下文（用户追加要求和 Bot 澄清），同时刷新任务文件，不依赖 Recall。渲染上下文不会确认或消费输入；仍由 MatterRead 和提交检查维护观察边界，收尾时才消费已处理事件。已发出的模型请求或已执行的工具不会被追溯撤销；取消仍使用任务控制接口。
+
+
+### Bot operation boundaries
+
+The Bot coordinates work, configuration and notifications. Reuse an existing task or
+index job when it already owns the requested outcome and reports progress. Create a
+separate task only when additional investigation, recovery or follow-up is needed.
+A request to notify the user when one issue resolves does not authorize changing the
+assistant-wide discovery schedule.
+
+- `InitiativeEnable({})` enables the saved discovery schedule, retaining its interval.
+  Repeating it on an enabled schedule leaves the next wake unchanged. First setup
+  defaults to 30 minutes. Extra arguments are rejected rather than silently ignored.
+- `InitiativeConfigure({intervalMinutes})` explicitly changes that schedule and
+  preserves its enabled/paused state. `InitiativeControl` pauses/resumes it or requests
+  one general exploration. These operations create no goal-specific task.
+- `MemoryIndexControl` configures a particular index's maintenance;
+  `MemoryIndexMaintain` runs one organizing round. Shared-job stop semantics remain
+  unchanged.
+- `MatterDelegate` creates concrete work; `MatterTasks` reads progress;
+  `MatterTaskMessage` appends requirements; `MatterTaskControl` changes that task.
+  Appending a requirement saves it for a subsequent model request, not proof of compliance.
+
+Mutation receipts identify their target and action. Discovery receipts also return
+before/after schedule values. The desktop settings API retains its existing combined
+enable-and-configure operation; the model-facing tools separate these intents.
+The discovery exploration prompt and Inbox/Sleep loop are unchanged.
