@@ -323,8 +323,7 @@ pub(super) async fn run(
                 )
                 .await?;
                 let ids: Vec<_> = local_calls.iter().map(|call| call.id.as_str()).collect();
-                lane.confirm(&surface.apply(replay), &ids, output.response_id.as_deref())
-                    .await?;
+                lane.confirm(&surface.apply(replay), &ids, output.response_id.as_deref());
             }
             main_progress = true;
         }

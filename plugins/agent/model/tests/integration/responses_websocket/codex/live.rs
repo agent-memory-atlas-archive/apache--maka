@@ -118,11 +118,7 @@ async fn live_luna_subscription_streams_and_confirms_canonical_ws_continuation()
                 lane.needs_confirmation(),
                 "HTTP completion cannot prove live WebSocket acceptance"
             );
-            assert!(
-                lane.confirm(&prompt, &[], step.response_id.as_deref())
-                    .await
-                    .unwrap()
-            );
+            assert!(lane.confirm(&prompt, &[], step.response_id.as_deref()));
         }
         drop(lane);
     })

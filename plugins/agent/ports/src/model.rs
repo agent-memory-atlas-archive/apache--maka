@@ -90,14 +90,6 @@ pub struct Context {
     pub cancellation: CancellationToken,
     pub idle_timeout: Duration,
 }
-/// Committed history projected by Host after local tool settlement. It is not
-/// a plugin-supplied claim, nor permission to change canonical history.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Confirmation {
-    pub prompt: Vec<Message>,
-    pub settled_tool_call_ids: Vec<String>,
-    pub response_id: Option<String>,
-}
 /// Disposable per-conversation optimization state, never a history authority.
 pub trait Session: Send + Sync {
     fn stream(&self, request: Request, context: Context) -> BoxFuture<'static, Result<(), Error>>;
@@ -110,8 +102,15 @@ pub trait Session: Send + Sync {
     fn needs_confirmation(&self) -> bool {
         false
     }
-    fn confirm(&self, _confirmation: Confirmation) -> BoxFuture<'_, Result<bool, Error>> {
-        Box::pin(async { Ok(false) })
+    /// Check committed history projected by Host after local tool settlement.
+    /// This is not a plugin claim or permission to change canonical history.
+    fn confirm(
+        &self,
+        _prompt: &[Message],
+        _settled_tool_call_ids: &[&str],
+        _response_id: Option<&str>,
+    ) -> bool {
+        false
     }
 }
 #[derive(Clone, Copy, Serialize, Deserialize)]

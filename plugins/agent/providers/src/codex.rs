@@ -20,10 +20,10 @@
 use base64::Engine;
 use futures_util::future::BoxFuture;
 use maka_agent_ports::model;
-use maka_agent_ports::model::Confirmation;
 use maka_agent_ports::model::Context;
 use maka_agent_ports::model::Error;
 use maka_agent_ports::model::Lifetime;
+use maka_agent_ports::model::Message;
 use maka_agent_ports::model::ProviderAdapter;
 use maka_agent_ports::model::Request;
 use maka_agent_ports::model::Session;
@@ -82,8 +82,13 @@ impl Session for Subscription {
     fn needs_confirmation(&self) -> bool {
         self.0.needs_confirmation()
     }
-    fn confirm(&self, confirmation: Confirmation) -> BoxFuture<'_, Result<bool, Error>> {
-        self.0.confirm(confirmation)
+    fn confirm(
+        &self,
+        prompt: &[Message],
+        settled_tool_call_ids: &[&str],
+        response_id: Option<&str>,
+    ) -> bool {
+        self.0.confirm(prompt, settled_tool_call_ids, response_id)
     }
 }
 

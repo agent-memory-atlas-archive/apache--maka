@@ -19,10 +19,10 @@
 
 use crate::{Lane, transport::Shared};
 use futures_util::future::BoxFuture;
-use maka_agent_ports::model::Confirmation;
 use maka_agent_ports::model::Context;
 use maka_agent_ports::model::Error;
 use maka_agent_ports::model::Lifetime;
+use maka_agent_ports::model::Message;
 use maka_agent_ports::model::ProviderAdapter;
 use maka_agent_ports::model::Request;
 use maka_agent_ports::model::Session;
@@ -76,19 +76,14 @@ impl Session for Native {
     fn needs_confirmation(&self) -> bool {
         self.lane.as_ref().is_some_and(Lane::needs_confirmation)
     }
-    fn confirm(&self, confirmation: Confirmation) -> BoxFuture<'_, Result<bool, Error>> {
-        Box::pin(async move {
-            Ok(self.lane.as_ref().is_some_and(|lane| {
-                lane.confirm(
-                    &confirmation.prompt,
-                    &confirmation
-                        .settled_tool_call_ids
-                        .iter()
-                        .map(String::as_str)
-                        .collect::<Vec<_>>(),
-                    confirmation.response_id.as_deref(),
-                )
-            }))
-        })
+    fn confirm(
+        &self,
+        prompt: &[Message],
+        settled_tool_call_ids: &[&str],
+        response_id: Option<&str>,
+    ) -> bool {
+        self.lane
+            .as_ref()
+            .is_some_and(|lane| lane.confirm(prompt, settled_tool_call_ids, response_id))
     }
 }

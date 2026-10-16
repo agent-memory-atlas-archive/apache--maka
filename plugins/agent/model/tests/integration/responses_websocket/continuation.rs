@@ -68,7 +68,7 @@ async fn custom_result_and_notifications_all_survive_confirmed_websocket_delta()
             input.prompt.push(serde_json::from_value(json!({"role":"tool","content":[{"type":"tool-result","toolCallId":"call_1","toolName":"exec",
                 "output":{"type":"text","value":value}, "providerOptions":{"openai":{"toolKind":"custom"},"maka":{"notification":notification}}}]})).unwrap());
         }
-        assert!(lane.confirm(&input.prompt, &["call_1"], step.response_id.as_deref()).await.unwrap());
+        assert!(lane.confirm(&input.prompt, &["call_1"], step.response_id.as_deref()));
         generate(&executor, &lane, input).await;
         server.await.unwrap();
     }).await.expect("custom outputs must not disappear from WS continuation");
@@ -144,7 +144,7 @@ async fn idle_close_reconnect_and_upgrade_fallback_restore_the_raw_baseline() {
             }).collect();
             let mut next = replay(&base);
             next.prompt[1] = serde_json::from_value(json!({"role":"assistant","content":content})).unwrap();
-            assert!(lane.confirm(&next.prompt, &["call_1"], step.response_id.as_deref()).await.unwrap());
+            assert!(lane.confirm(&next.prompt, &["call_1"], step.response_id.as_deref()));
             generate(&executor, &lane, next).await;
             drop(lane);
             server.await.unwrap();
@@ -259,34 +259,19 @@ async fn canonical_tool_confirmation_and_changed_properties_restore_full_input()
             let mut next = replay(&base);
             match mode {
                 "unconfirmed" => {}
-                "wrong-tool" => assert!(
-                    !lane
-                        .confirm(&next.prompt, &["another-call"], step.response_id.as_deref())
-                        .await
-                        .unwrap()
-                ),
+                "wrong-tool" => assert!(!lane.confirm(
+                    &next.prompt,
+                    &["another-call"],
+                    step.response_id.as_deref()
+                )),
                 "wrong-response" => {
-                    assert!(
-                        !lane
-                            .confirm(&next.prompt, &["call_1"], Some("other-response"))
-                            .await
-                            .unwrap()
-                    )
+                    assert!(!lane.confirm(&next.prompt, &["call_1"], Some("other-response")))
                 }
                 "changed-before" => {
                     next.prompt[0] = maka_model::prompt::Message::user("compacted");
-                    assert!(
-                        !lane
-                            .confirm(&next.prompt, &["call_1"], step.response_id.as_deref())
-                            .await
-                            .unwrap()
-                    );
+                    assert!(!lane.confirm(&next.prompt, &["call_1"], step.response_id.as_deref()));
                 }
-                _ => assert!(
-                    lane.confirm(&next.prompt, &["call_1"], step.response_id.as_deref())
-                        .await
-                        .unwrap()
-                ),
+                _ => assert!(lane.confirm(&next.prompt, &["call_1"], step.response_id.as_deref())),
             }
             if mode == "changed-after" {
                 next.prompt[0] = maka_model::prompt::Message::user("compacted");

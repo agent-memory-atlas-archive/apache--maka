@@ -169,7 +169,7 @@ async fn subscription_profile_survives_proxy_ws_continuation_and_http_fallback()
                 let content = accepted_content(&step);
                 next.prompt.push(serde_json::from_value(json!({"role":"assistant","content":content})).unwrap());
                 assert!(lane.needs_confirmation());
-                assert!(lane.confirm(&next.prompt, &[], step.response_id.as_deref()).await.unwrap());
+                assert!(lane.confirm(&next.prompt, &[], step.response_id.as_deref()));
                 next.prompt.push(serde_json::from_value(json!({"role":"user","content":[{"type":"text","text":"second"}]})).unwrap());
                 generate(&executor, &lane, next).await;
             }

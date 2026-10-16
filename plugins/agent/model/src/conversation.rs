@@ -18,7 +18,6 @@
  */
 
 use maka_agent_ports::model::Binding;
-use maka_agent_ports::model::Confirmation;
 use maka_agent_ports::model::Error;
 use maka_agent_ports::model::Lifetime;
 use maka_agent_ports::model::Message;
@@ -71,32 +70,18 @@ impl Conversation {
             .as_ref()
             .is_some_and(|bound| bound.session.needs_confirmation())
     }
-    pub async fn confirm(
+    pub fn confirm(
         &self,
         prompt: &[Message],
         settled_tool_call_ids: &[&str],
         response_id: Option<&str>,
-    ) -> Result<bool, Error> {
+    ) -> bool {
         let session = self
             .state
             .lock()
             .unwrap()
             .as_ref()
             .map(|bound| bound.session.clone());
-        match session {
-            Some(session) => {
-                session
-                    .confirm(Confirmation {
-                        prompt: prompt.to_vec(),
-                        settled_tool_call_ids: settled_tool_call_ids
-                            .iter()
-                            .map(|id| (*id).to_owned())
-                            .collect(),
-                        response_id: response_id.map(str::to_owned),
-                    })
-                    .await
-            }
-            None => Ok(false),
-        }
+        session.is_some_and(|session| session.confirm(prompt, settled_tool_call_ids, response_id))
     }
 }
