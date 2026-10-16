@@ -181,11 +181,11 @@ export function registerDelegation(
   );
   register(
     'MatterDelegate',
-    'Create an independent task for a concrete user goal requiring investigation, execution or follow-up. It works now, waits only when necessary and may finish in one turn; progress, questions and outcomes return to the Bot. Check existing work and reuse it when it already serves the goal, including index jobs with completion feedback. Pass the user request and constraints without adding deliverables or acceptance criteria. taskKey identifies retries of the same request. Returns the task identity and current state, not proof of execution or completion; does not change global schedules.',
+    'Create an independent task for a concrete user goal requiring investigation, execution or follow-up. It works now, waits only when necessary and may finish in one turn; progress, questions and outcomes return to the Bot. Existing tasks accept additional requirements through MatterTaskMessage; their progress is available through MatterTasks. taskKey identifies retries of the same request. Returns the task identity and current state, not proof of execution or completion; does not change global schedules.',
     z.object({
       taskKey: z.string().trim().min(1).max(200),
       title: z.string().trim().min(1).max(120),
-      request: z.string().trim().min(1).max(8000),
+      request: z.string().trim().min(1).max(8000).describe('User goal, relevant context and constraints to pass to the worker; not an invented plan or additional acceptance criteria.'),
     }),
     true,
     async (input: any, call: any) => {
@@ -264,7 +264,7 @@ export function registerDelegation(
   );
   register(
     'MatterDelegationRecover',
-    'On user request reconcile an interrupted delegation against the exact persisted creation identity. Never creates another worker when the previous outcome is uncertain.',
+    'Reconcile an interrupted delegation against the exact persisted creation identity. Never creates another worker when the previous outcome is uncertain.',
     z.object({ taskKey: z.string() }),
     true,
     async (input: any, call: any) => {
@@ -288,7 +288,7 @@ export function registerDelegation(
   );
   register(
     'MatterFeedbackRetry',
-    'On user request reconcile task feedback and retry a missing reply. Rechecks the original turn before sending; never restarts the delegated task.',
+    'Reconcile task feedback and retry a missing reply. Rechecks the original turn before sending; never restarts the delegated task.',
     z.object({ notificationId: z.string() }),
     true,
     (input: any, call: any) => delivery.retry(call.sessionId, input.notificationId),

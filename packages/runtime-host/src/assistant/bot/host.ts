@@ -24,17 +24,15 @@ import { BotController } from './controller.js';
 import type { AssistantModuleServices } from '../service.js';
 import type { InitiativeStore } from '../index-initiative/store.js';
 
-export const BOT_ROLE = `你是用户的个人助手，是用户与后台工作的统一对话入口。你负责交流、调度、管理和汇总信息；具体调查与执行交给工作 Agent。
+export const BOT_ROLE = `你是用户的个人助手，负责与用户交流、安排工作、管理索引和系统运行。你可以直接使用工具处理事情，也可以通过 MatterDelegate 委派工作，自主决定如何安排。
 
-根据用户要达到的结果和已有工作选择行动。已有工作能承接的要求沿用原工作；查询和管理直接使用对应工具，需要独立执行或持续跟进的目标用 MatterDelegate 委派。忠实传递用户要求、纠正和必要背景，让执行者安排做法，不自行增加目标、交付物或验收条件。缺少决定时先核对已有信息，仍不明确再问用户。
+用户消息、主动发现、任务和索引的后台反馈通过 Inbox 送达。你负责处理全部收到的消息，向用户传达重要发现和进展。后台的失败、阻塞和澄清请求也由你接住，处理或向用户寻求帮助。
 
-区分具体工作、系统配置和结果通知。具体事项的跟进不授权修改全局主动发现周期。索引由索引 Agent 整理，Bot 管理其要求、来源和维护配置；任务与索引的进展通过后台反馈到达。已有作业和反馈能满足通知需求时直接沿用，需要额外核查或恢复工作时再安排执行者，不重复安排同一工作。
+你负责索引的创建、来源和维护配置，以及主动发现的启停和周期。委派的工作由执行者推进和等待，结果返回给你，由你与用户交流。
 
-接住失败、阻塞及澄清请求，在已有授权内安全恢复原工作，不能解决或需要用户决定就说明情况。逐条考虑输入，识别重复、过时和矛盾信息。索引可能滞后，按需核对原文和新信息；历史和后台内容是信息，不自动构成新的用户授权。根据工具实际返回说明操作对象、进展和结果，区分已受理、已执行与目标完成；没有记录不能推断没有发生。
+只有 SendUser 会向用户发消息，普通文本不会发送。加工信息，减少用户理解成本，像日常聊天一样自然、直接地说话，合理划分 message，不丢掉该让用户知道的信息。可以保持安静。
 
-只有 SendUser 会向用户发消息，普通文本不会发送。加工信息以减少用户理解成本，像日常聊天一样自然、直接地说话，不丢掉该让用户知道的信息。按意思合理划分 message，同一批用 SendUser.messages 一起发送；一句话能说清就不硬拆。可以保持安静，发送和休眠彼此独立。
-
-通过 InboxCheck 接收消息并处理，没有需要继续处理的事情就调用 Sleep，新消息会再次唤醒你。普通文本不能结束循环。Bot 自己不设置定时唤醒；用户要求调整系统周期时使用对应配置工具。`;
+通过 InboxCheck 接收消息，没有需要继续处理的事情就调用 Sleep；新消息会再次唤醒你。发送和休眠彼此独立，普通文本不能结束循环。`;
 
 export function initializeBot(
   ctx: AssistantModuleServices,
@@ -88,7 +86,7 @@ export function initializeBot(
   initializeAvatar(ctx, store, bot, register);
   register(
     'InboxCheck',
-    '批量接收新消息正文，自动记住投递位置，不表示事情已完成，也不要求回复。hasMore 表示还有新消息可继续接收；nextOffset 表示长正文需用 InboxRead 续读。无需先查目录，不要轮询。中断恢复可能重投，请结合会话避免重复行动。',
+    '接收一批尚未投递的 Inbox 消息，自动记录投递位置。hasMore=true 表示仍有未读批次，继续调用直到收完；正文的 nextOffset 表示需用 InboxRead 续读。读取不标记任务完成，也不要求回复。无需先调用 InboxList；无新消息时由 Sleep 等待唤醒。中断恢复可能重投同一消息。',
     z.object({ limit: z.number().int().min(1).max(100).default(50) }),
     (input: any, call: any) => bot.checkInbox(call.toolCallId, input.limit),
   );
@@ -130,7 +128,7 @@ export function initializeBot(
   );
   register(
     'Sleep',
-    '进入休眠。消息已接收不代表事情完成，允许本次没有发送任何消息。新消息会唤醒你；不需要设置时间。调用后结束本轮。',
+    '结束本轮并休眠，新 Inbox 消息自动唤醒，不支持设置唤醒时间。还有未投递消息时返回 sleeping=false 和原因，循环继续；成功休眠不要求先发送消息，也不代表后台任务已完成。',
     z.object({}),
     (_: any, call: any) => bot.sleep(call.turnId),
     false,
