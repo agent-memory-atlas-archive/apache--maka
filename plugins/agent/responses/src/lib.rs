@@ -48,7 +48,7 @@ pub enum Error {
     },
     #[error("{0}")]
     Invalid(String),
-    /// Receive-side interruption; replay safety belongs to the shared decoder.
+    /// Network interruption; replay safety belongs to the shared decoder.
     #[error("{0}")]
     Interrupted(String),
     #[error("{0}")]

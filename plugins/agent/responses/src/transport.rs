@@ -222,9 +222,19 @@ impl Exchange {
                 if !self.cancellation.is_cancelled() {
                     self.transport.defer(route, Instant::now());
                 }
-                crate::Error::Transport(format!(
-                    "Responses WebSocket send failed; request was not replayed: {cause}"
-                ))
+                match cause {
+                    maka_agent_facts::model::error::ModelError::Provider(failure)
+                        if failure.reason()
+                            == maka_agent_facts::model::error::ProviderFailureReason::Network =>
+                    {
+                        // The engine owns recovery from canonical history. This
+                        // transport never resends an uncertain response.create.
+                        crate::Error::Interrupted(failure.message().into())
+                    }
+                    cause => {
+                        crate::Error::Transport(format!("Responses WebSocket send failed: {cause}"))
+                    }
+                }
             })?;
         connection.baseline = prepared.cache(&self.transport.cache);
         *active = Some(connection);

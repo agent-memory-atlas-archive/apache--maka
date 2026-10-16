@@ -18,6 +18,7 @@
  */
 
 use crate::support::invocation;
+mod recovery;
 mod websocket;
 
 use std::collections::BTreeMap;

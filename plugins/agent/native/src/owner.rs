@@ -255,7 +255,8 @@ impl Owner {
             activation: context.activation().epoch().to_string(),
             revision: context.package().revision.clone(),
         };
-        let models = ModelExecutor::for_source(Duration::from_secs(60), revision.clone())
+        // Match Codex's five-minute stream idle allowance for slow model steps.
+        let models = ModelExecutor::for_source(Duration::from_secs(300), revision.clone())
             .map_err(|_| "agent_executor_unavailable")?;
         let auxiliary = auxiliary::Auxiliary::new(revision.clone())?;
         let behavior = prompt.map(|text| {

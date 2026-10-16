@@ -316,7 +316,11 @@ async fn interrupted_reads_preserve_diagnostics_and_decoder_replay_safety() {
     use maka_agent_facts::model::error::ProviderFailureReason;
     use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
     tokio::time::timeout(Duration::from_secs(15), async {
-        for mode in ["empty", "text", "final_text", "local_intent", "provider_effect", "policy", "size", "reset"] {
+        for (mode, idle) in [
+            ("empty", false), ("text", false), ("final_text", false), ("local_intent", false),
+            ("provider_effect", false), ("policy", false), ("size", false), ("reset", false),
+            ("empty", true), ("text", true), ("final_text", true), ("local_intent", true), ("provider_effect", true),
+        ] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
             let server = tokio::spawn(async move {
@@ -336,6 +340,11 @@ async fn interrupted_reads_preserve_diagnostics_and_decoder_replay_safety() {
                     }
                     _ => {}
                 }
+                if idle {
+                    assert!(socket.next().await.is_none_or(|frame| frame.is_err() || matches!(frame, Ok(Message::Close(_)))), "timeout must release the original socket");
+                    assert!(listener.accept().now_or_never().is_none(), "transport itself never replays");
+                    return;
+                }
                 if mode == "reset" {
                     socket.get_ref().set_zero_linger().unwrap();
                     return;
@@ -352,12 +361,12 @@ async fn interrupted_reads_preserve_diagnostics_and_decoder_replay_safety() {
                     assert!(listener.accept().now_or_never().is_none(), "transport itself never replays");
                 }
             });
-            let executor = ModelExecutor::new(Duration::from_secs(5)).unwrap();
+            let executor = ModelExecutor::new(if idle { Duration::from_millis(150) } else { Duration::from_secs(5) }).unwrap();
             let lane = Conversation::default();
             assert!(!lane.try_switch_fallback_transport());
             let input = || {
                 let mut input = request(&base, "interrupted");
-                if mode == "size" { input.provider.adapter = Some(maka_providers::codex::ADAPTER.into()); }
+                if mode == "size" || idle { input.provider.adapter = Some(maka_providers::codex::ADAPTER.into()); }
                 input
             };
             let mut stream = executor.stream_in_conversation(input(), CancellationToken::new(), Some(lane.clone())).await.unwrap();
@@ -371,10 +380,12 @@ async fn interrupted_reads_preserve_diagnostics_and_decoder_replay_safety() {
                 assert!(matches!(&failure, ModelError::Adapter(message) if message.contains("1008") && message.contains("request refused")), "{failure}");
             } else {
                 let ModelError::Provider(failure) = failure else { panic!("{failure}"); };
-                assert_eq!(failure.reason(), ProviderFailureReason::StreamTruncated);
+                assert_eq!(failure.reason(), if idle { ProviderFailureReason::TimedOut } else { ProviderFailureReason::StreamTruncated });
                 assert_eq!(failure.replay_safe(), matches!(mode, "empty" | "text" | "size" | "reset"));
                 assert_eq!(failure.retained_output_safe(), mode != "provider_effect");
-                if mode != "reset" {
+                if idle {
+                    assert!(failure.message().contains("idle timeout"));
+                } else if mode != "reset" {
                     assert!(failure.to_string().contains(if mode == "size" {"1009"} else {"1012"}) && failure.to_string().contains("provider restarting"), "{failure}");
                 }
             }

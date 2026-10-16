@@ -47,6 +47,9 @@ impl ProviderAdapter for Codex {
     fn supports_item_acceptance(&self) -> bool {
         self.0.supports_item_acceptance()
     }
+    fn enforces_idle_timeout(&self) -> bool {
+        self.0.enforces_idle_timeout()
+    }
 
     fn open(
         &self,

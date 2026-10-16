@@ -289,7 +289,7 @@ impl Socket for Connection {
             tokio::select! {
                 biased;
                 _ = self.cancelled.cancelled() => Err(Error::Cancelled),
-                result = write.send(frame) => result.map_err(|cause| Error::Adapter(format!("model WebSocket send failed: {cause}"))),
+                result = write.send(frame) => result.map_err(|cause| websocket_failure("send", cause)),
             }
         })
     }
@@ -315,7 +315,7 @@ impl Socket for Connection {
                             tokio::select! {
                                 biased;
                                 _ = self.cancelled.cancelled() => return Err(Error::Cancelled),
-                                result = write.flush() => result.map_err(|cause| websocket_read_failure("pong", cause))?,
+                                result = write.flush() => result.map_err(|cause| websocket_failure("pong", cause))?,
                             }
                         }
                     }
@@ -342,7 +342,7 @@ impl Socket for Connection {
                         )));
                     }
                     None => return Ok(None),
-                    Some(Err(cause)) => return Err(websocket_read_failure("receive", cause)),
+                    Some(Err(cause)) => return Err(websocket_failure("receive", cause)),
                     Some(Ok(_)) => {
                         return Err(Error::Adapter(
                             "model WebSocket returned an unsupported frame".into(),
@@ -361,7 +361,7 @@ impl Socket for Connection {
         })
     }
 }
-fn websocket_read_failure(operation: &str, cause: tokio_tungstenite::tungstenite::Error) -> Error {
+fn websocket_failure(operation: &str, cause: tokio_tungstenite::tungstenite::Error) -> Error {
     use tokio_tungstenite::tungstenite::{Error as WsError, error::ProtocolError};
     let transient = match &cause {
         WsError::ConnectionClosed
@@ -422,5 +422,40 @@ pub(super) fn failure(error: reqwest::Error) -> Error {
         ))
     } else {
         Error::Adapter("model HTTP request failed".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn socket_write_failures_preserve_transient_network_evidence() {
+        use tokio_tungstenite::tungstenite::{Error as WsError, error::ProtocolError};
+        let error = websocket_failure(
+            "send",
+            WsError::Io(std::io::Error::from(std::io::ErrorKind::BrokenPipe)),
+        );
+        let Error::Provider(failure) = error else {
+            panic!("broken pipe must remain a network failure")
+        };
+        assert_eq!(failure.reason(), ProviderFailureReason::Network);
+        assert!(
+            failure.message().contains("send failed")
+                && failure
+                    .message()
+                    .to_ascii_lowercase()
+                    .contains("broken pipe")
+        );
+        assert!(
+            !failure.replay_safe(),
+            "only the protocol decoder can authorize replay"
+        );
+        assert!(
+            matches!(
+                websocket_failure("send", WsError::Protocol(ProtocolError::SendAfterClosing)),
+                Error::Adapter(_)
+            ),
+            "protocol misuse is not a retryable network outage"
+        );
     }
 }

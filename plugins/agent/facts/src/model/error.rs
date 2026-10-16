@@ -37,6 +37,7 @@ pub struct ProviderFailure {
 #[serde(rename_all = "snake_case")]
 pub enum ProviderFailureReason {
     Network,
+    TimedOut,
     RateLimit,
     ProviderUnavailable,
     StreamTruncated,

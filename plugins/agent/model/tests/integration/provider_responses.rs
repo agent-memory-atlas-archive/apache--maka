@@ -384,3 +384,54 @@ async fn plaintext_responses_does_not_turn_transport_eof_into_success() {
         server.await.unwrap();
     }).await.expect("truncated stream must fail promptly");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn idle_http_reads_keep_protocol_safety_and_explicit_rejections() {
+    use maka_model::{ModelError, ProviderFailureReason};
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for (status, mode) in [(0, "empty"), (200, "empty"), (200, "text"), (200, "opaque"), (200, "untyped"), (200, "untyped_text"), (401, "empty"), (429, "empty"), (503, "empty")] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                read_request(&mut socket).await;
+                if status != 0 {
+                    let content_type = if mode.starts_with("untyped") { "" } else if status == 200 { "Content-Type: text/event-stream\r\n" } else { "Content-Type: application/json\r\n" };
+                    socket.write_all(format!("HTTP/1.1 {status} Fixture\r\n{content_type}Retry-After: 2\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+                    let body = match mode {
+                        "text" | "untyped_text" => frames(&text_events("retained answer")),
+                        "untyped" => "<html>unexpected gateway response</html>".into(),
+                        "opaque" => frames(&[json!({"type":"response.future_call.in_progress"})]),
+                        _ => String::new(),
+                    };
+                    socket.write_all(body.as_bytes()).await.unwrap();
+                }
+                assert_eq!(socket.read(&mut [0; 1]).await.unwrap(), 0, "timeout must close HTTP I/O");
+            });
+            let executor = ModelExecutor::new(Duration::from_millis(150)).unwrap();
+            let mut input = super::provider_stream::request(ProviderKind::OpenaiResponses, base_url);
+            input.provider.auth = maka_model::ProviderAuth::ApiKey("local-test-key".into());
+            input.provider.headers.insert("x-test-provider".into(), "responses".into());
+            let mut stream = executor.stream(input, CancellationToken::new()).await.unwrap();
+            let error = loop {
+                match stream.next().await.expect("must report the interruption") {
+                    Err(error) => break error,
+                    Ok(event) => assert!(!matches!(event.event, ModelEvent::Finished { .. })),
+                }
+            };
+            stream.cancel_and_wait().await.expect("physical cleanup");
+            server.await.unwrap();
+            if mode == "untyped" {
+                assert!(matches!(error, ModelError::Adapter(message) if message.contains("missing Content-Type and no SSE events")));
+            } else if status == 401 {
+                assert!(matches!(error, ModelError::Adapter(message) if message.contains("HTTP 401")));
+            } else {
+                let ModelError::Provider(failure) = error else { panic!("expected recoverable evidence: {error}") };
+                assert_eq!(failure.reason(), match status { 429 => ProviderFailureReason::RateLimit, 503 => ProviderFailureReason::ProviderUnavailable, _ => ProviderFailureReason::TimedOut });
+                assert_eq!(failure.replay_safe(), mode == "empty");
+                assert_eq!(failure.retained_output_safe(), status < 400 && mode != "opaque");
+                assert_eq!(failure.retry_after(), (status >= 400).then_some(Duration::from_secs(2)));
+            }
+        }
+    }).await.expect("all idle HTTP boundaries must settle");
+}

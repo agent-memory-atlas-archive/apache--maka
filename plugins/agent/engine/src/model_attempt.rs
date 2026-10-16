@@ -724,6 +724,11 @@ async fn finish(
                 {
                     ModelInterruption::RetryableFailure
                 }
+                maka_model::ModelError::Provider(ref failure)
+                    if failure.reason() == maka_model::ProviderFailureReason::TimedOut =>
+                {
+                    ModelInterruption::TimedOut
+                }
                 maka_model::ModelError::Provider(_) => ModelInterruption::Failed,
             };
             append(

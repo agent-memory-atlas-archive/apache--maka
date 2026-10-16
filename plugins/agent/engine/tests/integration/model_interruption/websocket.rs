@@ -326,7 +326,7 @@ async fn accepted_call_runs_before_stream_completion_and_survives_retry_in_direc
     use crate::support::agent_loop::{self, Effect};
     use maka_agent_facts::tool_call::ToolOrigin;
     tokio::time::timeout(Duration::from_secs(20), async {
-        for mode in [ToolMode::Direct, ToolMode::CodeMode] {
+        for (mode, idle) in [(ToolMode::Direct, false), (ToolMode::CodeMode, false), (ToolMode::Direct, true), (ToolMode::CodeMode, true)] {
             let directory = tempfile::tempdir().unwrap();
             let log = Arc::new(EventLog::open(&directory.path().join("events.sqlite")).await.unwrap());
             log.create_session("session","streaming",&json!({}),1).await.unwrap();
@@ -361,11 +361,25 @@ async fn accepted_call_runs_before_stream_completion_and_survives_retry_in_direc
                     }
                     commits.changed().await.unwrap();
                 }
-                socket.close(None).await.unwrap();
+                if idle {
+                    assert!(socket.next().await.is_none_or(|frame| frame.is_err() || matches!(frame, Ok(Message::Close(_)))));
+                } else {
+                    socket.close(None).await.unwrap();
+                }
                 drop(socket);
-                let (socket, _) = listener.accept().await.unwrap();
-                let mut socket = accept_async(socket).await.unwrap();
-                let retry: Value = serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+                let (mut retry_socket, _) = listener.accept().await.unwrap();
+                let mut websocket = None;
+                let mut http = None;
+                let retry: Value = if idle {
+                    let body = read_request(&mut retry_socket).await;
+                    http = Some(retry_socket);
+                    body
+                } else {
+                    let mut socket = accept_async(retry_socket).await.unwrap();
+                    let body = serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+                    websocket = Some(socket);
+                    body
+                };
                 assert!(retry.get("previous_response_id").is_none());
                 let input = retry["input"].as_array().unwrap();
                 assert_eq!(input[0], initial["input"][0]);
@@ -373,13 +387,19 @@ async fn accepted_call_runs_before_stream_completion_and_survives_retry_in_direc
                 assert_eq!(calls.len(),2,"one accepted call and one settled result must survive reconnect");
                 assert_eq!(calls[0]["type"],item["type"]);
                 assert!(calls[1]["output"].to_string().contains("42"));
-                socket.send(Message::Text(json!({"type":"response.completed","response":{"id":"final","output":[{"type":"message","id":"answer","content":[{"type":"output_text","text":"done"}]}]}}).to_string().into())).await.unwrap();
+                let completed = json!({"type":"response.completed","response":{"id":"final","output":[{"type":"message","id":"answer","content":[{"type":"output_text","text":"done"}]}]}});
+                if let Some(mut socket) = http {
+                    let body = format!("data: {completed}\n\n");
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+                } else {
+                    websocket.unwrap().send(Message::Text(completed.to_string().into())).await.unwrap();
+                }
             });
             let mut input = agent_loop::input(&base,"early-effect",effect);
             input.configuration.tool_mode = mode;
             input.provider.kind = ProviderKind::OpenaiResponses;
             input.provider_options = json!({"openai":{"store":false}});
-            let worker = engine(log.clone());
+            let worker = Engine::new(log.clone(), ModelExecutor::new(if idle { Duration::from_secs(1) } else { Duration::from_secs(20) }).unwrap(), CodeExecutor::new(CellLimits::default()).unwrap());
             worker.run(input,CancellationToken::new()).await.unwrap();
             worker.drain().await;
             server.await.unwrap();
@@ -389,6 +409,11 @@ async fn accepted_call_runs_before_stream_completion_and_survives_retry_in_direc
                 Fact::ModelRequested { source_high_water, input_digest, .. } => Some((*source_high_water,input_digest)), _=>None,
             }).collect();
             assert_eq!(attempts.len(),2);
+            assert!(matches!(&prefix.events.last().unwrap().event.fact, Fact::InvocationEnded { outcome: InvocationOutcome::Completed }));
+            if idle {
+                assert!(prefix.events.iter().any(|event| matches!(&event.event.fact,
+                    Fact::ModelInterrupted { status: ModelInterruption::RetryableFailure, diagnostic: Some(message), .. } if message.contains("idle timeout"))));
+            }
             assert!(attempts[1].0 > attempts[0].0);
             assert_ne!(attempts[0].1,attempts[1].1,"retry must carry accepted progress");
             assert_eq!(prefix.events.iter().filter(|event| matches!(&event.event.fact,

@@ -127,6 +127,13 @@ pub trait ProviderAdapter: Send + Sync {
         false
     }
 
+    /// Owns idle deadlines for external I/O and returns protocol-aware failures.
+    /// Local event backpressure is not provider silence. Other adapters retain
+    /// the executor watchdog; cancellation and cleanup always remain bounded.
+    fn enforces_idle_timeout(&self) -> bool {
+        false
+    }
+
     fn open(
         &self,
         lifetime: Lifetime,
@@ -149,6 +156,9 @@ impl Binding {
     }
     pub fn supports_item_acceptance(&self) -> bool {
         self.0.provider.supports_item_acceptance()
+    }
+    pub fn enforces_idle_timeout(&self) -> bool {
+        self.0.provider.enforces_idle_timeout()
     }
     pub async fn open(
         &self,

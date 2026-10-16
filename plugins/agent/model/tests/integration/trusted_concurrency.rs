@@ -151,12 +151,16 @@ async fn shared_sdk_admits_more_than_128_independent_models_and_cleans_them_up()
                 let (mut socket, _) = server.accept().await.unwrap();
                 connections.spawn(async move {
                     read_request(&mut socket).await;
-                    assert_http_closed(&mut socket).await;
+                    socket
                 });
             }
-            received.send(()).unwrap();
+            let mut sockets = Vec::new();
             while let Some(result) = connections.join_next().await {
-                result.unwrap();
+                sockets.push(result.unwrap());
+            }
+            received.send(()).unwrap();
+            for mut socket in sockets {
+                assert_http_closed(&mut socket).await;
             }
         });
         let mut streams = Vec::new();

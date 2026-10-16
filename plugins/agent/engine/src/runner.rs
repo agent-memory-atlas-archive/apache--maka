@@ -282,6 +282,12 @@ fn failure_class(error: &RunError) -> &'static str {
         RunError::Store(_) => "event_store",
         RunError::Model(maka_model::ModelError::TimedOut) => "model_timeout",
         RunError::Model(maka_model::ModelError::Adapter(_)) => "model_adapter",
+        RunError::Model(maka_model::ModelError::Provider(failure))
+            if failure.reason()
+                == maka_agent_facts::model::error::ProviderFailureReason::TimedOut =>
+        {
+            "model_timeout"
+        }
         RunError::Model(maka_model::ModelError::Provider(_)) => "model_provider",
         RunError::Model(maka_model::ModelError::ContextOverflow { .. }) => "context_overflow",
         RunError::Tool(_) => "tool_execution",

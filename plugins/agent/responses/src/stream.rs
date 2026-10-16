@@ -66,10 +66,28 @@ pub async fn stream(
         result = operation => result,
     }
 }
-async fn wait<T>(duration: Duration, future: impl Future<Output = T>) -> Result<T, ModelError> {
-    tokio::time::timeout(duration, future)
-        .await
-        .map_err(|_| ModelError::TimedOut)
+fn interruption(
+    decoder: &Decoder,
+    reason: ProviderFailureReason,
+    message: impl Into<String>,
+) -> ModelError {
+    ModelError::Provider(
+        ProviderFailure::new(reason, message, decoder.replay_safe, None)
+            .with_retained_output(decoder.retained_output_safe()),
+    )
+}
+async fn wait<T>(
+    duration: Duration,
+    decoder: &Decoder,
+    future: impl Future<Output = T>,
+) -> Result<T, ModelError> {
+    tokio::time::timeout(duration, future).await.map_err(|_| {
+        interruption(
+            decoder,
+            ProviderFailureReason::TimedOut,
+            ModelError::TimedOut.to_string(),
+        )
+    })
 }
 async fn emit(
     decoder: &mut Decoder,
@@ -130,28 +148,26 @@ async fn run(
         let exchange = Exchange::new(lane, cancellation, network.clone(), transport);
         match wait(
             idle_timeout,
+            &decoder,
             exchange.start(url.to_string(), headers.clone(), body),
         )
         .await?
-        .map_err(failure)?
-        {
+        .map_err(|error| match error {
+            crate::Error::Interrupted(message) => {
+                interruption(&decoder, ProviderFailureReason::Network, message)
+            }
+            error => failure(error),
+        })? {
             Some(full) => body = full,
             None => {
-                while let Some(frame) =
-                    wait(idle_timeout, exchange.next())
-                        .await?
-                        .map_err(|error| match error {
-                            crate::Error::Interrupted(message) => ModelError::Provider(
-                                ProviderFailure::new(
-                                    ProviderFailureReason::StreamTruncated,
-                                    message,
-                                    decoder.replay_safe,
-                                    None,
-                                )
-                                .with_retained_output(decoder.retained_output_safe()),
-                            ),
-                            error => failure(error),
-                        })?
+                while let Some(frame) = wait(idle_timeout, &decoder, exchange.next())
+                    .await?
+                    .map_err(|error| match error {
+                        crate::Error::Interrupted(message) => {
+                            interruption(&decoder, ProviderFailureReason::StreamTruncated, message)
+                        }
+                        error => failure(error),
+                    })?
                 {
                     sender.progress();
                     let value = serde_json::from_str(&frame).map_err(|_| {
@@ -165,6 +181,7 @@ async fn run(
     }
     let response = wait(
         idle_timeout,
+        &decoder,
         network.request(http::Request {
             method: http::Method::Post,
             url: url.to_string(),
@@ -188,6 +205,22 @@ async fn run(
         let retry_after = header(&response.head, "retry-after")
             .and_then(|v| v.parse::<u64>().ok())
             .and_then(|v| v.checked_mul(1000));
+        let reason = match status {
+            429 => Some(ProviderFailureReason::RateLimit),
+            500..=599 => Some(ProviderFailureReason::ProviderUnavailable),
+            _ => None,
+        };
+        // A stalled error body cannot turn an explicit permanent rejection
+        // into a retry, or discard rate-limit advice already in the headers.
+        let body_failure = || match reason {
+            Some(reason) => ModelError::Provider(ProviderFailure::new(
+                reason,
+                format!("Responses HTTP {status}: error body interrupted"),
+                true,
+                retry_after,
+            )),
+            None => ModelError::Adapter(format!("Responses HTTP {status}: error body interrupted")),
+        };
         let mut bytes = Vec::new();
         if header(&response.head, "content-length")
             .and_then(|v| v.parse::<u64>().ok())
@@ -197,9 +230,13 @@ async fn run(
                 "provider response body exceeds 8 MiB".into(),
             ));
         }
-        while let Some(chunk) = wait(idle_timeout, response.body.next())
-            .await?
-            .map_err(|_| ModelError::Adapter("Responses error body read failed".into()))?
+        while let Some(chunk) = wait(idle_timeout, &decoder, response.body.next())
+            .await
+            .map_err(|_| body_failure())?
+            .map_err(|error| match error {
+                http::Error::Denied => ModelError::Cancelled,
+                _ => body_failure(),
+            })?
         {
             if bytes.len() + chunk.len() > 8 * 1024 * 1024 {
                 return Err(ModelError::Adapter(
@@ -217,11 +254,6 @@ async fn run(
                 observed_output: false,
             });
         }
-        let reason = match status {
-            429 => Some(ProviderFailureReason::RateLimit),
-            500..=599 => Some(ProviderFailureReason::ProviderUnavailable),
-            _ => None,
-        };
         if let Some(reason) = reason {
             return Err(ModelError::Provider(ProviderFailure::new(
                 reason,
@@ -253,17 +285,27 @@ async fn run(
     }
     let mut sse = crate::sse::Sse::default();
     let mut received_event = false;
-    while let Some(chunk) = wait(idle_timeout, response.body.next())
-        .await?
+    let missing_events = || {
+        ModelError::Adapter(format!(
+            "Responses HTTP {} had missing Content-Type and no SSE events",
+            response.head.status
+        ))
+    };
+    while let Some(chunk) = wait(idle_timeout, &decoder, response.body.next())
+        .await
+        .map_err(|error| {
+            if content_type.is_none() && !received_event {
+                missing_events()
+            } else {
+                error
+            }
+        })?
         .map_err(|error| match error {
-            http::Error::Failed(_) => ModelError::Provider(
-                ProviderFailure::new(
-                    ProviderFailureReason::Network,
-                    "Responses stream read failed",
-                    decoder.replay_safe,
-                    None,
-                )
-                .with_retained_output(decoder.retained_output_safe()),
+            http::Error::Failed(_) if content_type.is_none() && !received_event => missing_events(),
+            http::Error::Failed(_) => interruption(
+                &decoder,
+                ProviderFailureReason::Network,
+                "Responses stream read failed",
             ),
             http::Error::Denied => ModelError::Cancelled,
             other => ModelError::Adapter(other.to_string()),
@@ -281,11 +323,8 @@ async fn run(
     }
     if content_type.is_none() && !received_event {
         // An untyped JSON/HTML response is not evidence of a retryable stream
-        // interruption. Do not replay a possibly completed generation.
-        return Err(ModelError::Adapter(format!(
-            "Responses HTTP {} had missing Content-Type and no SSE events",
-            response.head.status
-        )));
+        // interruption, whether it ends, stalls, or disconnects.
+        return Err(missing_events());
     }
     decoder.end().map_err(failure)
 }

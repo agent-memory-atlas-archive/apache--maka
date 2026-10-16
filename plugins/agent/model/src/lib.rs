@@ -408,6 +408,7 @@ impl ModelExecutor {
         let (sender, receiver) = mpsc::channel(4);
         let worker_cancel = cancellation.clone();
         let idle_timeout = self.idle_timeout;
+        let watchdog = !binding.enforces_idle_timeout();
         let network = self.networks.get(&request.provider.network)?;
         let request = request.into_adapter()?;
         let worker = tokio::spawn(async move {
@@ -461,7 +462,7 @@ impl ModelExecutor {
                     biased;
                     result = &mut operation => break result,
                     _ = worker_cancel.cancelled() => ModelError::Cancelled,
-                    _ = tokio::time::sleep_until(deadline) => ModelError::TimedOut,
+                    _ = tokio::time::sleep_until(deadline), if watchdog => ModelError::TimedOut,
                     Ok(()) = progress.changed() => continue,
                 };
                 adapter_cancel.cancel();
