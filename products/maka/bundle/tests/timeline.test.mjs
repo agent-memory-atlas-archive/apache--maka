@@ -544,9 +544,12 @@ test('trace keeps visible ancestry and keyboard disclosure across bounded histor
   const raw = (key, kind = 'activate') => {
     out = component.event(out.frame.state, { kind: 'raw', key, event: { kind } }, props, {});
   };
-  assert.equal(find('marker-run').text, '•');
-  assert.equal(find('marker-shell').text, '│ •');
-  assert.equal(find('marker-nested').text, '│ │ •');
+  assert.equal(find('marker-run').text, '·');
+  assert.equal(find('indent-run').layout.basis, 2);
+  assert.equal(find('marker-shell').text, '·');
+  assert.equal(find('indent-shell').layout.basis, 4);
+  assert.equal(find('marker-nested').text, '·');
+  assert.equal(find('indent-nested').layout.basis, 6);
   raw('browse-next');
   assert.deepEqual(out.frame.state.command.target, { kind: 'focus_item', key: 'browse-shell' });
   assert.equal(find('toggle-shell').label, '› shell');
@@ -563,7 +566,9 @@ test('trace keeps visible ancestry and keyboard disclosure across bounded histor
   assert.ok(out.events.some((event) => event.name === 'browseClosed' && event.value.request === 1));
   props.messages = props.messages.slice(1);
   out = component.update(out.frame.state, props, {});
-  assert.equal(find('marker-shell').text, '•');
-  assert.equal(find('marker-nested').text, '│ •');
+  assert.equal(find('marker-shell').text, '·');
+  assert.equal(find('indent-shell').layout.basis, 2);
+  assert.equal(find('marker-nested').text, '·');
+  assert.equal(find('indent-nested').layout.basis, 4);
   assert.equal(find('toggle-shell').label, '⌄ shell');
 });

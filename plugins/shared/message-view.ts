@@ -186,7 +186,9 @@ export function messageView<N extends Node>(
     const marker = tool
       ? theme.ascii
         ? ascii
-        : symbol
+        : tone === 'success'
+          ? '·'
+          : symbol
       : user
         ? theme.ascii
           ? '>'
@@ -219,24 +221,44 @@ export function messageView<N extends Node>(
             }
           : {}),
       });
+    const toolControl = {
+      background: 0,
+      align: 'start' as const,
+      text: { ...theme.markdown.body, foreground: theme.muted },
+    };
     const gutter = (rail = false) =>
       ui.box(
         'gutter-' + message.id + (rail ? '-rail' : ''),
-        rail && !expanded
-          ? []
-          : [
-              ui.text(
-                'marker-' + message.id + (rail ? '-rail' : ''),
-                (tool ? (theme.ascii ? '| ' : '│ ').repeat(message.traceDepth ?? 0) : '') +
-                  (rail ? (theme.ascii ? '|' : '│') : marker),
-                14,
-                rail ? theme.border : markerColor,
-                400,
-                {},
-                !rail && tool ? (status ?? '') : '',
-              ),
-            ],
-        { terminal: { basis: 2 + (tool ? 2 * (message.traceDepth ?? 0) : 0) }, surface: user },
+        [
+          ...(tool
+            ? [
+                ui.box('indent-' + message.id + (rail ? '-rail' : ''), [], {
+                  terminal: { basis: 2 + 2 * (message.traceDepth ?? 0) },
+                }),
+              ]
+            : []),
+          ...(rail
+            ? expanded && ui.rule
+              ? [ui.rule('rail-' + message.id, 'column')]
+              : []
+            : [
+                ui.text(
+                  'marker-' + message.id,
+                  marker,
+                  14,
+                  markerColor,
+                  400,
+                  {},
+                  tool ? (status ?? '') : '',
+                ),
+              ]),
+        ],
+        {
+          row: true,
+          gap: 0,
+          terminal: { basis: tool ? 4 + 2 * (message.traceDepth ?? 0) : 2 },
+          surface: user,
+        },
       );
     const heading = tool
       ? row('tool-heading-' + message.id, [
@@ -247,11 +269,11 @@ export function messageView<N extends Node>(
                 `${expanded ? (theme.ascii ? 'v' : '⌄') : theme.ascii ? '>' : '›'} ${compactLabel(name ?? caption, 72)}`,
                 false,
                 false,
-                { background: 0, align: 'start' },
+                toolControl,
                 undefined,
                 expanded ? text.collapseTool : text.expandTool,
               )
-            : ui.text('role-' + message.id, name ?? caption, 14, theme.text, 600),
+            : ui.text('role-' + message.id, name ?? caption, 14, theme.muted),
         ])
       : row(
           'message-body-' + message.id,
@@ -339,7 +361,7 @@ export function messageView<N extends Node>(
                                 `${theme.ascii ? '^' : '↑'} ${text.collapseTool}`,
                                 false,
                                 false,
-                                { background: 0, align: 'start' },
+                                toolControl,
                               ),
                             ]
                           : []),

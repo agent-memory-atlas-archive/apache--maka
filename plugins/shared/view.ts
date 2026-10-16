@@ -379,7 +379,11 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         disabled,
         copy_text: copyText,
         hint,
-        color: color(disabled ? theme.muted : primary ? theme.accent : theme.text),
+        color: color(
+          disabled
+            ? theme.muted
+            : (style.text?.foreground ?? (primary ? theme.accent : theme.text)),
+        ),
         align:
           (style.align ?? style.justify) === 'start'
             ? 'start'

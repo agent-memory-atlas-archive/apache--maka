@@ -298,7 +298,7 @@ test('a truly empty original result closes its disclosure and removes the empty 
 });
 
 for (const [processStatus, exit, expectedStatus, tone, symbol] of [
-  ['completed', 0, 'succeeded', 'success', '•'],
+  ['completed', 0, 'succeeded', 'success', '·'],
   ['failed', 7, 'failed', 'error', '×'],
   ['running', null, 'running', 'accent', '◌'],
   ['cancelled', 143, 'cancelled', 'warning', '×'],

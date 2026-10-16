@@ -462,9 +462,15 @@ export function toolDetails<N extends Node>(
                 'source',
                 {
                   source,
-                  appearance: props.theme.markdown.code,
+                  appearance:
+                    presentation.target === 'tui'
+                      ? { ...props.theme.markdown.code, foreground: props.theme.muted }
+                      : props.theme.markdown.code,
                   selection: props.theme.markdown.selection,
-                  terminal: props.theme.terminal,
+                  terminal:
+                    presentation.target === 'tui' && props.theme.terminal
+                      ? { ...props.theme.terminal, foreground: props.theme.terminal.muted }
+                      : props.theme.terminal,
                   disabled: false,
                   focusOnPointer: props.focusOnPointer,
                 },

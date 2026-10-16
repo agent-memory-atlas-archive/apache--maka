@@ -127,8 +127,8 @@ fn default_product_trace_preserves_parents_titles_and_inline_evidence() {
         .find(|line| line.contains("› Run tools"))
         .unwrap();
     assert_eq!(
-        rows[first][..rows[first].find('•').unwrap()].width(),
-        parent[..parent.find('•').unwrap()].width() + 2,
+        rows[first][..rows[first].find('·').unwrap()].width(),
+        parent[..parent.find('·').unwrap()].width() + 2,
         "child indentation must come from its canonical ancestry: {screen}"
     );
     assert!(
