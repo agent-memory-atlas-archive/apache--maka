@@ -205,7 +205,7 @@ export function assistantPreferences<N extends Node>(
               { changed: 'changed' },
             )
           : presentation.slot(
-              'assistant-tone',
+              'assistant-' + name,
               'editor',
               {
                 ...common,

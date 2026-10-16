@@ -670,6 +670,52 @@ fn first_install_failure_keeps_original_host_error_after_terminal_restoration() 
 }
 
 #[test]
+#[ignore = "opens assistant preferences in the real product PTY and after restart"]
+fn bundled_assistant_preferences_opens_with_compaction_editor() {
+    let directory = tempfile::tempdir().unwrap();
+    let workspace = directory.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let ui = directory.path().join("ui");
+    let _host_guard = HostRootGuard::new(&ui.join("host"));
+    for first in [true, false] {
+        let mut args = vec!["application", "launch", "--root", ui.to_str().unwrap()];
+        if first {
+            args.extend([
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--trust-workspace",
+                "--locale",
+                "en",
+            ]);
+        }
+        let mut tui = Pty::spawn(&args);
+        tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
+        tui.send(b"\x0b");
+        tui.wait_for("Close commands");
+        tui.send(b"Settings");
+        tui.wait_for("› Settings");
+        tui.send(b"\r");
+        click(&mut tui, "Assistant preferences");
+        tui.wait_for("Your name");
+        tui.wait_for("Assistant tone");
+        tui.wait_for("Compression prompt");
+        if let Some(path) = std::env::var_os("MAKA_SETTINGS_EVIDENCE") {
+            std::fs::create_dir_all(&path).unwrap();
+            let path = std::path::PathBuf::from(path);
+            std::fs::write(path.join("settings.ansi"), &tui.output).unwrap();
+            std::fs::write(
+                path.join("settings.txt"),
+                tui.screen.snapshot().unwrap().screen,
+            )
+            .unwrap();
+        }
+        tui.send(b"\x11");
+        tui.finish();
+        assert!(!String::from_utf8_lossy(&tui.output).contains("invalid UI activation"));
+    }
+}
+
+#[test]
 #[ignore = "starts the bundled product and checks connection settings in a native PTY"]
 fn bundled_connections_search_scroll_click_and_chatgpt_credentials() {
     let directory = tempfile::tempdir().unwrap();

@@ -27,6 +27,27 @@ const valid = new Ajv({ strict: false, formats: { uint64: true } }).compile(
   contracts.settings.interface.methods.updateAssistantPreferences.input,
 );
 for (const target of ['tui', 'desktop'])
+  test(`Assistant ${target} mounts independently addressable preference editors`, async () => {
+    const { component } = await import(`../dist/packages/assistant-preferences/${target}.js`);
+    const props = { theme, locale: 'en', open: true, busy: false, shell: { back: 0 } };
+    const out = component.mount(props, {});
+    const editors = new Set();
+    const visit = (node) => {
+      if (!node || typeof node !== 'object') return;
+      if (node.kind === 'component') {
+        assert.ok(!editors.has(node.key), `duplicate editor identity: ${node.key}`);
+        editors.add(node.key);
+      }
+      Object.values(node).forEach(visit);
+    };
+    visit(out.frame.view);
+    assert.deepEqual(
+      editors,
+      new Set(['assistant-name', 'assistant-tone', 'assistant-compaction']),
+    );
+  });
+
+for (const target of ['tui', 'desktop'])
   test(`Assistant ${target} privacy recovers the original operation without overwriting editor drafts`, async () => {
     const { component } = await import(`../dist/packages/assistant-preferences/${target}.js`);
     const props = { theme, locale: 'en', open: true, busy: false, shell: { back: 0 } };
