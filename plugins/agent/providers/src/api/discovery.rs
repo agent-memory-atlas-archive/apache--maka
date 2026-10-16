@@ -20,10 +20,9 @@
 use super::{ApiProvider, Configuration, authentication, effects, inventory};
 use crate::facts::{
     adapter::AdapterKind,
-    discovery::{DiscoveryAuth, ModelDiscovery, ModelFilter, ModelProtocols, ResponseShape},
+    discovery::{DiscoveryAuth, ModelDiscovery, ModelFilter, ResponseShape},
 };
 use effects::HeaderAuth;
-use maka_agent_facts::configuration::ApiProtocol;
 use maka_agent_facts::configuration::ModelInfo;
 use maka_agent_ports::model::Credentials;
 use maka_agent_ports::provider::Context;
@@ -80,7 +79,6 @@ pub(super) async fn discover(
             path,
             query,
             response_shape,
-            model_protocols,
             filter,
         } => {
             if matches!(
@@ -145,18 +143,6 @@ pub(super) async fn discover(
                         .capabilities
                         .is_some_and(|c| c.function_calling == Some(true))
                 });
-            }
-            if matches!(model_protocols, Some(ModelProtocols::Commandcode)) {
-                for model in &mut models {
-                    let id = model.id.to_ascii_lowercase();
-                    if id
-                        .strip_prefix("anthropic/")
-                        .unwrap_or(&id)
-                        .starts_with("claude-")
-                    {
-                        model.api_protocol = Some(ApiProtocol::AnthropicMessages);
-                    }
-                }
             }
             Ok(models)
         }
