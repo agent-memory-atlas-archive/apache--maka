@@ -139,6 +139,57 @@ async fn completed_bytes_digest_identity_reopen_and_exact_rebuild() {
 }
 
 #[tokio::test]
+async fn interleaved_stream_preserves_order_and_excludes_other_session_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("log.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    let (id, _) = partial(&log, "a", "start\n").await;
+    partial(&log, "b", "unrelated").await;
+    let expected = format!(
+        "start\n{}",
+        (0..1024).map(|i| format!("{i}😀\n")).collect::<String>()
+    );
+    let events: Vec<_> = (0..1024)
+        .flat_map(|i| {
+            [("a", format!("{i}😀\n")), ("b", "not part of a".into())].map(|(session, text)| {
+                event(
+                    session,
+                    observe(
+                        session,
+                        ModelEvent::PartDelta {
+                            id: "provider-part".into(),
+                            text,
+                            provider_options: None,
+                        },
+                    ),
+                )
+            })
+        })
+        .collect();
+    log.append_batch(&events).await.unwrap();
+    let through = interrupt(&log, "a").await;
+    assert!(log.prepare_transcript("a", through, 32).await.unwrap());
+
+    let db = Connection::open(&path).unwrap();
+    let projected = rows(&db, "a");
+    assert_eq!(projected.len(), 3);
+    let assistant: Value = serde_json::from_slice(&projected[2].1).unwrap();
+    assert_eq!(assistant["id"], id);
+    assert_eq!(assistant["text"], expected);
+    assert_eq!(progress(&db, "a"), through as i64);
+
+    let other = interrupt(&log, "b").await;
+    assert!(log.prepare_transcript("b", other, 32).await.unwrap());
+    let other_rows = rows(&db, "b");
+    let assistant: Value = serde_json::from_slice(&other_rows[2].1).unwrap();
+    assert_eq!(
+        assistant["text"],
+        format!("unrelated{}", "not part of a".repeat(1024))
+    );
+    assert_eq!(rows(&db, "a"), projected);
+}
+
+#[tokio::test]
 async fn partial_freezes_at_interruption_and_old_fence_excludes_later_boundaries() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("log.sqlite");

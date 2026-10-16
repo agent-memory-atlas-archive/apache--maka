@@ -108,6 +108,7 @@ pub(super) async fn selected(
     read(tx, query).await
 }
 
+/// Read unique canonical sequences selected in ascending order.
 pub(super) async fn read(
     tx: &mut SqliteConnection,
     query: Query<'_, Sqlite, SqliteArguments>,
@@ -126,12 +127,22 @@ pub(super) async fn read(
     }
     drop(records);
     let mut events = Vec::with_capacity(ids.len());
+    if ids.is_empty() {
+        return Ok(events);
+    }
+    // Read by primary key without sorting payloads; only the bounded IDs need
+    // an intermediate SQL representation.
+    let mut records = sqlx::query_as::<_, (i64, String)>(
+        "SELECT sequence, event_json FROM runtime_events
+         WHERE sequence IN (SELECT value FROM json_each(?)) ORDER BY sequence",
+    )
+    .bind(serde_json::to_string(&ids)?)
+    .fetch(&mut *tx);
     for sequence in ids {
-        let json: String =
-            sqlx::query_scalar("SELECT event_json FROM runtime_events WHERE sequence = ?")
-                .bind(sequence)
-                .fetch_one(&mut *tx)
-                .await?;
+        let (selected, json) = records.try_next().await?.ok_or(sqlx::Error::RowNotFound)?;
+        if selected != sequence {
+            return Err(sqlx::Error::RowNotFound.into());
+        }
         events.push(StoredEvent {
             sequence: sequence_number(sequence)?,
             event: serde_json::from_str(&json)?,
