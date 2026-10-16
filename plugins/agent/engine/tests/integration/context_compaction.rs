@@ -695,3 +695,96 @@ async fn overflow_preserves_system_and_first_goal_or_continuation_summary() {
         assert!(fitted.to_string().len() < full.to_string().len());
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn small_window_caps_summary_output_and_compacts_only_for_input_pressure() {
+    for (manual, large_history, output_limit) in [
+        (true, false, None),
+        (false, false, Some(200_000)),
+        (false, true, Some(200_000)),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let log = Arc::new(
+            EventLog::open(&directory.path().join("events.sqlite"))
+                .await
+                .unwrap(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let summarized = manual || large_history;
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_request(&mut socket).await;
+            let history = if large_history {
+                "retained history ".repeat(1000)
+            } else {
+                "short history".into()
+            };
+            respond(&mut socket, &history, "stop").await;
+            let mut requests = Vec::new();
+            for _ in 0..if summarized && !manual { 2 } else { 1 } {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut socket).await;
+                let is_summary = request["messages"]
+                    .to_string()
+                    .contains("Now write the structured summary");
+                respond(
+                    &mut socket,
+                    if is_summary {
+                        "brief checkpoint"
+                    } else {
+                        "done"
+                    },
+                    "stop",
+                )
+                .await;
+                requests.push(request);
+            }
+            requests
+        });
+        let worker = engine(log);
+        worker
+            .run(input(&base, "old", false), CancellationToken::new())
+            .await
+            .unwrap();
+        let mut next = input(&base, "next", manual);
+        next.main_output_limit = output_limit;
+        next.context = Some(maka_agent_facts::context::ModelRequestContext {
+            provider_id: "fixture".into(),
+            context_window: Some(4096),
+            model_context_window: Some(4096),
+            declared_window: None,
+        });
+        worker.run(next, CancellationToken::new()).await.unwrap();
+        worker.drain().await;
+        let requests = server.await.unwrap();
+        let summaries: Vec<_> = requests
+            .iter()
+            .filter(|request| {
+                request["messages"]
+                    .to_string()
+                    .contains("Now write the structured summary")
+            })
+            .collect();
+        assert_eq!(summaries.len(), usize::from(summarized));
+        for request in &requests {
+            let output = request["max_tokens"].as_u64().unwrap();
+            assert!((1..4096).contains(&output));
+        }
+        if large_history {
+            assert_eq!(summaries[0]["max_tokens"], 164);
+            assert!(
+                summaries[0]["messages"]
+                    .to_string()
+                    .contains("retained history")
+            );
+            assert!(
+                requests[1]["messages"]
+                    .to_string()
+                    .contains("brief checkpoint")
+            );
+        } else if manual {
+            assert!(summaries[0]["max_tokens"].as_u64().unwrap() > 164);
+        }
+    }
+}

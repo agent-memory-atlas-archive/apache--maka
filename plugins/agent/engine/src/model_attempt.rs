@@ -484,16 +484,13 @@ pub(super) fn prepare_request<W>(
     };
     let prompt = history::project_compatible(prompt, &input.provider.kind);
     let prompt = maka_model::reasoning::project(prompt, &input.provider.kind);
-    let max_output_tokens = if purpose == ModelPurpose::Summary {
-        max_output_tokens
-    } else {
-        Some(crate::context_input::output_limit(
-            input,
-            &prompt,
-            &definitions,
-            max_output_tokens.unwrap_or(8000),
-        ))
-    };
+    let max_output_tokens = Some(crate::context_input::output_limit(
+        input,
+        &prompt,
+        &definitions,
+        max_output_tokens.unwrap_or(8000),
+        purpose,
+    ));
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Evidence<'a> {

@@ -19,6 +19,7 @@
 
 //! Fit only a provider's summary input. Canonical history is never shortened.
 use crate::RunInput;
+use maka_agent_facts::context::ModelPurpose;
 use maka_model::prompt::{AssistantPart, ContentPart, Message, ToolOutput};
 
 /// A preflight estimate, never measured provider usage. Attachment encodings
@@ -83,9 +84,9 @@ pub(super) fn json_tokens(value: &(impl serde::Serialize + ?Sized)) -> u64 {
     count.0.div_ceil(3)
 }
 
-/// Reserve at least 4% of total context capacity (200k if unknown), retaining
-/// any larger configured output budget. This is not a minimum summary length.
-pub(super) fn summary_output_budget<W>(input: &RunInput<W>) -> u64 {
+/// Keep 4% of total context capacity (200k if unknown) available for summary
+/// output, even when the full prefix must first be sent to the provider.
+fn summary_output_reserve<W>(input: &RunInput<W>) -> u64 {
     input
         .context
         .as_ref()
@@ -93,8 +94,13 @@ pub(super) fn summary_output_budget<W>(input: &RunInput<W>) -> u64 {
         .unwrap_or(200_000)
         .saturating_mul(4)
         .div_ceil(100)
-        .max(input.main_output_limit.unwrap_or(8000))
         .max(1)
+}
+
+/// The desired summary output may exceed the reserve; the final request caps
+/// it to available capacity. This is not a minimum summary length.
+pub(super) fn summary_output_budget<W>(input: &RunInput<W>) -> u64 {
+    summary_output_reserve(input).max(input.main_output_limit.unwrap_or(8000))
 }
 
 pub(super) fn summary_budget<W>(input: &RunInput<W>) -> u64 {
@@ -105,7 +111,7 @@ pub(super) fn summary_budget<W>(input: &RunInput<W>) -> u64 {
     let window = context
         .and_then(|context| context.context_window)
         .unwrap_or(total);
-    window.min(total.saturating_sub(summary_output_budget(input)))
+    window.min(total.saturating_sub(summary_output_reserve(input)))
 }
 
 pub(super) fn needs_compaction<W>(input: &RunInput<W>, prompt: &[Message]) -> bool {
@@ -189,7 +195,12 @@ pub(super) fn output_limit<W>(
     prompt: &[Message],
     tools: &[maka_model::ToolDefinition],
     requested: u64,
+    purpose: ModelPurpose,
 ) -> u64 {
+    let minimum = match purpose {
+        ModelPurpose::Main => 1,
+        ModelPurpose::Summary => summary_output_reserve(input),
+    };
     input
         .context
         .as_ref()
@@ -198,7 +209,7 @@ pub(super) fn output_limit<W>(
             requested.min(
                 window
                     .saturating_sub(estimate(prompt).saturating_add(json_tokens(tools)))
-                    .max(1),
+                    .max(minimum),
             )
         })
 }
