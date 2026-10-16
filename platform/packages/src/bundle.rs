@@ -21,7 +21,6 @@ use super::{MAX_FILE_BYTES, MAX_FILES, MAX_PACKAGE_BYTES, Package};
 use crate::Error;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 #[derive(Serialize, Deserialize)]
@@ -36,7 +35,6 @@ struct Bundle {
 #[serde(deny_unknown_fields)]
 struct BundleFile {
     path: String,
-    sha256: String,
     content: String,
 }
 
@@ -66,9 +64,6 @@ impl Package {
             if bytes.len() > MAX_FILE_BYTES || total > MAX_PACKAGE_BYTES {
                 return Err(Error::Invalid("bundle exceeds byte limits".into()));
             }
-            if format!("{:x}", Sha256::digest(&bytes)) != file.sha256 {
-                return Err(Error::Invalid("bundle file digest mismatch".into()));
-            }
             if files.insert(file.path, bytes).is_some() {
                 return Err(Error::Invalid(
                     "bundle contains duplicate file paths".into(),
@@ -91,7 +86,6 @@ impl Package {
                 .iter()
                 .map(|(path, bytes)| BundleFile {
                     path: path.clone(),
-                    sha256: format!("{:x}", Sha256::digest(bytes)),
                     content: STANDARD.encode(bytes),
                 })
                 .collect(),

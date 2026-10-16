@@ -321,9 +321,30 @@ mod tests {
             Package::from_bundle(&bundle).unwrap().digest(),
             package.digest()
         );
-        let mut corrupt: serde_json::Value = serde_json::from_slice(&bundle).unwrap();
-        corrupt["files"][0]["content"] = json!("Y29ycnVwdA==");
-        assert!(Package::from_bundle(&serde_json::to_vec(&corrupt).unwrap()).is_err());
+        let encoded: serde_json::Value = serde_json::from_slice(&bundle).unwrap();
+        // One package digest covers file bytes, paths, and membership.
+        for (field, replacement) in [("content", "Y29ycnVwdA=="), ("path", "renamed.mjs")] {
+            let mut corrupt = encoded.clone();
+            corrupt["files"][0][field] = json!(replacement);
+            assert_eq!(
+                Package::from_bundle(&serde_json::to_vec(&corrupt).unwrap()).unwrap_err(),
+                Error::Invalid("bundle package digest mismatch".into())
+            );
+        }
+        let mut missing = encoded.clone();
+        missing["files"].as_array_mut().unwrap().remove(0);
+        assert_eq!(
+            Package::from_bundle(&serde_json::to_vec(&missing).unwrap()).unwrap_err(),
+            Error::Invalid("bundle package digest mismatch".into())
+        );
+        let mut reordered = encoded;
+        reordered["files"].as_array_mut().unwrap().reverse();
+        assert_eq!(
+            Package::from_bundle(&serde_json::to_vec(&reordered).unwrap())
+                .unwrap()
+                .digest(),
+            package.digest()
+        );
         let mut updated = files.clone();
         updated.insert(
             "index.mjs".into(),
