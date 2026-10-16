@@ -728,49 +728,13 @@ impl<V: ?Sized + 'static> Application<V> {
     fn begin_invoke(
         &mut self,
         mount: &Mount,
-        method: &str,
-        args: &[Value],
+        call: ComponentCall<'_>,
         previous: Option<&NativeView<V>>,
     ) -> Result<PendingInvocation<V>> {
-        let input = if method == "event" {
-            Some(
-                serde_json::from_value::<abi::ComponentInput>(args[1].clone())
-                    .map_err(|error| Error::Invalid(error.to_string()))?,
-            )
-        } else {
-            None
-        };
         let values = self.mount_values(mount)?;
         let execution = self.runtime.admit_mount(mount)?;
         let Export::Component { implementation, .. } = execution.value() else {
             unreachable!()
-        };
-        let call = match method {
-            "mount" => ComponentCall::Mount { props: &args[0] },
-            "update" => ComponentCall::Update {
-                state: &args[0],
-                props: &args[1],
-            },
-            "event" => {
-                let (key, event, origin) = match input.as_ref().expect("event input") {
-                    abi::ComponentInput::Raw { key, event } => (key, event, EventOrigin::Raw),
-                    abi::ComponentInput::Action { key, event } => (key, event, EventOrigin::Action),
-                    abi::ComponentInput::Component {
-                        key,
-                        child,
-                        name,
-                        event,
-                    } => (key, event, EventOrigin::Component { child, name }),
-                };
-                ComponentCall::Event {
-                    state: &args[0],
-                    props: &args[2],
-                    key,
-                    input: event,
-                    origin,
-                }
-            }
-            _ => unreachable!(),
         };
         let (result, realm) = match implementation {
             Component::JavaScript { realm, callbacks } => (

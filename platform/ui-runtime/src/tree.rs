@@ -73,13 +73,52 @@ pub(super) struct Feedback {
 }
 struct Call {
     mount: Mount,
-    method: &'static str,
-    args: Vec<Value>,
+    kind: CallKind,
     props: Value,
     subscription: Option<Subscription>,
     depth: usize,
     basis: Option<(u64, Option<Surface>)>,
     root: bool,
+}
+enum CallKind {
+    Mount,
+    Update {
+        state: Value,
+    },
+    Event {
+        state: Value,
+        input: abi::ComponentInput,
+    },
+}
+impl Call {
+    fn component_call(&self) -> ComponentCall<'_> {
+        match &self.kind {
+            CallKind::Mount => ComponentCall::Mount { props: &self.props },
+            CallKind::Update { state } => ComponentCall::Update {
+                state,
+                props: &self.props,
+            },
+            CallKind::Event { state, input } => {
+                let (key, event, origin) = match input {
+                    abi::ComponentInput::Raw { key, event } => (key, event, EventOrigin::Raw),
+                    abi::ComponentInput::Action { key, event } => (key, event, EventOrigin::Action),
+                    abi::ComponentInput::Component {
+                        key,
+                        child,
+                        name,
+                        event,
+                    } => (key, event, EventOrigin::Component { child, name }),
+                };
+                ComponentCall::Event {
+                    state,
+                    props: &self.props,
+                    key,
+                    input: event,
+                    origin,
+                }
+            }
+        }
+    }
 }
 struct FinishStage<V: ?Sized> {
     mount: Mount,
@@ -292,8 +331,7 @@ impl<V: ?Sized + 'static> Application<V> {
         }
         update.calls.push_back(Call {
             mount: mount.clone(),
-            method: "mount",
-            args: vec![props.clone()],
+            kind: CallKind::Mount,
             props,
             subscription: None,
             depth: 0,
@@ -410,8 +448,6 @@ impl<V: ?Sized + 'static> Application<V> {
         feedback: Option<Feedback>,
         publication: Option<tokio::sync::oneshot::Sender<Result<()>>>,
     ) -> Result<()> {
-        let event =
-            serde_json::to_value(event).map_err(|error| Error::Invalid(error.to_string()))?;
         let mut update = Update::new();
         update.feedback = feedback;
         update.publication = publication;
@@ -419,7 +455,10 @@ impl<V: ?Sized + 'static> Application<V> {
             .views
             .get(&mount.id())
             .ok_or_else(|| Error::Invalid("mount has no committed frame".into()))?;
-        let args = [current.frame.state.clone(), event, current.props.clone()];
+        let kind = CallKind::Event {
+            state: current.frame.state.clone(),
+            input: event,
+        };
         let props = current.props.clone();
         let revision = current.frame.revision;
         let surface = current.frame.surface.clone();
@@ -427,8 +466,7 @@ impl<V: ?Sized + 'static> Application<V> {
         let subscription = self.subscription(mount, &update)?;
         update.calls.push_back(Call {
             mount: mount.clone(),
-            method: "event",
-            args: args.into(),
+            kind,
             props,
             subscription,
             depth,
@@ -527,7 +565,7 @@ impl<V: ?Sized + 'static> Application<V> {
                         None => None,
                     };
                     let pending =
-                        self.begin_invoke(&call.mount, call.method, &call.args, previous.as_ref())?;
+                        self.begin_invoke(&call.mount, call.component_call(), previous.as_ref())?;
                     update.pending = Some((call, pending));
                     continue;
                 }
@@ -952,13 +990,14 @@ impl<V: ?Sized + 'static> Application<V> {
                 if child.props != *reference.props {
                     let revision = child.frame.revision;
                     let surface = child.frame.surface.clone();
-                    let args = [child.frame.state.clone(), reference.props.clone()];
+                    let kind = CallKind::Update {
+                        state: child.frame.state.clone(),
+                    };
                     self.check_props(&old.mount, reference.props)?;
                     update.step(depth + 1)?;
                     update.calls.push_back(Call {
                         mount: old.mount.clone(),
-                        method: "update",
-                        args: args.into(),
+                        kind,
                         props: reference.props.clone(),
                         subscription,
                         depth: depth + 1,
@@ -983,8 +1022,7 @@ impl<V: ?Sized + 'static> Application<V> {
                 update.step(depth + 1)?;
                 update.calls.push_back(Call {
                     mount: child.clone(),
-                    method: "mount",
-                    args: vec![reference.props.clone()],
+                    kind: CallKind::Mount,
                     props: reference.props.clone(),
                     subscription,
                     depth: depth + 1,
@@ -1133,17 +1171,15 @@ impl<V: ?Sized + 'static> Application<V> {
             }) {
                 continue;
             }
-            let args = [
-                current.frame.state.clone(),
-                serde_json::to_value(super::abi::ComponentInput::Component {
+            let kind = CallKind::Event {
+                state: current.frame.state.clone(),
+                input: abi::ComponentInput::Component {
                     key: route.handler.clone(),
                     child: route.slot.clone(),
                     name: notification.event.name,
                     event: notification.event.value,
-                })
-                .map_err(|error| Error::Invalid(error.to_string()))?,
-                current.props.clone(),
-            ];
+                },
+            };
             let revision = current.frame.revision;
             let props = current.props.clone();
             let surface = current.frame.surface.clone();
@@ -1152,8 +1188,7 @@ impl<V: ?Sized + 'static> Application<V> {
             update.step(depth)?;
             update.calls.push_back(Call {
                 mount: route.parent,
-                method: "event",
-                args: args.into(),
+                kind,
                 props,
                 subscription,
                 depth,
