@@ -41,6 +41,7 @@ for (const target of ['tui', 'desktop'])
       assistantTone: '',
       workspaceInstructions: true,
       incognitoActive: false,
+      shellTitles: true,
     };
     finish([]);
     finish(saved);
@@ -85,4 +86,78 @@ for (const target of ['tui', 'desktop'])
       fields,
       'a policy toggle must retain the existing editor state',
     );
+  });
+
+for (const target of ['tui', 'desktop'])
+  test(`Assistant ${target} shell titles toggle saves the observed preference revision`, async () => {
+    const { component } = await import(`../dist/packages/assistant-preferences/${target}.js`);
+    const props = { theme, locale: 'en', open: true, busy: false, shell: { back: 0 } };
+    let out = component.mount(props, {});
+    const finish = (value) => {
+      out = component.event(
+        out.frame.state,
+        { kind: 'action', key: out.actions[0].key, event: { status: 'succeeded', value } },
+        props,
+        {},
+      );
+    };
+    finish([]);
+    const saved = {
+      revision: 7,
+      displayName: '',
+      assistantTone: '',
+      workspaceInstructions: true,
+      incognitoActive: false,
+      shellTitles: true,
+    };
+    finish(saved);
+    const toggle = () => {
+      out = component.event(
+        out.frame.state,
+        { kind: 'raw', key: 'shell-titles', event: {} },
+        props,
+        {},
+      );
+    };
+    toggle();
+    assert.deepEqual(
+      out.actions.map(({ method, input }) => ({ method, input })),
+      [
+        {
+          method: 'updateAssistantPreferences',
+          input: { expectedRevision: 7, mutation: { kind: 'shell_titles', enabled: false } },
+        },
+      ],
+    );
+    assert.ok(valid(out.actions[0].input), JSON.stringify(valid.errors));
+    out = component.event(
+      out.frame.state,
+      {
+        kind: 'action',
+        key: out.actions[0].key,
+        event: {
+          status: 'operation',
+          reply: {
+            reference: {
+              contract: { name: 'maka.settings.Settings', version: 1 },
+              method: 'updateAssistantPreferences',
+              operation: 'shell-title-toggle',
+            },
+            receipt: {
+              kind: 'recorded',
+              cleanup: { kind: 'confirmed' },
+              outcome: { kind: 'returned', value: { kind: 'committed', revision: 8 } },
+            },
+          },
+        },
+      },
+      props,
+      {},
+    );
+    finish({ ...saved, revision: 8, shellTitles: false });
+    toggle();
+    assert.deepEqual(out.actions[0].input, {
+      expectedRevision: 8,
+      mutation: { kind: 'shell_titles', enabled: true },
+    });
   });

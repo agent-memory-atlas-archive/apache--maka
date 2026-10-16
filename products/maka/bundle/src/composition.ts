@@ -732,6 +732,8 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
       tools: configuration.agent.tools.map((tool) => {
         if (tool.import === 'web') return { ...tool, input: 'web' as const };
         if (tool.import === 'skills') return { ...tool, input: 'skill' as const };
+        if (tool.import === 'processes' && tool.method === 'execute')
+          tool = { ...tool, input: 'shell' };
         if (tool.presentation !== undefined) return tool;
         const contract =
           tool.import === 'files' &&

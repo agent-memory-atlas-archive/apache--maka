@@ -1492,6 +1492,17 @@ export const tui_settings_assistant: Message = ['Assistant preferences', '助手
 export const tui_assistant_name: Message = ['Your name', '你的称呼', '你的稱呼'];
 export const tui_assistant_tone: Message = ['Assistant tone', '助手语气', '助理語氣'];
 export const tui_assistant_save: Message = ['Save personalization', '保存个性偏好', '儲存個人偏好'];
+export const tui_assistant_shell_titles: Message = [
+  'Shell command titles',
+  'Shell 命令标题',
+  'Shell 命令標題',
+];
+export const tui_assistant_shell_titles_help: Message = [
+  'Let the model add short command titles. Turning this off removes the title option from future tool calls; existing titles remain in history.',
+  '让模型为命令添加简短标题。关闭后不再向模型提供命令标题选项；历史标题保留。',
+  '讓模型為命令加入簡短標題。關閉後不再向模型提供命令標題選項；歷史標題保留。',
+];
+
 export const tui_assistant_privacy: Message = ['Privacy mode', '隐私模式', '隱私模式'];
 export const tui_assistant_privacy_help: Message = [
   'Pauses Recall and web tools. Conversations are still saved and messages are still sent to your selected model.',

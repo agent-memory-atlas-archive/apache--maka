@@ -106,6 +106,7 @@ impl Default for RuntimePolicy {
             shell: ShellPolicy {
                 preference: ShellPreference::Auto,
                 executable: String::new(),
+                titles: true,
             },
             external_agents: ExternalAgents::default(),
         }

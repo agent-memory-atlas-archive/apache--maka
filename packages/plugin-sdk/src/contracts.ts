@@ -36675,6 +36675,9 @@ export const contracts = {
               incognitoActive: {
                 type: 'boolean',
               },
+              shellTitles: {
+                type: 'boolean',
+              },
             },
             additionalProperties: false,
             required: [
@@ -36683,6 +36686,7 @@ export const contracts = {
               'assistantTone',
               'workspaceInstructions',
               'incognitoActive',
+              'shellTitles',
             ],
           },
           resources: {},
@@ -39986,6 +39990,20 @@ export const contracts = {
                     },
                     additionalProperties: false,
                     required: ['kind', 'incognitoActive'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      enabled: {
+                        type: 'boolean',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'shell_titles',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'enabled'],
                   },
                 ],
               },

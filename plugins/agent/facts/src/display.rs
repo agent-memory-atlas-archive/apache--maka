@@ -31,6 +31,17 @@ pub struct Text {
     pub translations: BTreeMap<String, String>,
 }
 impl Text {
+    /// A bounded display line from model-authored text, never executable input.
+    pub fn single_line(value: &str) -> Option<Self> {
+        let mut value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        value.retain(|c| {
+            !c.is_control() && !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        });
+        value.truncate(value.floor_char_boundary(value.len().min(256)));
+        let title = Self::plain(value);
+        title.validate().ok().map(|()| title)
+    }
+
     pub fn plain(value: impl Into<String>) -> Self {
         Self {
             fallback: value.into(),

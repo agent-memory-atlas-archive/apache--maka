@@ -512,6 +512,23 @@ async fn assistant_preferences_and_capability_guidance_freeze_at_message_accepta
             "mutation":{"kind":"privacy","incognitoActive":false}
         }), None).await;
         assert_eq!(stale["kind"], "revision_conflict");
+        let current = query(&fixture, "assistantPreferences", json!({})).await;
+        assert_eq!(current["shellTitles"], true);
+        let (disabled, reference) = mutate(&fixture, "updateAssistantPreferences", json!({
+            "expectedRevision":current["revision"],
+            "mutation":{"kind":"shell_titles","enabled":false}
+        }), None).await;
+        assert_eq!(disabled["kind"], "committed");
+        assert_eq!(query(&fixture, "assistantPreferences", json!({})).await["shellTitles"], false);
+        assert!(!fixture.config.runtime_policy().await.unwrap().policy.shell.titles);
+        assert_eq!(fixture.store.operation_observation(&reference).await.unwrap().unwrap().outcome,
+            OperationOutcome::Returned { value: disabled });
+        let (stale, _) = mutate(&fixture, "updateAssistantPreferences", json!({
+            "expectedRevision":current["revision"],
+            "mutation":{"kind":"shell_titles","enabled":true}
+        }), None).await;
+        assert_eq!(stale["kind"], "revision_conflict");
+        assert_eq!(query(&fixture, "assistantPreferences", json!({})).await["shellTitles"], false);
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
     }).await.unwrap();

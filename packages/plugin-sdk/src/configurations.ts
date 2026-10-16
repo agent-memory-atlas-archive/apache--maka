@@ -419,8 +419,18 @@ export const configurations = {
         required: ['result', 'confirmation', 'name', 'description', 'import', 'method'],
       },
       AgentToolInput: {
-        type: 'string',
-        enum: ['json', 'skill', 'web'],
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['json', 'skill', 'web'],
+          },
+          {
+            description:
+              'Display-only command title; recorded in history, not forwarded to the process service.',
+            type: 'string',
+            const: 'shell',
+          },
+        ],
       },
       DisplayText: {
         description: 'Presentation text is distinct from the stable identity used for navigation.',
@@ -907,8 +917,18 @@ export const configurations = {
         required: ['result', 'confirmation', 'name', 'description', 'import', 'method'],
       },
       AgentToolInput: {
-        type: 'string',
-        enum: ['json', 'skill', 'web'],
+        oneOf: [
+          {
+            type: 'string',
+            enum: ['json', 'skill', 'web'],
+          },
+          {
+            type: 'string',
+            const: 'shell',
+            description:
+              'Display-only command title; recorded in history, not forwarded to the process service.',
+          },
+        ],
       },
       DisplayText: {
         type: 'object',

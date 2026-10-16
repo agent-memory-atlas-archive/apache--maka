@@ -411,7 +411,11 @@ impl Setup {
             methods
                 .into_iter()
                 .map(|(method, name)| contract::ServiceTool {
-                    input: contract::ToolInput::Json,
+                    input: if method == "execute" {
+                        contract::ToolInput::Shell
+                    } else {
+                        contract::ToolInput::Json
+                    },
                     title: None,
                     name: name.into(),
                     method: method.into(),
@@ -2321,7 +2325,7 @@ async fn code_mode_wait_observes_original_native_process_and_its_workspace_effec
         fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
         request(&mut socket).await;
-        code_response(&mut socket, "// @exec: {\"yield_time_ms\":0}\nconst result = await tools.Execute({command:'printf started > process-started; while [ ! -f process-release ]; do sleep 0.02; done; printf native-code-mode > process-result; cat process-result',login:false,timeout_ms:30000}); if (result.kind !== 'completed' || result.value.status !== 'completed') throw Error(JSON.stringify(result)); text(result.value.output.stdout);").await;
+        code_response(&mut socket, "// @exec: {\"yield_time_ms\":0}\nconst result = await tools.Execute({title:'验证后台进程',command:'printf started > process-started; while [ ! -f process-release ]; do sleep 0.02; done; printf native-code-mode > process-result; cat process-result',login:false,timeout_ms:30000}); if (result.kind !== 'completed' || result.value.status !== 'completed') throw Error(JSON.stringify(result)); text(result.value.output.stdout);").await;
         let (mut socket, _) = listener.accept().await.unwrap();
         let prompt = request(&mut socket).await;
         let message = prompt["messages"].as_array().unwrap().iter().rev().find(|message| message["role"] == "tool").unwrap();

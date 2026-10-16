@@ -92,6 +92,106 @@ pub(super) async fn close(f: &Fixture) {
 fn execute(command: &str) -> Value {
     json!({"command":command,"login":false,"timeout_ms":5000})
 }
+#[tokio::test]
+async fn shell_titles_preserve_model_history_and_change_only_future_request_schemas() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let (listener, f, session) = fixture().await;
+        f.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let sent = request(&mut socket).await;
+        let schema = |sent: &Value| {
+            sent["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["function"]["name"] == "Execute")
+                .unwrap()["function"]["parameters"]
+                .clone()
+        };
+        assert_eq!(schema(&sent)["properties"]["title"]["type"], "string");
+        assert!(
+            !schema(&sent)["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("title"))
+        );
+        // A request already sent to the model keeps its advertised input contract.
+        let policy = f.config.runtime_policy().await.unwrap();
+        f.config
+            .set_shell_titles(policy.revision, false)
+            .await
+            .unwrap();
+        let mut input = execute("printf actual");
+        input["title"] = json!("  检查\n输出  ");
+        service_tools::named_tool_response(&mut socket, "Execute", input.clone()).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let sent = request(&mut socket).await;
+        assert!(schema(&sent)["properties"].get("title").is_none());
+        let messages = sent["messages"].as_array().unwrap();
+        let model_call = messages
+            .iter()
+            .flat_map(|m| m["tool_calls"].as_array().into_iter().flatten())
+            .find(|call| call["function"]["name"] == "Execute")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(model_call["function"]["arguments"].as_str().unwrap())
+                .unwrap(),
+            input
+        );
+        let result: Value = serde_json::from_str(
+            messages.iter().rev().find(|m| m["role"] == "tool").unwrap()["content"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["value"]["output"]["stdout"], "actual", "{result}");
+        response(&mut socket).await;
+        f.drained().await;
+        let recorded = service_tools::facts(&f, &session).await;
+        assert!(recorded.iter().any(
+            |fact| matches!(fact, maka_agent_facts::event::Fact::ToolDispatched {
+            title: Some(title), input: recorded, ..
+        } if title.fallback == "检查 输出" && recorded == &input)
+        ));
+        let mut invalid = execute("printf forbidden > disabled-title");
+        invalid["title"] = json!("Must reject");
+        call(&listener, &f, &session, "Execute", invalid).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let sent = request(&mut socket).await;
+        let rejected = sent["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|m| m["role"] == "tool")
+            .unwrap();
+        assert_eq!(
+            rejected["content"],
+            "invalid tool input: arguments do not match the declared schema"
+        );
+        assert!(!f.workspace.join("disabled-title").exists());
+        response(&mut socket).await;
+        f.drained().await;
+        let result = roundtrip(
+            &listener,
+            &f,
+            &session,
+            "Execute",
+            execute("printf fallback"),
+        )
+        .await;
+        assert_eq!(result["value"]["output"]["stdout"], "fallback");
+        let recorded = service_tools::facts(&f, &session).await;
+        assert!(recorded.iter().any(
+            |fact| matches!(fact, maka_agent_facts::event::Fact::ToolDispatched {
+            title: Some(title), ..
+        } if title.fallback == "printf fallback")
+        ));
+        close(&f).await;
+    })
+    .await
+    .unwrap();
+}
 fn permissions(f: &Fixture) -> Value {
     json!({"filesystem":[
         {"path":f.workspace.join("first.txt"),"scope":"exact","access":"write"},

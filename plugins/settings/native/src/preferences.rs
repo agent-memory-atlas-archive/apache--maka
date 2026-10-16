@@ -41,6 +41,7 @@ pub struct Preferences {
     pub assistant_tone: String,
     pub workspace_instructions: bool,
     pub incognito_active: bool,
+    pub shell_titles: bool,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -70,6 +71,9 @@ pub enum Mutation {
     },
     Privacy {
         incognito_active: bool,
+    },
+    ShellTitles {
+        enabled: bool,
     },
 }
 #[derive(Serialize, JsonSchema)]
@@ -106,6 +110,7 @@ pub(crate) async fn read(
         assistant_tone: snapshot.policy.personalization.assistant_tone,
         workspace_instructions: snapshot.policy.workspace_instructions.enabled,
         incognito_active: snapshot.policy.privacy.incognito_active,
+        shell_titles: snapshot.policy.shell.titles,
     })
 }
 pub(crate) async fn update(
@@ -116,6 +121,11 @@ pub(crate) async fn update(
         return super::connections::encode(Updated::Rejected);
     };
     let result = match input.mutation {
+        Mutation::ShellTitles { enabled } => {
+            store
+                .set_shell_titles(input.expected_revision, enabled)
+                .await
+        }
         Mutation::Privacy { incognito_active } => {
             store
                 .set_privacy(input.expected_revision, PrivacyPolicy { incognito_active })

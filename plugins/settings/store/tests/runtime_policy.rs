@@ -51,6 +51,46 @@ fn count(database: &rusqlite::Connection) -> i64 {
 }
 
 #[tokio::test]
+async fn shell_titles_migrate_existing_policy_and_persist_explicit_disable() {
+    let temp = tempfile::tempdir().unwrap();
+    let owner = root(temp.path());
+    let store = ConfigurationStore::for_root(owner.clone()).await.unwrap();
+    store
+        .set_privacy(
+            0,
+            PrivacyPolicy {
+                incognito_active: true,
+            },
+        )
+        .await
+        .unwrap();
+    let expected = store.runtime_policy().await.unwrap();
+    store.close().await.unwrap();
+    let db = database(&owner);
+    db.execute_batch("UPDATE runtime_policy SET document = json_remove(document, '$.policy.shell.titles'); DELETE FROM _sqlx_migrations WHERE version = 2;").unwrap();
+    let store = ConfigurationStore::for_root(owner.clone()).await.unwrap();
+    assert_eq!(store.runtime_policy().await.unwrap(), expected);
+    assert_eq!(
+        store.set_shell_titles(1, false).await.unwrap(),
+        RuntimePolicyMutationResult::Committed { revision: 2 }
+    );
+    assert_eq!(
+        store.set_shell_titles(1, true).await.unwrap(),
+        RuntimePolicyMutationResult::RevisionConflict {
+            expected_revision: 1,
+            actual_revision: 2
+        }
+    );
+    store.close().await.unwrap();
+    let store = ConfigurationStore::for_root(owner).await.unwrap();
+    let snapshot = store.runtime_policy().await.unwrap();
+    assert_eq!(snapshot.revision, 2);
+    assert!(!snapshot.policy.shell.titles);
+    assert!(snapshot.policy.privacy.incognito_active);
+    store.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn proxy_policy_and_password_commit_together_with_cas_noops_and_rollback() {
     use maka_agent_facts::configuration::CredentialState;
     use maka_agent_facts::configuration::CredentialVersionBasis;

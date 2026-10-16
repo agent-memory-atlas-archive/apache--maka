@@ -165,6 +165,8 @@ pub enum ToolInput {
     Json,
     Skill,
     Web,
+    /// Display-only command title; recorded in history, not forwarded to the process service.
+    Shell,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

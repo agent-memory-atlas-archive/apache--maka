@@ -1459,7 +1459,7 @@ export type EditorCapture =
  * Session sandbox policy. Full access explicitly disables filesystem and process isolation.
  */
 export type AgentWorkspaceAccess = 'read_only' | 'workspace_write' | 'danger_full_access';
-export type AgentToolInput = 'json' | 'skill' | 'web';
+export type AgentToolInput = ('json' | 'skill' | 'web') | 'shell';
 export type AgentToolResult = ('json' | 'image') | 'computer';
 export type AgentToolConfirmation = 'required' | 'preapproved';
 export type Network =
@@ -2369,6 +2369,10 @@ export type SettingsPreferencesMutation =
   | {
       incognitoActive: boolean;
       kind: 'privacy';
+    }
+  | {
+      enabled: boolean;
+      kind: 'shell_titles';
     };
 export type SettingsPreferencesUpdated =
   | {
@@ -8197,6 +8201,7 @@ export interface SettingsAssistantPreferences {
   assistantTone: string;
   workspaceInstructions: boolean;
   incognitoActive: boolean;
+  shellTitles: boolean;
 }
 export interface SettingsNetworkSnapshot {
   revision: number;

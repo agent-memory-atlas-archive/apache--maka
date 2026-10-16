@@ -204,7 +204,7 @@ mod tests {
         // Host rejects controls before trimming; shell checks after trimming.
         assert!(
             normalize_mutation(json!({"expectedRevision":0,"operation":{
-            "kind":"set_shell","value":{"preference":"auto","executable":"\n x \n"}}}))
+            "kind":"set_shell","value":{"preference":"auto","executable":"\n x \n","titles":true}}}))
             .is_ok()
         );
     }

@@ -324,6 +324,7 @@ impl Owner {
         let prepared_tools = crate::tools::catalog(
             context.services(),
             persistence.store().clone(),
+            configuration.clone(),
             &settings.tools,
             additional,
             workers.clone(),

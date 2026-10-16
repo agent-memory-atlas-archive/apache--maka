@@ -236,6 +236,19 @@ export function assistantPreferences<N extends Node>(
           false,
           { background: 0, align: 'start' },
         ),
+        ui.text(
+          'assistant-shell-titles-help',
+          t('assistant-shell-titles-help'),
+          13,
+          props.theme.muted,
+        ),
+        ui.button(
+          'shell-titles',
+          `${t('assistant-shell-titles')}: ${state.saved?.shellTitles ? text.settingOn : text.settingOff}`,
+          busy || !state.saved,
+          false,
+          { background: 0, align: 'start' },
+        ),
         ui.text('assistant-privacy-help', t('assistant-privacy-help'), 13, props.theme.muted),
         ui.button(
           'privacy',
@@ -467,6 +480,11 @@ export function assistantPreferences<N extends Node>(
               mutate(state, actions, {
                 expectedRevision: state.saved.revision,
                 mutation: { kind: 'privacy', incognitoActive: !state.saved.incognitoActive },
+              });
+            else if (input.key === 'shell-titles' && state.saved)
+              mutate(state, actions, {
+                expectedRevision: state.saved.revision,
+                mutation: { kind: 'shell_titles', enabled: !state.saved.shellTitles },
               });
             else if (input.key === 'save' && state.saved) {
               const name = state.fields.name.observation,
