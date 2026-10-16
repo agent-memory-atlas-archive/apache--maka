@@ -97,7 +97,9 @@ export async function runMakaSessionCommand(
           { operation: 'session.configuration.update', assertRequestAllowed: assertActive },
         );
       } else if (boundary.kind === 'bypass') {
-        throw new Error(`executing a full-access session ${sessionId} requires --yolo`);
+        throw new Error(
+          `Session ${sessionId} has full access. Repeat this command with --yolo to submit a prompt, answer AskUser, or resume execution. Read-only --status, --wait and --result do not require --yolo; no action was submitted.`,
+        );
       }
     }
     assertActive();

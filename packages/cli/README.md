@@ -138,6 +138,15 @@ maka run --session "$session" --result --json
 maka run --session "$session" --resume --wait --json
 ```
 
+For a Session created with `--yolo`, repeat `--yolo` on every command that sends a prompt
+(including `--queue` or `--steer`), answers with `--answer`, or resumes execution. This confirms
+full access for that invocation. Read-only `--status`, standalone `--wait`, and `--result` do not
+require it. For example, answering a full-access Session:
+
+```sh
+maka run --session "$session" --answer '["Yes",null]' --wait --json --yolo
+```
+
 An ordinary built-in AskUser returns `needs_input`, the questions and options, with exit code 0.
 The Host retains the waiting Turn. `--answer` accepts one string or `null` per question in a JSON
 array and continues the original tool call and Turn. It does not need `--resume`. A failed or
@@ -158,8 +167,7 @@ Session commands use the saved configuration. Keep using the legacy `--resume <s
 selector for blocking runs that supply configuration, cwd, timeout or Graph options; that selector
 continues accepting a new prompt. `--session <id> --resume` instead requests safe continuation of
 stopped execution. An idle Session prompt can use `--max-steps`; a queued or steering message
-cannot attach a step cap to an existing Turn. Executing a full-access Session still requires
-`--yolo`.
+cannot attach a step cap to an existing Turn.
 
 Returning from client-owned MCP interaction and resuming it in another CLI process is not
 supported. Blocking MCP runs retain their existing behavior; `--no-wait` refuses to detach the

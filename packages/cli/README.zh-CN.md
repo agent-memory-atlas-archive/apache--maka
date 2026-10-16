@@ -128,6 +128,14 @@ maka run --session "$session" --result --json
 maka run --session "$session" --resume --wait --json
 ```
 
+如果会话以 `--yolo` 创建，每次发送 prompt（包括 `--queue`、`--steer`）、使用 `--answer`
+回答或恢复执行时，都要再次带上 `--yolo`，确认本次调用继续使用完整权限。只读的 `--status`、
+单独 `--wait` 和 `--result` 不需要。例如，回答完整权限会话的问题：
+
+```sh
+maka run --session "$session" --answer '["是",null]' --wait --json --yolo
+```
+
 普通内置 AskUser 会以退出码 0 返回 `needs_input`、问题及选项，Host 保留等待中的 Turn。
 `--answer` 使用 JSON 数组，为每个问题提供一个字符串或 `null`，回答后原工具调用和原 Turn
 继续执行，无需 `--resume`。答案提交失败或结果不确定时不会自动重发；先重新读取当前问题，
@@ -143,7 +151,7 @@ run 的取消行为保持原样。
 会话控制使用已保存的配置。需要指定配置、cwd、timeout 或 Graph 选项的阻塞运行，继续使用
 兼容入口 `--resume <session-id>` 选择会话并提供新 prompt。`--session <id> --resume` 则表示
 安全恢复已停止的执行。空闲会话的新 prompt 可以使用 `--max-steps`，排队或 steer 消息不能
-给已有 Turn 附加步数上限。执行完整权限会话仍需显式 `--yolo`。
+给已有 Turn 附加步数上限。
 
 当前不支持客户端 MCP 交互返回后由另一个 CLI 进程续接。阻塞 MCP 运行保留现有行为；
 `--no-wait` 会拒绝脱离本次调用持有的 MCP servers。Graph 交互交接也暂缓。执行本地会话控制

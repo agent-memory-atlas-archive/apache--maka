@@ -628,7 +628,7 @@ function makaRunHelpText(cliCommand: string): string {
     '  --thinking <level>        off|on|minimal|low|medium|high|xhigh|max|default',
     '  --timeout <seconds>       Invocation timeout',
     '  --max-steps <count>       Tool-step cap',
-    '  --yolo                    Give this task full access to your files and network',
+    '  --yolo                    Give full access; repeat for Session prompts, answers and resume',
     '  --session <session-id>    Select a Session (without a prompt: show its status)',
     '  --wait                    Wait for this message/current Turn; return questions early',
     '  --no-wait                 Submit and return (Host-owned execution only)',
@@ -643,6 +643,9 @@ function makaRunHelpText(cliCommand: string): string {
     '  --continue                Continue the latest compatible task for cwd',
     '  --graph                   Run this turn in Graph Mode and wait for graph completion',
     '  -h, --help                Show help',
+    '',
+    'Full-access Sessions: repeat --yolo when sending prompts (including --queue/--steer),',
+    'answering with --answer, or resuming. Read-only --status/--wait/--result need no --yolo.',
   ].join('\n');
 }
 
