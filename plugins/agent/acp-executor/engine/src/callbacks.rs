@@ -265,7 +265,7 @@ async fn permission_offer(
     );
     let digest = serde_json::to_vec(&(&request.invocation.invocation_id, rpc_id, identity))
         .map_err(CallbackError::invalid)?;
-    let operation_id = format!("acp-{:x}", Sha256::digest(digest));
+    let operation_id = format!("acp-{}", hex::encode(Sha256::digest(digest)));
     let offer = OfferInteraction {
         operation_id: operation_id.clone(),
         invocation: request.invocation.clone(),

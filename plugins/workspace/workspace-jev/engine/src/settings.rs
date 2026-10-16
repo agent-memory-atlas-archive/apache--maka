@@ -66,7 +66,10 @@ impl Settings {
     }
     // Changing the destination must never forward a credential saved for another endpoint.
     pub fn credential_key(&self) -> String {
-        format!("endpoint-{:x}", Sha256::digest(self.url.as_bytes()))
+        format!(
+            "endpoint-{}",
+            hex::encode(Sha256::digest(self.url.as_bytes()))
+        )
     }
 }
 #[derive(Serialize, JsonSchema)]

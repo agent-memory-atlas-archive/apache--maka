@@ -27,7 +27,7 @@ use maka_event_log::{
 };
 
 pub(super) fn invocation(request: &Submit) -> Invocation {
-    let id = format!("{:x}", Sha256::digest(request.operation_id.as_bytes()));
+    let id = hex::encode(Sha256::digest(request.operation_id.as_bytes()));
     Invocation {
         session_id: request.session_id.clone(),
         turn_id: format!("t_{id}"),

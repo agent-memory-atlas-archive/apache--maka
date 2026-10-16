@@ -83,7 +83,7 @@ pub async fn download_bundle(
                 if chunk.len() > limit.saturating_sub(bytes.len()) { return Err("package download exceeds 32 MiB".into()); }
                 bytes.extend_from_slice(&chunk);
             }
-            if digest.is_some_and(|expected| !format!("{:x}", Sha256::digest(&bytes)).eq_ignore_ascii_case(expected)) {
+            if digest.is_some_and(|expected| !hex::encode(Sha256::digest(&bytes)).eq_ignore_ascii_case(expected)) {
                 return Err("bundle SHA-256 mismatch".into());
             }
             Ok(bytes)
@@ -174,7 +174,7 @@ mod tests {
             ("host.mjs".into(), b"export function activate() { return {}; }".to_vec()),
         ])).unwrap();
         let bytes = package.to_bundle();
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = hex::encode(Sha256::digest(&bytes));
         let mut response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             bytes.len()

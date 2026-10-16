@@ -183,13 +183,10 @@ impl Controller {
         dispatcher: &dyn Dispatcher,
     ) -> Result<MutationResult, Error> {
         let creator = origin.creator()?;
-        let fingerprint = format!(
-            "{:x}",
-            Sha256::digest(
-                serde_json::to_vec(&(&input, &creator, &self.timezone))
-                    .map_err(|error| invalid(error.to_string()))?
-            )
-        );
+        let fingerprint = hex::encode(Sha256::digest(
+            serde_json::to_vec(&(&input, &creator, &self.timezone))
+                .map_err(|error| invalid(error.to_string()))?,
+        ));
         // A committed retry is a read, even after expiry or grant revocation.
         // It must not authorize again or recreate a task that was subsequently deleted.
         if let Some(receipt) = self.repository.creation(operation_id).await? {

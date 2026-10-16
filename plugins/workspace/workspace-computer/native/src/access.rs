@@ -125,8 +125,8 @@ pub(super) async fn approve(
         turn_id: context.invocation.turn_id.clone(),
         run_id: context.invocation.run_id.clone(),
         request_id: format!(
-            "computer_{:x}",
-            Sha256::digest(
+            "computer_{}",
+            hex::encode(Sha256::digest(
                 serde_json::to_vec(&(
                     &context.invocation,
                     &context.operation_id,
@@ -134,7 +134,7 @@ pub(super) async fn approve(
                     &target
                 ))
                 .expect("Computer approval identity")
-            )
+            ))
         ),
         created_at: maka_agent_authority::now(),
         request: InteractionRequest::ClientCapability {

@@ -123,10 +123,9 @@ struct Receipt {
     result: PlanResult,
 }
 fn identity(value: &impl Serialize) -> Result<String, String> {
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(value).map_err(reason)?)
-    ))
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(value).map_err(reason)?,
+    )))
 }
 fn receipt_key(reference: &RecoveryRef) -> String {
     format!(

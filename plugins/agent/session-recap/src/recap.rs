@@ -383,7 +383,10 @@ impl Recaps {
     }
 }
 fn prefix(session: &str) -> String {
-    format!("session-{:x}", Sha256::digest(session.as_bytes()))
+    format!(
+        "session-{}",
+        hex::encode(Sha256::digest(session.as_bytes()))
+    )
 }
 fn mutation(
     key: String,

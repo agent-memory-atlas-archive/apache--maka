@@ -106,7 +106,7 @@ impl Snapshot {
             .collect::<Vec<_>>();
         let bytes =
             serde_json::to_vec(&(&self.graph_id, self.status, items)).expect("typed Swarm signal");
-        Some(format!("sha256:{:x}", Sha256::digest(bytes)))
+        Some(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
     }
 }
 impl Coordinator {

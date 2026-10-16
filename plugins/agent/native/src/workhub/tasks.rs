@@ -1155,8 +1155,10 @@ fn encode_task(id: &str, assignment: &Assignment, status: TaskStatus) -> Result<
 }
 fn task_id(invocation: &Invocation, operation: &str) -> String {
     format!(
-        "wt_{:x}",
-        Sha256::digest(serde_json::to_vec(&(invocation, operation)).expect("actual tool identity"))
+        "wt_{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&(invocation, operation)).expect("actual tool identity")
+        ))
     )
 }
 fn child_id(id: &str) -> Uuid {

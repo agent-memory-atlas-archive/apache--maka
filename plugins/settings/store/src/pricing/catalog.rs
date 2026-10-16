@@ -26,7 +26,7 @@ use sqlx::{Connection, QueryBuilder, SqliteConnection};
 use std::sync::LazyLock;
 
 const FACTS: &str = include_str!("../../data/pricing-facts.json");
-static DIGEST: LazyLock<String> = LazyLock::new(|| format!("{:x}", Sha256::digest(FACTS)));
+static DIGEST: LazyLock<String> = LazyLock::new(|| hex::encode(Sha256::digest(FACTS)));
 static PRICES: LazyLock<Vec<Pricing>> = LazyLock::new(|| {
     let prices: Vec<Pricing> = serde_json::from_str(FACTS).expect("generated model rates");
     for price in &prices {

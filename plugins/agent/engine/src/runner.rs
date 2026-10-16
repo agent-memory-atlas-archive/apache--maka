@@ -344,5 +344,5 @@ pub(super) fn digest(value: &impl serde::Serialize) -> Result<String, RunError> 
     let mut writer = Writer(Sha256::new());
     serde_json::to_writer(&mut writer, value)
         .map_err(|error| RunError::Internal(error.to_string()))?;
-    Ok(format!("sha256:{:x}", writer.0.finalize()))
+    Ok(format!("sha256:{}", hex::encode(writer.0.finalize())))
 }

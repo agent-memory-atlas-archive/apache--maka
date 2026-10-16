@@ -542,14 +542,18 @@ impl Hub {
 }
 pub(super) fn graph_task_id(graph: &GraphId, work: &WorkId) -> String {
     format!(
-        "wt_{:x}",
-        Sha256::digest(serde_json::to_vec(&(graph, work)).expect("graph work identity"))
+        "wt_{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&(graph, work)).expect("graph work identity")
+        ))
     )
 }
 fn result_id(task: &str, execution: &crate::contract::Execution) -> String {
     format!(
-        "graph_result_{:x}",
-        Sha256::digest(serde_json::to_vec(&(task, execution)).expect("original execution"))
+        "graph_result_{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&(task, execution)).expect("original execution")
+        ))
     )
 }
 fn terminal_result(
@@ -698,8 +702,10 @@ pub(crate) fn receipt_mutation(
 }
 fn receipt_key(reference: &RecoveryRef) -> Result<String, String> {
     Ok(format!(
-        "graph-control-receipt/{:x}",
-        Sha256::digest(serde_json::to_vec(reference).map_err(error)?)
+        "graph-control-receipt/{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(reference).map_err(error)?
+        ))
     ))
 }
 fn error(error: impl std::fmt::Display) -> String {

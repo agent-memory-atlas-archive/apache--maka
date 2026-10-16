@@ -175,8 +175,8 @@ impl Host {
             }
         };
         let access_grant = format!(
-            "application.owner:{:x}",
-            sha2::Sha256::digest(
+            "application.owner:{}",
+            hex::encode(sha2::Sha256::digest(
                 serde_json::to_vec(&(
                     application.source(),
                     Configuration::PublicHost {
@@ -185,7 +185,7 @@ impl Host {
                     }
                 ))
                 .map_err(|error| error.to_string())?
-            )
+            ))
         );
         Ok(Arc::new(Self {
             root,
@@ -232,11 +232,11 @@ impl Host {
             return Err("Host configuration conflicts with current authority".into());
         }
         let access_grant = format!(
-            "application.owner:{:x}",
-            sha2::Sha256::digest(
+            "application.owner:{}",
+            hex::encode(sha2::Sha256::digest(
                 serde_json::to_vec(&(Some(&self.source), &configuration))
                     .map_err(|error| error.to_string())?
-            )
+            ))
         );
         if !self
             .store

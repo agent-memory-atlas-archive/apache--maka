@@ -109,8 +109,10 @@ struct Receipt {
 }
 fn receipt_key(reference: &RecoveryRef) -> String {
     format!(
-        "receipt/{:x}",
-        Sha256::digest(serde_json::to_vec(reference).expect("operation reference"))
+        "receipt/{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(reference).expect("operation reference")
+        ))
     )
 }
 fn receipt_mutation(reference: &RecoveryRef, result: &GoalResult) -> Result<Mutation, String> {

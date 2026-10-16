@@ -110,7 +110,7 @@ pub(crate) async fn digest_selected(
             after = sequence;
         }
     }
-    Ok(format!("sha256:{:x}", hash.finalize()))
+    Ok(format!("sha256:{}", hex::encode(hash.finalize())))
 }
 
 pub(crate) async fn affected_after(

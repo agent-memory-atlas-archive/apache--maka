@@ -25,7 +25,7 @@ use maka_event_log::{
 };
 
 pub(super) fn identity(request: &maka_agent_ports::execution::Submit) -> Invocation {
-    let id = format!("{:x}", Sha256::digest(request.operation_id.as_bytes()));
+    let id = hex::encode(Sha256::digest(request.operation_id.as_bytes()));
     Invocation {
         session_id: request.session_id.clone(),
         turn_id: format!("t_{id}"),
@@ -39,10 +39,9 @@ fn admission(
     let pending = goal.pending.as_ref().ok_or("goal_iteration_missing")?;
     let invocation = identity(&pending.request);
     let mut basis = goal.arm.grant.clone();
-    basis.fingerprint = format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&pending.request).map_err(reason)?)
-    );
+    basis.fingerprint = hex::encode(Sha256::digest(
+        serde_json::to_vec(&pending.request).map_err(reason)?,
+    ));
     let message = pending.request.content.clone();
     Ok(PendingMessageAdmission {
         execution: PendingExecution {

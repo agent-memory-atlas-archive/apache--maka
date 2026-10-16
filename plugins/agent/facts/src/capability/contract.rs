@@ -49,7 +49,7 @@ impl ContractId {
         let mut digest = Sha256::new();
         digest.update(b"maka.client-capability-contract.rust.v1\0");
         digest.update(canonical.as_bytes());
-        let digest = format!("{:x}", digest.finalize());
+        let digest = hex::encode(digest.finalize());
         // Manifest admission guarantees ASCII entity IDs.
         let label: String = offer.offer_id.chars().take(96).collect();
         Self(format!("client_{}_{}", &digest[..16], label))

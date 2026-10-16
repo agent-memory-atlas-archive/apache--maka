@@ -192,7 +192,7 @@ impl<W: AsyncWrite + Unpin> Writer<W> {
     }
 
     pub async fn finish(mut self) -> Result<(W, u64, String), StoreError> {
-        let digest = format!("sha256:{:x}", self.digest.clone().finalize());
+        let digest = format!("sha256:{}", hex::encode(self.digest.clone().finalize()));
         self.record(&Record::End {
             digest: digest.clone(),
             frames: self.frames,

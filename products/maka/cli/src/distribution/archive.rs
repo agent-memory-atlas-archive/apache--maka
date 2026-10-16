@@ -238,7 +238,7 @@ pub(super) fn import_directory(
     regular_file(&source.join("receipt.json"), 16 * 1024)?
         .take(16 * 1024 + 1)
         .read_to_end(&mut bytes)?;
-    if bytes.len() > 16 * 1024 || format!("{:x}", Sha256::digest(&bytes)) != receipt_sha256 {
+    if bytes.len() > 16 * 1024 || hex::encode(Sha256::digest(&bytes)) != receipt_sha256 {
         return Err("transferred native package receipt digest mismatch".into());
     }
     let receipt: Receipt = serde_json::from_slice(&bytes)?;
@@ -404,6 +404,6 @@ fn digest(mut file: File) -> Result<Member, HostError> {
     }
     Ok(Member {
         size,
-        sha256: format!("{:x}", hash.finalize()),
+        sha256: hex::encode(hash.finalize()),
     })
 }

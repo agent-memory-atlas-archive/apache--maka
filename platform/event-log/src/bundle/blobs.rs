@@ -263,7 +263,7 @@ async fn transfer<W: AsyncWrite + Unpin>(
         writer.bytes(&bytes).await?;
         offset += bytes.len() as u64;
     }
-    if format!("sha256:{:x}", hash.finalize()) != blob.digest() {
+    if format!("sha256:{}", hex::encode(hash.finalize())) != blob.digest() {
         return Err(invalid("bundle payload digest mismatch"));
     }
     Ok(())

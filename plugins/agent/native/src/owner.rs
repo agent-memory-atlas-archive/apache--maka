@@ -450,7 +450,7 @@ impl Owner {
         // operations across provider namespaces or deployments. The Host journal
         // still rejects conflicting reuse inside its original operation namespace.
         let bytes = serde_json::to_vec(operation).expect("admitted operation reference");
-        let digest = format!("{:x}", Sha256::digest(bytes));
+        let digest = hex::encode(Sha256::digest(bytes));
         format!("{}{}", self.prefix, &digest[..32])
     }
     pub fn owns(&self, id: &str) -> bool {

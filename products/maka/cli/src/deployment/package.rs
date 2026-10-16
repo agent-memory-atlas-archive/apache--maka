@@ -124,7 +124,7 @@ fn stage_one(directory: &Path, source: &Path) -> Result<(PathBuf, String), HostE
         temporary.write_all(&buffer[..read])?;
         hasher.update(&buffer[..read]);
     }
-    let digest = format!("{:x}", hasher.finalize());
+    let digest = hex::encode(hasher.finalize());
     let target = path(directory, &digest);
     #[cfg(unix)]
     {
@@ -158,7 +158,7 @@ fn stage_one(directory: &Path, source: &Path) -> Result<(PathBuf, String), HostE
                 }
                 hasher.update(&buffer[..read]);
             }
-            if format!("{:x}", hasher.finalize()) != digest {
+            if hex::encode(hasher.finalize()) != digest {
                 return Err("installed Host package digest changed".into());
             }
         }

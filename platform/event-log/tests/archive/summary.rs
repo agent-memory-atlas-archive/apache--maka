@@ -77,7 +77,7 @@ async fn stale_after_opening_binds_summary_and_late_prune_rolls_back_checkpoint(
         hash.update(evidence);
         assert_eq!(
             fresh.effective_source_digest,
-            format!("sha256:{:x}", hash.finalize()),
+            format!("sha256:{}", hex::encode(hash.finalize())),
             "summary proof must bind the actual model replacement plus full archive evidence"
         );
         let pair = summary_pair(&log, "compact", &fresh).await;

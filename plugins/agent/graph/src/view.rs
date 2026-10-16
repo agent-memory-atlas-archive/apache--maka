@@ -241,7 +241,7 @@ impl Coordinator {
         }
         let data = serde_json::to_vec(&(&self.schedule.epoch.graph_id, results, &self.failures))
             .expect("typed signal serializes");
-        Some(format!("sha256:{:x}", Sha256::digest(data)))
+        Some(format!("sha256:{}", hex::encode(Sha256::digest(data))))
     }
 
     /// Includes work outside the bounded presentation page, but not token commits.
@@ -269,7 +269,7 @@ impl Coordinator {
             &self.failures,
         ))
         .expect("typed Graph change surface serializes");
-        format!("sha256:{:x}", Sha256::digest(data))
+        format!("sha256:{}", hex::encode(Sha256::digest(data)))
     }
 }
 fn clip(text: &str, bytes: usize) -> String {

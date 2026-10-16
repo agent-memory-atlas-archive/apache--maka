@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 pub fn tool_use_id(invocation_id: &str, operation_id: &str) -> String {
     let bytes =
         serde_json::to_vec(&["maka.tool-presentation.v1", invocation_id, operation_id]).unwrap();
-    format!("tool_{:x}", Sha256::digest(bytes))
+    format!("tool_{}", hex::encode(Sha256::digest(bytes)))
 }
 
 pub fn provider_result_id(event_id: &str, part_index: usize) -> String {

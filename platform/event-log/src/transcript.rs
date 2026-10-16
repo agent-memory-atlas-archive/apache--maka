@@ -236,7 +236,7 @@ async fn persist(tx: &mut SqliteConnection, session: &str, row: Row) -> Result<(
     let sequence =
         i64::try_from(row.sequence).map_err(|_| maka_presentation::ProjectionError::OutOfRange)?;
     let size = i64::try_from(bytes.len()).map_err(|_| StoreError::PrefixTooLarge)?;
-    let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+    let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
     sqlx::query(
         "INSERT OR IGNORE INTO transcript_rows
          (sequence, session_id, turn_id, message_id, payload, digest, total_bytes)

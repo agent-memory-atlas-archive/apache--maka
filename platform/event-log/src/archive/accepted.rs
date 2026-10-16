@@ -54,7 +54,7 @@ pub(super) fn validate(
     }
     if projection_digest(&target.projection).map_err(|_| ArchiveError::Corrupt)?
         != identity.source_projection_digest
-        || format!("{:x}", Sha256::digest(&body)) != identity.body_sha256
+        || hex::encode(Sha256::digest(&body)) != identity.body_sha256
     {
         return Err(ArchiveError::Corrupt.into());
     }

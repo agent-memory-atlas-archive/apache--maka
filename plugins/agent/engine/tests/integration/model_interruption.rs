@@ -217,7 +217,7 @@ async fn continuation_claim_replays_only_its_lineage_and_retries_with_frozen_inp
             input: InvocationInput::Message { content: text.into(), request_fingerprint: None,
                 source_messages: Vec::new(), },
         };
-        let route = format!("sha256:{:x}", Sha256::digest(serde_json::to_vec(&source.provider).unwrap()));
+        let route = format!("sha256:{}", hex::encode(Sha256::digest(serde_json::to_vec(&source.provider).unwrap())));
         for fact in [
             opening("question source"),
             Fact::ModelRequested { item_acceptance: false, step_id: "old".into(), model_id: "test".into(), purpose: maka_agent_facts::context::ModelPurpose::Main, context: None,
@@ -465,7 +465,7 @@ async fn partial_text_survives_cancellation_without_becoming_replayed_model_hist
                         "prompt":[{"role":"user","content":[{"type":"text","text":"question cancelled"}]}],
                         "tools":[], "providerOptions":{}, "maxOutputTokens":8000
                     })).unwrap();
-                    assert_eq!(*input_digest, format!("sha256:{:x}", Sha256::digest(expected)));
+                    assert_eq!(*input_digest, format!("sha256:{}", hex::encode(Sha256::digest(expected))));
                 }
             }
             assert_eq!(replica.append(&maka_agent_facts::event::EventWrite::plain(stored.event.clone()).unwrap()).await.unwrap(), stored.sequence);

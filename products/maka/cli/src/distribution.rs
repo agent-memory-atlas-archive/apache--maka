@@ -680,7 +680,7 @@ mod tests {
                 .unwrap();
             assert_eq!(artifact.directory, reused.directory);
             let receipt = std::fs::read(artifact.directory.join("receipt.json")).unwrap();
-            let receipt_sha256 = format!("{:x}", sha2::Sha256::digest(&receipt));
+            let receipt_sha256 = hex::encode(sha2::Sha256::digest(&receipt));
             let transferred = |cache: &str, digest: String| Fetch {
                 directory: Some(artifact.directory.clone()),
                 receipt_sha256: Some(digest),

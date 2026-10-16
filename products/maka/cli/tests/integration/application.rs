@@ -158,7 +158,7 @@ fn url_install_commits_validated_bytes_without_changing_the_composition() {
         ("host.mjs".into(), b"export function activate() { return {}; }".to_vec()),
     ])).unwrap();
     let bytes = package.to_bundle();
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let digest = hex::encode(Sha256::digest(&bytes));
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let url = format!(

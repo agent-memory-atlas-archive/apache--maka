@@ -40,8 +40,10 @@ struct Receipt {
 }
 fn receipt_key(operation: &RecoveryRef) -> String {
     format!(
-        "receipt:{:x}",
-        Sha256::digest(serde_json::to_vec(operation).expect("operation reference"))
+        "receipt:{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(operation).expect("operation reference")
+        ))
     )
 }
 fn task_key(id: &str) -> String {

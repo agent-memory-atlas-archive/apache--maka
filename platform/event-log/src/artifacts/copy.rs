@@ -127,7 +127,7 @@ impl crate::EventLog {
             .validate()
             .map_err(|error| invalid(&error.to_string()))?;
         let identity = serde_json::to_vec(&(namespace.package(), namespace.scope(), &request))?;
-        let id = format!("attachment-{:x}", Sha256::digest(identity));
+        let id = format!("attachment-{}", hex::encode(Sha256::digest(identity)));
         let mut destination = request.attachment.clone();
         destination.storage_ref = StorageRef::SessionFile {
             session_id: request.target_session_id.clone(),

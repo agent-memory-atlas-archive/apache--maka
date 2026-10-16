@@ -79,7 +79,7 @@ fn digests(
             if sequence == boundary {
                 let mut prefix = digest.clone();
                 prefix.update(boundary.to_be_bytes());
-                result.push(format!("sha256:{:x}", prefix.finalize()));
+                result.push(format!("sha256:{}", hex::encode(prefix.finalize())));
                 boundaries.next();
             }
         }

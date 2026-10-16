@@ -177,7 +177,7 @@ async fn inventory(
     }
     Ok(Inventory {
         root_session_id: root.into(),
-        subtree_digest: format!("{:x}", digest.finalize()),
+        subtree_digest: hex::encode(digest.finalize()),
         sessions,
     })
 }

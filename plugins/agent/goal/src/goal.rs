@@ -324,7 +324,10 @@ pub struct Repository<A = Id> {
 }
 fn key(session: &str) -> String {
     use sha2::{Digest, Sha256};
-    format!("session/{:x}", Sha256::digest(session.as_bytes()))
+    format!(
+        "session/{}",
+        hex::encode(Sha256::digest(session.as_bytes()))
+    )
 }
 fn decode<A: serde::de::DeserializeOwned>(record: Record) -> Result<Saved<A>, Error> {
     let goal = serde_json::from_value(

@@ -294,10 +294,9 @@ impl<A: Clone + Serialize + DeserializeOwned> Repository<A> {
 }
 
 fn digest(value: &impl Serialize) -> Result<String, Error> {
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(value).map_err(invalid)?)
-    ))
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(value).map_err(invalid)?,
+    )))
 }
 fn decode<T: DeserializeOwned>(record: Record) -> Result<T, Error> {
     match record.data {

@@ -116,8 +116,8 @@ impl MessageInput {
     pub fn content_digest(&self) -> Result<String, serde_json::Error> {
         use sha2::{Digest, Sha256};
         Ok(format!(
-            "sha256:{:x}",
-            Sha256::digest(serde_json::to_vec(self)?)
+            "sha256:{}",
+            hex::encode(Sha256::digest(serde_json::to_vec(self)?))
         ))
     }
     /// All retained text, including reference metadata; used before projection clones.

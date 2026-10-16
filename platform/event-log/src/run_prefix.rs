@@ -170,7 +170,7 @@ pub(crate) async fn read(
     Ok(RunPrefix {
         invocation: invocation.ok_or_else(|| invalid("Run prefix is empty"))?,
         high_water,
-        digest: format!("sha256:{:x}", digest.finalize()),
+        digest: format!("sha256:{}", hex::encode(digest.finalize())),
         events,
     })
 }

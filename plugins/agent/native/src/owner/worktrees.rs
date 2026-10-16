@@ -94,19 +94,16 @@ impl Owner {
                     return Ok(None);
                 };
                 let managed = self.managed_worktrees.clone();
-                let id = format!(
-                    "{:x}",
-                    Sha256::digest(
-                        serde_json::to_vec(&(
-                            self.store
-                                .owned_root()
-                                .map_err(|_| "agent_worktree_unavailable")?
-                                .canonical_path(),
-                            &session
-                        ))
-                        .expect("worktree identity")
-                    )
-                );
+                let id = hex::encode(Sha256::digest(
+                    serde_json::to_vec(&(
+                        self.store
+                            .owned_root()
+                            .map_err(|_| "agent_worktree_unavailable")?
+                            .canonical_path(),
+                        &session,
+                    ))
+                    .expect("worktree identity"),
+                ));
                 let binding = blocking(scope, &self.stop, move |cancel| {
                     Ok(Worktrees::open(&managed)
                         .and_then(|worktrees| {

@@ -195,7 +195,7 @@ impl ReadRequest {
 }
 
 fn content_digest(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))[..32].into()
+    hex::encode(Sha256::digest(text.as_bytes()))[..32].into()
 }
 
 #[cfg(test)]

@@ -48,8 +48,8 @@ pub async fn request(
         turn_id: context.invocation.turn_id.clone(),
         run_id: context.invocation.run_id.clone(),
         request_id: format!(
-            "permissions_{:x}",
-            Sha256::digest(
+            "permissions_{}",
+            hex::encode(Sha256::digest(
                 serde_json::to_vec(&(
                     &context.invocation,
                     &context.operation_id,
@@ -57,7 +57,7 @@ pub async fn request(
                     &request,
                 ))
                 .expect("tool identity")
-            )
+            ))
         ),
         created_at: crate::now(),
         request: InteractionRequest::Permissions {

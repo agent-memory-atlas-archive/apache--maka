@@ -153,7 +153,7 @@ fn credential_hash(request: &Request<Incoming>) -> Option<String> {
     if token.is_empty() || token.chars().any(char::is_whitespace) || token.contains('\u{feff}') {
         return None;
     }
-    Some(format!("{:x}", Sha256::digest(token.as_bytes())))
+    Some(hex::encode(Sha256::digest(token.as_bytes())))
 }
 
 fn plain_http(request: &Request<Incoming>, host: &Host) -> Response<Body> {

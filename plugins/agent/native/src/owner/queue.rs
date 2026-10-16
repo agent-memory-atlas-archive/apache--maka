@@ -194,10 +194,8 @@ impl Owner {
             let invocation = if entry.source.disposition == MessageDisposition::TurnStarted {
                 entry.invocation.clone()
             } else {
-                let identity = format!(
-                    "{:x}",
-                    Sha256::digest(entry.source.message.message_id.as_bytes())
-                );
+                let identity =
+                    hex::encode(Sha256::digest(entry.source.message.message_id.as_bytes()));
                 Invocation {
                     session_id: session.into(),
                     turn_id: format!("t_{identity}"),

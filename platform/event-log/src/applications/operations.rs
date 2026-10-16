@@ -222,8 +222,8 @@ impl OperationRequest<RecoveryContract> {
             .remove("origin");
         canonical.sort_all_objects();
         let fingerprint = format!(
-            "sha256-{:x}",
-            Sha256::digest(encode(&canonical, MAX_REQUEST)?.as_bytes())
+            "sha256-{}",
+            hex::encode(Sha256::digest(encode(&canonical, MAX_REQUEST)?.as_bytes()))
         );
         let reference = RecoveryRef {
             source: self.source.clone(),

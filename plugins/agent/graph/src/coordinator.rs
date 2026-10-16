@@ -544,7 +544,7 @@ impl Coordinator {
 
 pub fn operator_id_for(epoch: &Epoch, work: &WorkId) -> OperatorId {
     let identity = serde_json::to_vec(&(&epoch.graph_id, work)).expect("typed identity serializes");
-    format!("graph_operator_{:x}", Sha256::digest(identity))
+    format!("graph_operator_{}", hex::encode(Sha256::digest(identity)))
         .try_into()
         .expect("generated identity")
 }

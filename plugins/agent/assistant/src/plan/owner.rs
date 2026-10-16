@@ -380,10 +380,9 @@ impl Owner {
 }
 
 pub(super) fn identity(value: &impl serde::Serialize) -> Result<String, Error> {
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(value).map_err(invalid)?)
-    ))
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(value).map_err(invalid)?,
+    )))
 }
 
 pub(super) fn now() -> Result<u64, Error> {

@@ -188,8 +188,10 @@ async fn enroll(
     let operation = context.operation().ok_or("settings_mutation_required")?;
     let definition = connections::definition(&request.expected.provider)?;
     let attempt_id = format!(
-        "settings-{:x}",
-        Sha256::digest(serde_json::to_vec(operation).map_err(|_| "settings_operation_invalid")?)
+        "settings-{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(operation).map_err(|_| "settings_operation_invalid")?
+        ))
     );
     let input = LoginStart {
         attempt_id,

@@ -66,6 +66,12 @@ python3 scripts/rust/benchmark-long-task.py --kind engine \
 Use `--kind prune` for the archive test executables and `--checkpoint` for an
 Engine run after real context compaction. The script alternates revisions and
 checks equal completed work, preserving raw logs, errors, medians and ranges.
+Record the target and dependency features as well as the build profile. Feature
+unification can make standalone tests use a different hashing backend from a
+product build. Older `sha2` 0.10 Engine baselines on supported ARM64 platforms
+need `--features sha2/asm` to match the product backend. Current hashing selects
+supported CPU instructions at runtime and retains a software fallback.
+
 Fixture setup is excluded; Engine timings cover request delivery and completion,
 not Host IPC. The [Engine fixture](../../plugins/agent/engine/tests/integration/long_task_perf.rs)
 and [prune fixture](../../platform/event-log/tests/archive/performance.rs) expose

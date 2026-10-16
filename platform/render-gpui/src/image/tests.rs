@@ -34,7 +34,7 @@ fn props(bytes: &[u8], key: &str) -> ImageProps {
     ImageProps {
         source: Some(ImageDescriptor {
             key: key.into(),
-            digest: format!("sha256:{:x}", Sha256::digest(bytes)),
+            digest: format!("sha256:{}", hex::encode(Sha256::digest(bytes))),
             mime_type: "image/png".into(),
             total_bytes: bytes.len() as u64,
         }),

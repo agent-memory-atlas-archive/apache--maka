@@ -53,19 +53,16 @@ pub async fn opencode(
     query: Query,
 ) -> Result<Page, Error> {
     let query = prepare(query)?;
-    let hash = format!(
-        "{:x}",
-        Sha256::digest(
-            serde_json::to_vec(&(
-                "opencode",
-                &path,
-                &query.cwd,
-                &query.text,
-                query.include_archived,
-            ))
-            .map_err(|_| Error::Invalid("invalid catalog query"))?
-        )
-    );
+    let hash = hex::encode(Sha256::digest(
+        serde_json::to_vec(&(
+            "opencode",
+            &path,
+            &query.cwd,
+            &query.text,
+            query.include_archived,
+        ))
+        .map_err(|_| Error::Invalid("invalid catalog query"))?,
+    ));
     let mut after = query
         .cursor
         .as_ref()

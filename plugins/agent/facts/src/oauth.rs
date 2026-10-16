@@ -66,7 +66,7 @@ impl LoginStart {
         let mut value = serde_json::to_value(self).map_err(|_| "invalid authentication request")?;
         value.sort_all_objects();
         let bytes = serde_json::to_vec(&value).map_err(|_| "invalid authentication request")?;
-        Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+        Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
     }
 
     pub fn validate(&self) -> Result<(), String> {

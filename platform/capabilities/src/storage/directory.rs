@@ -53,7 +53,7 @@ impl Directories {
         Ok(Directory {
             parent: self.0.clone(),
             path: self.1.clone(),
-            name: format!("{:x}", Sha256::digest(identity)),
+            name: hex::encode(Sha256::digest(identity)),
             owner,
         })
     }

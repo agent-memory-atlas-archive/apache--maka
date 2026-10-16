@@ -141,8 +141,8 @@ impl Owner {
         let identity = self.operation_id(operation);
         // Engine receipts and application operations use different digest encodings.
         let fingerprint = format!(
-            "sha256:{:x}",
-            Sha256::digest(operation.fingerprint.as_bytes())
+            "sha256:{}",
+            hex::encode(Sha256::digest(operation.fingerprint.as_bytes()))
         );
         let invocation = Invocation {
             session_id: input.session_id.clone(),

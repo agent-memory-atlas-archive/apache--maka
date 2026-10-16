@@ -78,7 +78,7 @@ async fn a_rehashed_latest_checkpoint_cannot_hide_a_broken_predecessor_commitmen
         raw.update(json.as_bytes());
     }
     raw.update(checkpoint.covered_through.to_be_bytes());
-    checkpoint.source_digest = format!("sha256:{:x}", raw.finalize());
+    checkpoint.source_digest = format!("sha256:{}", hex::encode(raw.finalize()));
     let mut effective = Sha256::new();
     effective.update(b"maka.effective-context.v1\0");
     effective.update(checkpoint.source_digest.as_bytes());
@@ -93,7 +93,7 @@ async fn a_rehashed_latest_checkpoint_cannot_hide_a_broken_predecessor_commitmen
         panic!()
     };
     *source_digest = checkpoint.source_digest.clone();
-    *effective_source_digest = Some(format!("sha256:{:x}", effective.finalize()));
+    *effective_source_digest = Some(format!("sha256:{}", hex::encode(effective.finalize())));
     for event in [&request, &checkpoint_event] {
         inspect
             .execute(

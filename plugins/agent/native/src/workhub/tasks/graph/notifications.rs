@@ -121,8 +121,10 @@ impl Hub {
                 None
             } else {
                 Some(format!(
-                    "sha256:{:x}",
-                    Sha256::digest(serde_json::to_vec(&outcomes).map_err(error)?)
+                    "sha256:{}",
+                    hex::encode(Sha256::digest(
+                        serde_json::to_vec(&outcomes).map_err(error)?
+                    ))
                 ))
             }
         };
@@ -130,8 +132,10 @@ impl Hub {
             return Ok(pending);
         };
         let identity = format!(
-            "graph_{:x}",
-            Sha256::digest(serde_json::to_vec(&(&source.graph_id, signal)).map_err(error)?)
+            "graph_{}",
+            hex::encode(Sha256::digest(
+                serde_json::to_vec(&(&source.graph_id, signal)).map_err(error)?
+            ))
         );
         if assignment
             .notification

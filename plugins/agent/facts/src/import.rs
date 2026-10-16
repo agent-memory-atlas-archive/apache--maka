@@ -137,5 +137,5 @@ pub fn tool_call_id(session_id: &str, call_id: &str) -> String {
         hash.update((part.len() as u64).to_be_bytes());
         hash.update(part.as_bytes());
     }
-    format!("import-tool:{:x}", hash.finalize())
+    format!("import-tool:{}", hex::encode(hash.finalize()))
 }

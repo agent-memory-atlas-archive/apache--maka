@@ -219,7 +219,7 @@ impl Hub {
                     hash.update(&chunk.bytes);
                     capture.write("file", offset, &chunk.bytes)?;
                 }
-                if format!("sha256:{:x}", hash.finalize()) != digest {
+                if format!("sha256:{}", hex::encode(hash.finalize())) != digest {
                     return Err("workhub_attachment_invalid".into());
                 }
                 capture.finish()

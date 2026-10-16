@@ -388,7 +388,7 @@ async fn scheduler_rechecks_new_conversation_boundary_after_creation_before_admi
         pending.task.next_fire_at = Some(now() as i64);
         pending.claim(now() as i64).unwrap();
         let fire = pending.pending.as_ref().unwrap();
-        let identity = format!("{:x}", Sha256::digest(fire.id.as_bytes()));
+        let identity = hex::encode(Sha256::digest(fire.id.as_bytes()));
         let target = format!("{}{}", f.owner.prefix, &identity[..32]);
         // Durable cut after creation. An intervening user boundary change must
         // not widen the scheduled invocation, even while its source is valid.

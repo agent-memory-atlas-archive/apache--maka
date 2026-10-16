@@ -35,6 +35,7 @@ path = "src/service_main.rs"
 test = false
 
 [dependencies]
+hex.workspace = true
 maka-capabilities.workspace = true
 maka-agent-facts.workspace = true
 maka-packages.workspace = true
@@ -88,10 +89,6 @@ tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
-
-# sha2 requires this opt-in for ARM64 hardware dispatch; its assembly crate rejects Windows.
-[target.'cfg(all(target_arch = "aarch64", not(target_os = "windows")))'.dependencies]
-sha2 = { workspace = true, features = ["asm"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_TaskScheduler", "Win32_System_Variant", "Win32_System_Ole"] }

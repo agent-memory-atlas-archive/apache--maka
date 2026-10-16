@@ -526,10 +526,7 @@ async fn workhub_persisted_intent_recovers_original_identity_before_session_crea
             &reference.namespace,
         );
         let prefix = format!("wh_{}", &prefix[3..]);
-        let digest = format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&reference).unwrap())
-        );
+        let digest = hex::encode(Sha256::digest(serde_json::to_vec(&reference).unwrap()));
         let expected = format!("{}{}", prefix, &digest[..32]);
         fixture
             .store

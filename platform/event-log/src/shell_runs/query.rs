@@ -139,7 +139,7 @@ impl EventLog {
                     }
                     Ok(ShellResourcePage {
                         resources,
-                        revision: format!("sha256:{:x}", hash.finalize()),
+                        revision: format!("sha256:{}", hex::encode(hash.finalize())),
                         total,
                         next_offset: (next < total).then_some(next),
                     })

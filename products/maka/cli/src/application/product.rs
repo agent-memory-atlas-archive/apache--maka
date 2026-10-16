@@ -160,7 +160,7 @@ fn fingerprint(source: &str, packages: impl IntoIterator<Item = (String, String)
         hash.update((digest.len() as u64).to_be_bytes());
         hash.update(digest.as_bytes());
     }
-    format!("sha256-{:x}", hash.finalize())
+    format!("sha256-{}", hex::encode(hash.finalize()))
 }
 // This generated identifier is a no-op hint, never package execution admission.
 // Actual installation/update candidates must pass verified_fingerprint below.

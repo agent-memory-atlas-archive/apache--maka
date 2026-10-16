@@ -228,7 +228,7 @@ impl Grant {
 fn grant_name(target: &Target) -> io::Result<String> {
     use sha2::{Digest, Sha256};
     let bytes = serde_json::to_vec(target).map_err(io::Error::other)?;
-    Ok(format!("read-{:x}", Sha256::digest(bytes)))
+    Ok(format!("read-{}", hex::encode(Sha256::digest(bytes))))
 }
 
 fn roots() -> io::Result<Vec<PathBuf>> {

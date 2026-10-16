@@ -63,7 +63,7 @@ fn validate_inventory(inventory: &Inventory) -> Result<(), StoreError> {
         previous = Some(&session.id);
         root |= session.id == inventory.root_session_id;
     }
-    if !root || format!("{:x}", digest.finalize()) != inventory.subtree_digest {
+    if !root || hex::encode(digest.finalize()) != inventory.subtree_digest {
         return Err(invalid("bundle inventory digest or root differs"));
     }
     Ok(())
@@ -117,7 +117,7 @@ impl<R: AsyncRead + Unpin> Reader<R> {
         if self.frames >= 1_000_000 {
             return Err(StoreError::PrefixTooLarge);
         }
-        let before = format!("sha256:{:x}", self.digest.clone().finalize());
+        let before = format!("sha256:{}", hex::encode(self.digest.clone().finalize()));
         let mut length = [0; 4];
         self.read(&mut length).await?;
         let length = u32::from_be_bytes(length) as usize;
@@ -211,7 +211,9 @@ impl<R: AsyncRead + Unpin> Reader<R> {
             .remaining;
         if remaining == 0 {
             let pending = self.pending.take().expect("pending blob");
-            if format!("sha256:{:x}", pending.digest.finalize()) != pending.descriptor.digest() {
+            if format!("sha256:{}", hex::encode(pending.digest.finalize()))
+                != pending.descriptor.digest()
+            {
                 return Err(invalid("bundle payload digest mismatch"));
             }
             return Ok(None);

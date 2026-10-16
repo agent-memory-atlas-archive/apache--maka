@@ -75,7 +75,7 @@ async fn effective_digest_covers_archives_beyond_the_first_page() {
     }
     assert_eq!(
         after.effective_source_digest,
-        format!("sha256:{:x}", hash.finalize())
+        format!("sha256:{}", hex::encode(hash.finalize()))
     );
     let database = rusqlite::Connection::open(&path).unwrap();
     end(&log, "writer").await;

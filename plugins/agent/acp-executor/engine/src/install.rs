@@ -292,7 +292,7 @@ async fn install(
             })
             .await??;
         }
-        let digest = format!("{:x}", hash.finalize());
+        let digest = hex::encode(hash.finalize());
         if bytes == 0
             || release.pinned.is_some_and(|pinned| pinned != digest)
             || (release.platform == "darwin-arm64" && bytes != 111_725_488)

@@ -29,10 +29,9 @@ use maka_event_log::projects::{
 use maka_fs_tools::workspace::project as filesystem;
 
 fn digest(value: &impl Serialize) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(value).expect("project observation"))
-    )
+    hex::encode(Sha256::digest(
+        serde_json::to_vec(value).expect("project observation"),
+    ))
 }
 fn reference(record: &ProjectRecord) -> ProjectRef {
     ProjectRef {
@@ -54,9 +53,9 @@ impl Owner {
     }
     fn project_identity(&self, physical: &str) -> String {
         format!(
-            "{}{:x}",
+            "{}{}",
             self.project_prefix(),
-            Sha256::digest(physical.as_bytes())
+            hex::encode(Sha256::digest(physical.as_bytes()))
         )
     }
     async fn project_records(&self) -> Result<Vec<ProjectRecord>, String> {

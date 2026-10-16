@@ -86,6 +86,7 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+hex = "0.4.3"
 maka-ui-authoring = { path = "plugins/application/authoring/native" }
 maka-agent-facts = { path = "plugins/agent/facts" }
 maka-packages = { path = "platform/packages" }
@@ -172,7 +173,7 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 schemars = "1.2.2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["raw_value"] }
-sha2 = "0.10"
+sha2 = "0.11.1"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 tempfile = "3"
 thiserror = "2"

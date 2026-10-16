@@ -57,8 +57,10 @@ impl Enqueue {
     pub fn digest(&self) -> Result<String, Error> {
         self.validate()?;
         Ok(format!(
-            "sha256:{:x}",
-            Sha256::digest(serde_json::to_vec(self).map_err(|e| Error::Invalid(e.to_string()))?)
+            "sha256:{}",
+            hex::encode(Sha256::digest(
+                serde_json::to_vec(self).map_err(|e| Error::Invalid(e.to_string()))?
+            ))
         ))
     }
 }

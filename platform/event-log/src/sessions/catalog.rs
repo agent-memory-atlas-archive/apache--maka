@@ -125,13 +125,13 @@ async fn revision(
             .fetch_one(connection)
             .await?;
     Ok(format!(
-        "sha256:{:x}",
-        Sha256::digest(serde_json::to_vec(&(
+        "sha256:{}",
+        hex::encode(Sha256::digest(serde_json::to_vec(&(
             "session-catalog",
             counter,
             scope,
             filter,
-        ))?)
+        ))?))
     ))
 }
 

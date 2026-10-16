@@ -226,7 +226,7 @@ impl RootOwner {
         let marker = Marker {
             schema_version: 1,
             kind: "interactive".into(),
-            root_id: format!("{:x}", Sha256::digest(uuid::Uuid::new_v4().as_bytes())),
+            root_id: hex::encode(Sha256::digest(uuid::Uuid::new_v4().as_bytes())),
             root_identity: identity,
         };
         publish(&path, ROOT_MARKER, &serde_json::to_vec(&marker)?)?;

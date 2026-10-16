@@ -156,7 +156,7 @@ fn query_hash(view: &ReadDirectory, format: Format, query: &Query) -> Result<Str
         query.include_archived,
     ))
     .map_err(|_| Error::Invalid("invalid catalog query"))?;
-    Ok(format!("{:x}", Sha256::digest(encoded)))
+    Ok(hex::encode(Sha256::digest(encoded)))
 }
 
 fn scan(

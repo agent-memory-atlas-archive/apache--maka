@@ -102,7 +102,7 @@ impl EventLog {
         Ok(LogPrefix {
             scope,
             high_water: sequence_number(high_water)?,
-            digest: format!("sha256:{:x}", digest.finalize()),
+            digest: format!("sha256:{}", hex::encode(digest.finalize())),
             events,
         })
         })).await

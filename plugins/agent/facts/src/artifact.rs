@@ -135,16 +135,16 @@ pub fn upload_artifact_id(session_id: &str, upload_id: &str) -> String {
     digest.update(session_id);
     digest.update([0]);
     digest.update(upload_id);
-    format!("attachment-{}", &format!("{:x}", digest.finalize())[..32])
+    format!("attachment-{}", &hex::encode(digest.finalize())[..32])
 }
 
 pub fn content_digest(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 pub fn workspace_patch_id(session: &str, turn: &str) -> String {
     let identity = serde_json::to_vec(&(session, turn)).expect("string identity serializes");
-    format!("worktree-{:x}", Sha256::digest(identity))
+    format!("worktree-{}", hex::encode(Sha256::digest(identity)))
 }
 
 pub fn normalize_name(name: &str) -> String {

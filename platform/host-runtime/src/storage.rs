@@ -179,5 +179,8 @@ pub fn instance_prefix(
 ) -> String {
     let bytes =
         serde_json::to_vec(&(domain, deployment, instance)).expect("native owner namespace");
-    format!("ma_{:x}_", <sha2::Sha256 as sha2::Digest>::digest(bytes))
+    format!(
+        "ma_{}_",
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes))
+    )
 }

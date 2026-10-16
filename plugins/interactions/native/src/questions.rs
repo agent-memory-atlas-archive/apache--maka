@@ -110,8 +110,10 @@ impl Handler for Questions {
                 turn_id: invocation.turn_id.clone(),
                 run_id: invocation.run_id.clone(),
                 request_id: format!(
-                    "question_{:x}",
-                    Sha256::digest(serde_json::to_vec(operation).expect("operation identity"))
+                    "question_{}",
+                    hex::encode(Sha256::digest(
+                        serde_json::to_vec(operation).expect("operation identity")
+                    ))
                 ),
                 created_at: maka_agent_authority::now(),
                 request,

@@ -263,7 +263,8 @@ fn append_record(bytes: &[u8], extra: Value) -> Vec<u8> {
             output.extend((added.len() as u32).to_be_bytes());
             output.extend(added);
             record["frames"] = Value::from(record["frames"].as_u64().unwrap() + 1);
-            record["digest"] = Value::String(format!("sha256:{:x}", Sha256::digest(&output)));
+            record["digest"] =
+                Value::String(format!("sha256:{}", hex::encode(Sha256::digest(&output))));
             let end = serde_json::to_vec(&record).unwrap();
             output.extend((end.len() as u32).to_be_bytes());
             output.extend(end);

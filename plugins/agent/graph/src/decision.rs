@@ -72,7 +72,7 @@ impl Decision {
                     let data = serde_json::to_vec(&(&update.source, index))
                         .expect("typed source serializes");
                     let work_id: WorkId =
-                        format!("graph_work_{:x}", Sha256::digest(data)).try_into()?;
+                        format!("graph_work_{}", hex::encode(Sha256::digest(data))).try_into()?;
                     update.add_work.push(Work {
                         work_id,
                         target: work.target,

@@ -234,7 +234,10 @@ async fn tool_boundaries_page_independently_and_rebuild_exact_ids_without_readin
     let values: Vec<Value> = original
         .iter()
         .map(|(_, bytes, digest)| {
-            assert_eq!(digest, &format!("sha256:{:x}", Sha256::digest(bytes)));
+            assert_eq!(
+                digest,
+                &format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+            );
             serde_json::from_slice(bytes).unwrap()
         })
         .filter(|row: &Value| row["status"] != "running" && row["type"] != "tool_activity")

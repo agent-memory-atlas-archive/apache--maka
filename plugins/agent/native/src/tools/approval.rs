@@ -51,11 +51,11 @@ pub(super) async fn confirm(
         turn_id: context.invocation.turn_id.clone(),
         run_id: context.invocation.run_id.clone(),
         request_id: format!(
-            "service_{:x}",
-            Sha256::digest(
+            "service_{}",
+            hex::encode(Sha256::digest(
                 serde_json::to_vec(&(&context.invocation, &context.operation_id, binding))
                     .expect("original service call identity")
-            )
+            ))
         ),
         created_at: maka_agent_authority::now(),
         request: InteractionRequest::ServiceApproval {

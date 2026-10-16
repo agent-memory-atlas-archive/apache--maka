@@ -923,13 +923,13 @@ fn app_id(app: &AppInfo) -> String {
         && app.kind.as_deref() != Some("uwp")
         && let Some(path) = &app.launch_path
     {
-        return format!("launch:{:x}", Sha256::digest(path.as_bytes()));
+        return format!("launch:{}", hex::encode(Sha256::digest(path.as_bytes())));
     }
     if let Some(bundle) = &app.bundle_id {
         return bundle.clone();
     }
     if let Some(path) = &app.launch_path {
-        return format!("launch:{:x}", Sha256::digest(path.as_bytes()));
+        return format!("launch:{}", hex::encode(Sha256::digest(path.as_bytes())));
     }
     format!("pid:{}", app.pid)
 }

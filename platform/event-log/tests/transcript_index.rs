@@ -118,7 +118,10 @@ async fn completed_bytes_digest_identity_reopen_and_exact_rebuild() {
     assert_eq!(assistant["modelId"], "real-model");
     for (_, bytes, digest, size) in &original {
         assert_eq!(*size, bytes.len() as i64);
-        assert_eq!(*digest, format!("sha256:{:x}", Sha256::digest(bytes)));
+        assert_eq!(
+            *digest,
+            format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+        );
     }
     // Derived progress may be discarded; replay must verify exactly the same rows.
     db.execute("DELETE FROM transcript_progress", []).unwrap();

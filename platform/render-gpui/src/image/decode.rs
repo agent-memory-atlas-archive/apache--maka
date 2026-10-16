@@ -42,7 +42,7 @@ pub(super) fn decode(
     budget: NativeBudget,
     _job: Permit,
 ) -> Result<Decoded, ImageError> {
-    if format!("sha256:{:x}", Sha256::digest(&encoded.bytes)) != source.digest {
+    if format!("sha256:{}", hex::encode(Sha256::digest(&encoded.bytes))) != source.digest {
         return Err(ImageError::DigestMismatch);
     }
     let format = match source.mime_type.as_str() {

@@ -129,10 +129,9 @@ fn decode<T: DeserializeOwned>(record: Record) -> Result<(u64, T), Error> {
 }
 pub(crate) fn digest(value: &impl Serialize) -> Result<String, Error> {
     use sha2::{Digest, Sha256};
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(value).map_err(invalid)?)
-    ))
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(value).map_err(invalid)?,
+    )))
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

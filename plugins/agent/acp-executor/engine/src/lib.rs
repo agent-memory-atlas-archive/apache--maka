@@ -98,5 +98,5 @@ pub enum Error {
 
 fn digest(value: &impl Serialize) -> Result<String, serde_json::Error> {
     use sha2::{Digest, Sha256};
-    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
+    Ok(hex::encode(Sha256::digest(serde_json::to_vec(value)?)))
 }

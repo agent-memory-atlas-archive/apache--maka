@@ -167,8 +167,8 @@ impl Hub {
                 continue;
             }
             let identity = format!(
-                "wh_{:x}",
-                Sha256::digest(
+                "wh_{}",
+                hex::encode(Sha256::digest(
                     serde_json::to_vec(&(
                         id,
                         &value["status"]["kind"],
@@ -177,7 +177,7 @@ impl Hub {
                         &value["status"]["progress"]["execution"]["state"],
                     ))
                     .map_err(|_| "workhub_encoding_failed")?
-                )
+                ))
             );
             if assignment
                 .notification

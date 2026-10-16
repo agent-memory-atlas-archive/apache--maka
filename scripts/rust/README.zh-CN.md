@@ -61,7 +61,12 @@ python3 scripts/rust/benchmark-long-task.py --kind engine \
 
 归档测试可执行文件使用 `--kind prune`；真实上下文压缩后的 Engine 测量使用
 `--checkpoint`。脚本交替运行两个版本，检查实际完成的工作相同，保留原始日志、
-错误、中位数和范围。造数据不计时；Engine 耗时涵盖请求送达与执行完成，不包含
+错误、中位数和范围。记录构建 profile、目标架构和依赖 feature；feature unification
+可能使独立测试与产品使用不同的哈希后端。使用 `sha2` 0.10 的旧 Engine 基线在受支持的
+ARM64 平台上需加 `--features sha2/asm`，才能与产品后端一致。当前依赖在运行时选择
+受支持的 CPU 指令，并保留软件回退。
+
+造数据不计时；Engine 耗时涵盖请求送达与执行完成，不包含
 Host IPC。[Engine 夹具](../../plugins/agent/engine/tests/integration/long_task_perf.rs)
 和 [prune 夹具](../../platform/event-log/tests/archive/performance.rs) 提供工具稀疏、
 工具密集及投影大小等参数。测量时不要同时构建；CPU 剖析与耗时对比分开运行。

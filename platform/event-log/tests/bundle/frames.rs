@@ -40,7 +40,7 @@ pub(super) fn records(bytes: &[u8], expected: &str) -> Vec<Value> {
             assert_eq!(record["frames"], records.len());
             assert_eq!(
                 expected,
-                format!("sha256:{:x}", Sha256::digest(&bytes[..start]))
+                format!("sha256:{}", hex::encode(Sha256::digest(&bytes[..start])))
             );
             assert_eq!(cursor.position(), bytes.len() as u64);
             return records;
@@ -56,7 +56,7 @@ pub(super) fn records(bytes: &[u8], expected: &str) -> Vec<Value> {
             cursor.read_exact(&mut payload).unwrap();
             assert_eq!(
                 record["digest"],
-                format!("sha256:{:x}", Sha256::digest(&payload))
+                format!("sha256:{}", hex::encode(Sha256::digest(&payload)))
             );
         }
         records.push(record);
@@ -107,7 +107,8 @@ pub(super) fn rewrite_records(bytes: &[u8], mut change: impl FnMut(&mut Value) -
         cursor.set_position(cursor.position() + payload_len);
         let end = record["kind"] == "end";
         if end {
-            record["digest"] = Value::String(format!("sha256:{:x}", Sha256::digest(&output)));
+            record["digest"] =
+                Value::String(format!("sha256:{}", hex::encode(Sha256::digest(&output))));
             record["frames"] = Value::from(count);
         } else if !change(&mut record) {
             continue;

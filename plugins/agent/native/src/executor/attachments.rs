@@ -121,7 +121,7 @@ pub(super) async fn capture(
                     hash.update(&chunk.bytes);
                     capture.write(&key, offset, &chunk.bytes)?;
                 }
-                if format!("sha256:{:x}", hash.finalize()) != metadata.digest {
+                if format!("sha256:{}", hex::encode(hash.finalize())) != metadata.digest {
                     return Err("executor_attachment_invalid".into());
                 }
             }

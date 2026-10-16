@@ -383,16 +383,13 @@ async fn engine_long_history() {
         std::env::var("MAKA_ENGINE_PERF_FIXTURE_TAG")
             .expect("cached fixtures require an explicit revision tag")
     });
-    let source_fingerprint = format!("{:x}", Sha256::digest(include_bytes!("long_task_perf.rs")));
+    let source_fingerprint = hex::encode(Sha256::digest(include_bytes!("long_task_perf.rs")));
     for turns in turns {
         let settings = json!({"turns":turns, "result_bytes":result_bytes, "tool_every":tool_every,
             "tools_per_turn":tools_per_turn, "checkpoint":checkpoint, "fixture_tag":tag,
             "source_fingerprint":source_fingerprint, "compact_every":1000});
         let cache_paths = cache.as_ref().map(|directory| {
-            let fingerprint = format!(
-                "{:x}",
-                Sha256::digest(serde_json::to_vec(&settings).unwrap())
-            );
+            let fingerprint = hex::encode(Sha256::digest(serde_json::to_vec(&settings).unwrap()));
             let stem = format!(
                 "engine-t{turns}-b{result_bytes}-e{tool_every}-n{tools_per_turn}-c{}-{fingerprint}",
                 usize::from(checkpoint)

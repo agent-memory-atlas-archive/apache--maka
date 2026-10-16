@@ -319,7 +319,7 @@ pub fn convert(mut snapshot: Snapshot, expected_session_id: &str) -> Result<Tran
         records,
         fingerprint: Fingerprint {
             bytes: fingerprint.bytes,
-            sha256: format!("{:x}", fingerprint.hash.finalize()),
+            sha256: hex::encode(fingerprint.hash.finalize()),
             incomplete_tail: false,
         },
     })

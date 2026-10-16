@@ -148,7 +148,7 @@ impl Owner {
         reader.validate(self).await?;
         let mut hash = TranscriptDigest(Sha256::new());
         serde_json::to_writer(&mut hash, &transcript).map_err(|_| Failure::Invalid)?;
-        let digest = format!("{:x}", hash.0.finalize());
+        let digest = hex::encode(hash.0.finalize());
         Ok((reader, transcript, digest))
     }
     pub async fn imports(

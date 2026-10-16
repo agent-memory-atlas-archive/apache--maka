@@ -323,10 +323,7 @@ impl Handler for Requests {
                 }
             }
             let id = context.operation().map(|operation| {
-                format!(
-                    "{:x}",
-                    Sha256::digest(serde_json::to_vec(operation).unwrap())
-                )
+                hex::encode(Sha256::digest(serde_json::to_vec(operation).unwrap()))
             });
             let session = context
                 .scope()

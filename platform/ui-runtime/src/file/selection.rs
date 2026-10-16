@@ -72,7 +72,7 @@ impl FileSnapshotWriter {
             descriptor: FileDescriptor {
                 name: self.name,
                 bytes: self.bytes,
-                digest: format!("sha256:{:x}", self.hash.finalize()),
+                digest: format!("sha256:{}", hex::encode(self.hash.finalize())),
             },
         }))
     }
@@ -216,7 +216,7 @@ pub fn read_selected(path: &Path, budget: &NativeBudget) -> Result<Arc<FileSnaps
         descriptor: FileDescriptor {
             name: name.to_string_lossy().chars().take(512).collect(),
             bytes: total,
-            digest: format!("sha256:{:x}", hash.finalize()),
+            digest: format!("sha256:{}", hex::encode(hash.finalize())),
         },
     }))
 }

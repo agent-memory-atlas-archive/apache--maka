@@ -148,7 +148,7 @@ fn read(directory: &Dir, name: &std::ffi::OsStr) -> Result<Option<String>, TextF
         .map_err(|_| TextFileError::InvalidUtf8)
 }
 fn digest(text: Option<&str>) -> Option<String> {
-    text.map(|text| format!("sha256:{:x}", Sha256::digest(text.as_bytes())))
+    text.map(|text| format!("sha256:{}", hex::encode(Sha256::digest(text.as_bytes()))))
 }
 fn perform(path: &Path, operation: TextFileOperation) -> Result<TextFileState, TextFileError> {
     if !path.is_absolute() {

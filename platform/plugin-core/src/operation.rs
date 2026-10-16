@@ -66,7 +66,7 @@ impl RecoveryContract {
             value.sort_all_objects();
             let bytes =
                 serde_json::to_vec(&value).map_err(|e| crate::Error::Contract(e.to_string()))?;
-            Ok(format!("sha256-{:x}", Sha256::digest(bytes)))
+            Ok(format!("sha256-{}", hex::encode(Sha256::digest(bytes))))
         }
         Ok(Self {
             name: contract.name.clone(),

@@ -247,7 +247,7 @@ fn copy(
             target.write_all(&buffer[..count])?;
         }
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(hex::encode(hash.finalize()))
 }
 
 fn create(dir: &Dir, name: &str) -> Result<File, Error> {
@@ -307,7 +307,7 @@ mod tests {
             writer.write_all(b"test executable").unwrap();
         }
         let bytes = writer.finish().unwrap().into_inner();
-        let hash = format!("{:x}", Sha256::digest(&bytes));
+        let hash = hex::encode(Sha256::digest(&bytes));
         dir.write(format!("{staging}/download.zip"), &bytes)
             .unwrap();
         (bytes.len() as u64, hash)
@@ -345,7 +345,7 @@ mod tests {
         let mut forged = anchor.clone();
         forged.files.insert(
             release.server.into(),
-            format!("{:x}", Sha256::digest(b"tampered")),
+            hex::encode(Sha256::digest(b"tampered")),
         );
         installed
             .write("receipt.json", serde_json::to_vec(&forged).unwrap())

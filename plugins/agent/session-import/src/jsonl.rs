@@ -79,7 +79,7 @@ pub(crate) fn scan(
     };
     Ok(Fingerprint {
         bytes: length,
-        sha256: format!("{:x}", digest.finalize()),
+        sha256: hex::encode(digest.finalize()),
         incomplete_tail,
     })
 }

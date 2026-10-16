@@ -77,8 +77,8 @@ impl EventLog {
                                     .collect::<Vec<_>>();
                                     requests.sort_unstable();
                                     attention_id = Some(format!(
-                                        "sha256:{:x}",
-                                        Sha256::digest(serde_json::to_vec(&requests)?)
+                                        "sha256:{}",
+                                        hex::encode(Sha256::digest(serde_json::to_vec(&requests)?))
                                     ));
                                     (Progress::WaitingForUser, None)
                                 }

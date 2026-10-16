@@ -115,7 +115,7 @@ impl ArchivedPlaceholder {
             tool_call_id,
             tool_name,
             source_projection_digest: projection_digest(projection)?,
-            body_sha256: format!("{:x}", Sha256::digest(&bytes)),
+            body_sha256: hex::encode(Sha256::digest(&bytes)),
             original_bytes: bytes.len() as u64,
         };
         identity.validate()?;

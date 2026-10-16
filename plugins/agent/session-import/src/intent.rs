@@ -327,7 +327,7 @@ fn part_key(id: Uuid, index: usize) -> String {
     format!("payloads/{id}/{index:04}")
 }
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 fn encoding(error: impl std::fmt::Display) -> StoreError {
     StoreError::Unavailable(error.to_string())

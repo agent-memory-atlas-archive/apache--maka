@@ -124,7 +124,7 @@ impl Host {
         let credential_id = Uuid::new_v4().to_string();
         let credential = AccessCredential {
             credential_id: credential_id.clone(),
-            credential_hash: format!("{:x}", Sha256::digest(secret.as_bytes())),
+            credential_hash: hex::encode(Sha256::digest(secret.as_bytes())),
             principal_id: principal,
             principal_kind: ManagedPrincipalKind::RemoteOwner,
             grants: vec![

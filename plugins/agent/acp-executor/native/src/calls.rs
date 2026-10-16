@@ -33,10 +33,9 @@ pub(super) struct Calls {
     pub issuer: Issuer,
 }
 pub(super) fn digest(value: &impl Serialize) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(value).expect("ACP identity"))
-    )
+    hex::encode(Sha256::digest(
+        serde_json::to_vec(value).expect("ACP identity"),
+    ))
 }
 pub(super) fn operation(value: &impl Serialize) -> Uuid {
     Uuid::from_bytes(

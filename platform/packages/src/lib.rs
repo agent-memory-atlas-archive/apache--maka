@@ -132,7 +132,7 @@ pub fn content_digest<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8])>) 
         hash.update((content.len() as u64).to_be_bytes());
         hash.update(content);
     }
-    format!("sha256-{:x}", hash.finalize())
+    format!("sha256-{}", hex::encode(hash.finalize()))
 }
 
 #[cfg(test)]

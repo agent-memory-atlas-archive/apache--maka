@@ -283,17 +283,14 @@ impl Owner {
             ScheduledEffect::AgentRun { target, .. } => (&target.session_id, true),
             ScheduledEffect::Reminder => unreachable!(),
         };
-        let identity = format!("{:x}", Sha256::digest(fire.id.as_bytes()));
+        let identity = hex::encode(Sha256::digest(fire.id.as_bytes()));
         let session_id = if new_session {
             format!("{}{}", self.prefix, &identity[..32])
         } else {
             source_session.clone()
         };
         let mut basis = (**basis).clone();
-        basis.fingerprint = format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(fire).map_err(reason)?)
-        );
+        basis.fingerprint = hex::encode(Sha256::digest(serde_json::to_vec(fire).map_err(reason)?));
         let message: MessageInput = fire.intent.body().to_string().into();
         let delivered = RootSourceMessage {
             message: DeliveredMessage {

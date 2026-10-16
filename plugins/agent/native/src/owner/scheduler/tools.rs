@@ -146,18 +146,11 @@ impl Owner {
         {
             return Err("scheduler_invocation_closed".into());
         }
-        let identity = format!(
-            "{:x}",
-            Sha256::digest(
-                serde_json::to_vec(&(&context.invocation, &context.operation_id))
-                    .map_err(reason)?
-            )
-        );
+        let identity = hex::encode(Sha256::digest(
+            serde_json::to_vec(&(&context.invocation, &context.operation_id)).map_err(reason)?,
+        ));
         let key = format!("tool:{identity}");
-        let fingerprint = format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&input).map_err(reason)?)
-        );
+        let fingerprint = hex::encode(Sha256::digest(serde_json::to_vec(&input).map_err(reason)?));
         if let Some(record) = self
             .scheduler
             .storage

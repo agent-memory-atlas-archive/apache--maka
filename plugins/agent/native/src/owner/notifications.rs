@@ -103,7 +103,7 @@ impl Owner {
             model: Some(route.model.clone()),
             executor: None,
             workspace: route.workspace.clone(),
-            fingerprint: format!("{:x}", Sha256::digest(text.as_bytes())),
+            fingerprint: hex::encode(Sha256::digest(text.as_bytes())),
             tools: self.tool_basis.clone(),
             internal_tools: self.internal_tools.clone(),
             internal_bindings: self.internal_bindings.clone(),

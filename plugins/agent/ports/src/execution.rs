@@ -60,7 +60,7 @@ impl Submit {
     pub fn digest(&self) -> Result<String, Error> {
         self.validate()?;
         let bytes = serde_json::to_vec(self).map_err(|error| Error::Invalid(error.to_string()))?;
-        Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+        Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
     }
 }
 

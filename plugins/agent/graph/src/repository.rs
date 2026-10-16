@@ -636,5 +636,5 @@ fn invalid(error: impl ToString) -> Error {
     Error::Persistence(error.to_string())
 }
 fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    hex::encode(Sha256::digest(value.as_bytes()))
 }
