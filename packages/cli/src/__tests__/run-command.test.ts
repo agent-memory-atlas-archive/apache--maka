@@ -52,6 +52,10 @@ describe('maka run argument parsing', () => {
     });
     for (const args of [
       ['--status'],
+      ['--stop'],
+      ['--session', 's', '--stop', '--wait'],
+      ['--session', 's', '--stop', '--no-wait'],
+      ['--session', 's', '--stop', '--answer', '["Yes"]'],
       ['--session', 's', '--answer', 'yes'],
       ['--session', 's', '--answer', '[1]'],
       ['--session', 's', '--status', '--result'],
@@ -87,6 +91,36 @@ describe('maka run argument parsing', () => {
     );
     assert.equal(exit, 0);
     assert.deepEqual(JSON.parse(stdout.join('')), { sessionId: 's', status: 'running' });
+  });
+
+  test('successful status and stop operations do not inherit the child failure exit code', async () => {
+    for (const [flags, expected] of [
+      [[], 0],
+      [['--status'], 0],
+      [['--stop'], 0],
+      [['--result'], 1],
+      [['--wait'], 1],
+    ] as const) {
+      const exit = await runMakaTextCliCore(
+        ['--session', 's', ...flags],
+        {
+          createContext: async () => {
+            throw new Error('must not prepare execution');
+          },
+          listSessions: async () => [],
+          runSession: async () => ({ sessionId: 's', status: 'failed' }),
+        },
+        {
+          stdinIsTTY: () => false,
+          readStdin: async () => {
+            throw new Error('must not read stdin');
+          },
+          writeStdout: () => {},
+          writeStderr: () => {},
+        },
+      );
+      assert.equal(exit, expected, flags.join(' '));
+    }
   });
 
   test('accepts only the explicit non-interactive sandbox bypass flag', () => {

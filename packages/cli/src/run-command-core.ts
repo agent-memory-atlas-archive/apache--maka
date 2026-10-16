@@ -44,6 +44,7 @@ export interface MakaRunOptions {
   status?: true;
   result?: true;
   resumeExecution?: true;
+  stop?: true;
   placement?: 'current_turn' | 'next_turn';
   answers?: readonly (string | null)[];
   prompt?: string;
@@ -160,6 +161,7 @@ const BOOLEAN_FLAGS = new Set([
   'result',
   'queue',
   'steer',
+  'stop',
 ]);
 
 export function parseMakaRunArgs(argv: readonly string[]): ParseMakaRunArgsResult {
@@ -218,16 +220,20 @@ export function parseMakaRunArgs(argv: readonly string[]): ParseMakaRunArgsResul
     Number(booleanFlags.has('status')) +
     Number(booleanFlags.has('result')) +
     Number(flags.has('answer')) +
-    Number(resumeExecution);
+    Number(resumeExecution) +
+    Number(booleanFlags.has('stop'));
   if (actions > 1)
-    return { kind: 'error', message: 'choose one of --status, --result, --answer or --resume' };
+    return {
+      kind: 'error',
+      message: 'choose one of --status, --result, --answer, --resume or --stop',
+    };
   if (!sessionId && (actions || booleanFlags.has('queue') || booleanFlags.has('steer'))) {
     return { kind: 'error', message: 'session operations require --session <session-id>' };
   }
-  if (sessionId && (flags.has('resume') || booleanFlags.has('continue') || flags.has('project'))) {
+  if (sessionId && (booleanFlags.has('continue') || flags.has('project'))) {
     return {
       kind: 'error',
-      message: '--session cannot be combined with legacy --resume <id>, --continue or --project',
+      message: '--session cannot be combined with --continue or --project',
     };
   }
   if (actions && positional.length)
@@ -236,10 +242,10 @@ export function parseMakaRunArgs(argv: readonly string[]): ParseMakaRunArgsResul
     return { kind: 'error', message: '--queue and --steer require a prompt' };
   }
   if (
-    (booleanFlags.has('status') || booleanFlags.has('result')) &&
+    (booleanFlags.has('status') || booleanFlags.has('result') || booleanFlags.has('stop')) &&
     (booleanFlags.has('wait') || booleanFlags.has('no-wait'))
   ) {
-    return { kind: 'error', message: '--status and --result do not accept wait options' };
+    return { kind: 'error', message: '--status, --result and --stop do not accept wait options' };
   }
   if (booleanFlags.has('graph') && booleanFlags.has('no-wait')) {
     return { kind: 'error', message: '--graph must wait for its final result' };
@@ -302,6 +308,7 @@ export function parseMakaRunArgs(argv: readonly string[]): ParseMakaRunArgsResul
       ...(booleanFlags.has('status') ? { status: true as const } : {}),
       ...(booleanFlags.has('result') ? { result: true as const } : {}),
       ...(resumeExecution ? { resumeExecution: true as const } : {}),
+      ...(booleanFlags.has('stop') ? { stop: true as const } : {}),
       ...(answers ? { answers } : {}),
       ...(booleanFlags.has('steer')
         ? { placement: 'current_turn' as const }
@@ -352,7 +359,13 @@ export async function runMakaTextCliCore(
         options.prompt = await resolveRunPrompt(options, deps);
       const result = await deps.runSession(options, deps);
       writeSessionResult(result, deps, options.json === true);
-      return result.status === 'failed' ? 1 : 0;
+      const returnsTaskOutcome =
+        options.prompt !== undefined ||
+        options.answers !== undefined ||
+        options.resumeExecution ||
+        options.wait ||
+        options.result;
+      return result.status === 'failed' && returnsTaskOutcome ? 1 : 0;
     } catch (error) {
       deps.writeStderr(`maka run: ${errorMessage(error)}\n`);
       return error instanceof RunSessionInterrupted ? 130 : 1;
@@ -634,6 +647,7 @@ function makaRunHelpText(cliCommand: string): string {
     '  --no-wait                 Submit and return (Host-owned execution only)',
     '  --status                  Read current Session status without executing',
     '  --result                  Read the latest Turn result without waiting',
+    '  --stop                    Request stop for the current Turn (no --yolo needed)',
     '  --answer <json-array>     Answer the current AskUser, e.g. ["Yes",null]',
     '  --queue                   Queue this prompt as its own next Turn (default)',
     '  --steer                   Add this prompt to the current execution',

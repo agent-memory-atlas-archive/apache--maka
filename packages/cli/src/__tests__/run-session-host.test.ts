@@ -29,6 +29,7 @@ import { openInteractiveExecutionStoresForWrite } from '@maka/storage/execution-
 import {
   FakeBackend,
   FAKE_ASK_USER_QUESTION_PROMPT,
+  FAKE_ASK_SANDBOX_BOUNDARY_PROMPT,
   FAKE_WAIT_FOR_STEERING_PROMPT,
   FAKE_ERROR_PROMPT_PREFIX,
 } from '@maka/runtime/test-only/fake-backend';
@@ -44,7 +45,7 @@ const children = new Set<ChildProcess>();
 const fixturePath = fileURLToPath(new URL('./run-session-process-fixture.js', import.meta.url));
 
 test('real Host keeps AskUser alive across CLI processes and returns the original Turn result', {
-  timeout: 30_000,
+  timeout: 120_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'maka-run-session-'));
   const capability = await resolveStorageRoot({ path: root, kind: 'interactive' });
@@ -128,6 +129,21 @@ test('real Host keeps AskUser alive across CLI processes and returns the origina
     const duplicate = await cli(root, '--session', sessionId, '--answer', JSON.stringify(answers));
     assert.equal(duplicate.code, 1);
     assert.match(duplicate.stderr, /found 0/);
+    // Rejected commands must not elevate the saved Session permissions.
+    const originalBoundary = await probe.request('session.execution_boundary.query', { sessionId });
+    const invalidAnswer = await cli(
+      root,
+      '--session',
+      sessionId,
+      '--answer',
+      JSON.stringify(answers),
+      '--yolo',
+    );
+    assert.equal(invalidAnswer.code, 1);
+    assert.deepEqual(
+      await probe.request('session.execution_boundary.query', { sessionId }),
+      originalBoundary,
+    );
     // Ctrl+C while a read is in flight must not admit a new message afterward.
     let interrupt: (() => void) | undefined;
     let interruptedAdmissions = 0;
@@ -176,6 +192,39 @@ test('real Host keeps AskUser alive across CLI processes and returns the origina
       '--json',
     );
     assert.equal(askedAgain.code, 0, askedAgain.stderr);
+    const wrongAnswerCount = await cli(
+      root,
+      '--session',
+      sessionId,
+      '--answer',
+      JSON.stringify([...answers, 'extra']),
+      '--yolo',
+    );
+    assert.equal(wrongAnswerCount.code, 1);
+    assert.deepEqual(
+      await probe.request('session.execution_boundary.query', { sessionId }),
+      originalBoundary,
+    );
+    const activeStepCap = await cli(
+      root,
+      '--session',
+      sessionId,
+      'invalid-step-cap',
+      '--max-steps',
+      '1',
+      '--yolo',
+    );
+    assert.equal(activeStepCap.code, 1);
+    assert.deepEqual(
+      await probe.request('session.execution_boundary.query', { sessionId }),
+      originalBoundary,
+    );
+    const invalidResume = await cli(root, '--session', sessionId, '--resume', '--yolo');
+    assert.equal(invalidResume.code, 1);
+    assert.deepEqual(
+      await probe.request('session.execution_boundary.query', { sessionId }),
+      originalBoundary,
+    );
     const queuedFirst = await cli(root, '--session', sessionId, 'queued-first', '--no-wait');
     assert.equal(queuedFirst.code, 0, queuedFirst.stderr);
     const queuedSecond = cli(root, '--session', sessionId, 'queued-second', '--wait', '--json');
@@ -245,6 +294,49 @@ test('real Host keeps AskUser alive across CLI processes and returns the origina
     const failedResult = await cli(root, '--session', sessionId, '--result', '--json');
     assert.equal(failedResult.code, 1);
     assert.match(JSON.parse(failedResult.stdout).error, /Deterministic rate_limit failure/);
+    const failedStatus = await cli(root, '--session', sessionId, '--status', '--json');
+    assert.equal(failedStatus.code, 0, failedStatus.stderr);
+    assert.equal(JSON.parse(failedStatus.stdout).status, 'failed');
+    // A detached non-bypass Turn can request a boundary after its launcher exits.
+    const detachedBoundary = await cli(
+      root,
+      '--session',
+      sessionId,
+      FAKE_ASK_SANDBOX_BOUNDARY_PROMPT,
+      '--no-wait',
+    );
+    assert.equal(detachedBoundary.code, 0, detachedBoundary.stderr);
+    const blocked = await cli(root, '--session', sessionId, '--wait', '--json');
+    assert.equal(blocked.code, 1);
+    assert.match(blocked.stderr, /Pending sandbox_boundary/);
+    assert.match(blocked.stderr, /--stop/);
+    assert.doesNotMatch(blocked.stderr, /MCP form/);
+    const blockedSubscription = await probe.openSessionSubscription({
+      sessionId,
+      transcript: { kind: 'none' },
+    });
+    await blockedSubscription.ready();
+    const blockedTurn = blockedSubscription.snapshot.rootTurn!;
+    assert.ok(
+      blockedSubscription.snapshot.interactions.pending.some(
+        (p) => p.request.kind === 'sandbox_boundary',
+      ),
+    );
+    await blockedSubscription.close();
+    const stopped = await cli(root, '--session', sessionId, '--stop', '--json');
+    assert.equal(stopped.code, 0, stopped.stderr);
+    const cancelled = await probe.request('turn.query', { sessionId, turnId: blockedTurn.turnId });
+    assert.equal(cancelled.status, 'cancelled');
+    const afterStop = await cli(
+      root,
+      '--session',
+      sessionId,
+      'after-explicit-stop',
+      '--wait',
+      '--json',
+    );
+    assert.equal(afterStop.code, 0, afterStop.stderr);
+    assert.match(JSON.parse(afterStop.stdout).finalOutput, /after-explicit-stop/);
     await subscription.close();
     await probe.close();
   } finally {

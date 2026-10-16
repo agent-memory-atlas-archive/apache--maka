@@ -125,8 +125,10 @@ maka run "Inspect this project" --no-wait
 ```
 
 Both forms return a `sessionId` in their JSON result. Ordinary runs still wait and print the final
-answer by default. `--no-wait` returns after admission; use the Session ID to observe the eventual
-result. Given a returned Session ID in `$session`:
+answer by default. Built-in AskUser is an exception: it returns question JSON and exits 0
+while the Turn waits. Scripts that need a final answer should use `--json` and inspect `status`,
+not treat exit code 0 alone as task completion. `--no-wait` returns after admission; use the
+Session ID to observe the eventual result. Given a returned Session ID in `$session`:
 
 ```sh
 maka run --session "$session" --status
@@ -161,7 +163,16 @@ observes the Turn selected on attachment; it does not guarantee consumption befo
 target on attachment; when idle, it reads the latest result. `--result` never waits for an active
 Turn. Status and result queries do not prepare a model or start MCP. Interrupting Session
 observation with Ctrl+C leaves Host execution running; legacy blocking run cancellation retains
-its existing behavior.
+its existing behavior. To stop Host execution explicitly, use `maka run --session "$session" --stop --json`.
+Stop targets the current Turn observed on attachment and needs no `--yolo`; a successful request
+exits 0. A successful explicit or implicit status query also exits 0 even if it reports a failed
+or cancelled Turn; result/wait retain the task's failure exit code. Stop and status are not
+assertions that the assigned task succeeded.
+
+Permission, sandbox-boundary, and other interactions that this Session CLI cannot answer remain
+waiting in the Host. A wait reports the actual interaction kind and a recovery command: use an
+interactive client on the same Host, or stop the Turn explicitly. Detached admission does not
+promise that subsequent execution will need no interaction.
 
 Session commands use the saved configuration. Keep using the legacy `--resume <session-id>`
 selector for blocking runs that supply configuration, cwd, timeout or Graph options; that selector

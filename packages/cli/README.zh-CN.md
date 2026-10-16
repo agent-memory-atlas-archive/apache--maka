@@ -136,7 +136,9 @@ maka run --session "$session" --resume --wait --json
 maka run --session "$session" --answer '["是",null]' --wait --json --yolo
 ```
 
-普通内置 AskUser 会以退出码 0 返回 `needs_input`、问题及选项，Host 保留等待中的 Turn。
+内置 AskUser 是普通阻塞运行的例外：它会输出问题 JSON 而不是最终答案。脚本应使用 `--json`
+并检查 `status`，不能仅凭退出码 0 判断任务完成。普通内置 AskUser 会以退出码 0 返回
+`needs_input`、问题及选项，Host 保留等待中的 Turn。
 `--answer` 使用 JSON 数组，为每个问题提供一个字符串或 `null`，回答后原工具调用和原 Turn
 继续执行，无需 `--resume`。答案提交失败或结果不确定时不会自动重发；先重新读取当前问题，
 再决定下一步。存在多批待回答问题时会如实报告，无法唯一选择当前批次时拒绝提交答案。
@@ -146,7 +148,14 @@ maka run --session "$session" --answer '["是",null]' --wait --json --yolo
 Turn，不保证追加消息一定在该 Turn 结束前消费。
 单独 `--wait` 在连接时固定目标，空闲时读取最近结果。`--result` 不等待仍在执行的 Turn。
 状态和结果查询不准备模型、不启动 MCP。用 Ctrl+C 退出会话观察会让 Host 继续执行；旧阻塞
-run 的取消行为保持原样。
+run 的取消行为保持原样。显式停止 Host 执行可用 `maka run --session "$session" --stop --json`。
+停止操作针对连接时观察到的当前 Turn，不需要 `--yolo`，请求成功退出 0。显式或隐式的 status
+查询成功时也退出 0，即使它报告的 Turn 已失败或取消；result/wait 仍以任务失败返回非零退出码。
+停止或查询成功不代表分配的任务已完成。
+
+权限、沙箱边界等会话 CLI 无法回答的交互会留在 Host 中等待。wait 会报告实际交互类型和恢复
+命令：使用同一 Host 的交互式客户端处理，或显式停止该 Turn。后台提交成功不保证后续执行
+不会请求交互。
 
 会话控制使用已保存的配置。需要指定配置、cwd、timeout 或 Graph 选项的阻塞运行，继续使用
 兼容入口 `--resume <session-id>` 选择会话并提供新 prompt。`--session <id> --resume` 则表示

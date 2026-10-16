@@ -100,6 +100,19 @@ Use `--yolo` only when full file and network access is authorized. For a full-ac
 maka run --session "$session" --answer '["Blue"]' --wait --json --yolo
 ```
 
+To stop Host execution explicitly, use the same Host selection and Session ID:
+
+```sh
+maka run --session "$session" --stop --json
+```
+
+This targets the current Turn observed on attachment and needs no `--yolo`. A successful stop
+request exits 0; it does not mean the assignment succeeded. A successful status query also exits 0
+when it reports task failure. Wait/result continue to reflect task failure through their exit code.
+For permission, sandbox-boundary, or other unsupported interactions, wait reports the actual kind
+and leaves the Host waiting; use an interactive client or explicitly stop the Turn. Do not
+repeatedly wait expecting the pending interaction to resolve itself.
+
 Ctrl+C on Session observation ends the observer while Host execution continues. Legacy ordinary blocking run cancellation can stop execution. After interruption of the parent or CLI, query status; do not assume the task stopped or automatically restarted with the parent. For stopped execution, request safe continuation:
 
 ```sh

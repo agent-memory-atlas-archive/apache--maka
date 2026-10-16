@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { isInteractionAnswerValidForRequest } from '@maka/core/interaction';
 import type { StoredMessage } from '@maka/core/session';
 import type { RuntimeHostConnection } from '@maka/runtime-host/client';
 import { updateRuntimeHostSession } from './runtime-host-session-update.js';
@@ -79,30 +80,53 @@ export async function runMakaSessionCommand(
     assertActive();
     let target = observer.snapshot.rootTurn?.turnId;
     let messageId: string | undefined;
+    let fullAccess = false;
     if (executing) {
       const boundary = await connection.request('session.execution_boundary.query', { sessionId });
       assertActive();
       if (boundary.kind === 'external')
         throw new Error('This Session must be controlled by its owning harness');
-      if (options.yolo) {
-        await updateRuntimeHostSession(
-          connection,
-          sessionId,
-          (current) =>
-            connection.request('session.configuration.update', {
-              sessionId,
-              expectedRevision: current.revision,
-              patch: { permissionMode: 'bypass' },
-            }),
-          { operation: 'session.configuration.update', assertRequestAllowed: assertActive },
-        );
-      } else if (boundary.kind === 'bypass') {
+      fullAccess = boundary.kind === 'bypass';
+      if (!options.yolo && fullAccess) {
         throw new Error(
           `Session ${sessionId} has full access. Repeat this command with --yolo to submit a prompt, answer AskUser, or resume execution. Read-only --status, --wait and --result do not require --yolo; no action was submitted.`,
         );
       }
     }
+    const authorizeExecution = async () => {
+      assertActive();
+      if (!options.yolo || fullAccess) return;
+      await updateRuntimeHostSession(
+        connection,
+        sessionId,
+        (current) =>
+          connection.request('session.configuration.update', {
+            sessionId,
+            expectedRevision: current.revision,
+            patch: { permissionMode: 'bypass' },
+          }),
+        { operation: 'session.configuration.update', assertRequestAllowed: assertActive },
+      );
+      assertActive();
+    };
     assertActive();
+    if (options.stop) {
+      const root = observer.snapshot.rootTurn;
+      if (!root || terminal(root.status)) return observer.status();
+      const stopped = await connection.request('turn.stop', {
+        sessionId,
+        turnId: root.turnId,
+        runId: root.runId,
+      });
+      return {
+        sessionId,
+        status: terminal(stopped.status)
+          ? stopped.status === 'completed'
+            ? 'completed'
+            : 'failed'
+          : 'running',
+      };
+    }
     if (options.answers !== undefined) {
       const pending = observer.snapshot.interactions.pending.filter(
         (p) => p.request.kind === 'question',
@@ -112,6 +136,16 @@ export async function runMakaSessionCommand(
           `Expected one pending AskUser batch, found ${pending.length}; no answer was submitted`,
         );
       const question = pending[0]!;
+      if (
+        !isInteractionAnswerValidForRequest(question.request, {
+          kind: 'question',
+          answers: options.answers,
+        })
+      )
+        throw new Error(
+          'Answers do not match the pending AskUser questions; no answer was submitted',
+        );
+      await authorizeExecution();
       target = question.turnId;
       // Use the observed identity exactly once. A dispatched answer is never retried here.
       await connection.request('interaction.answer', {
@@ -124,6 +158,7 @@ export async function runMakaSessionCommand(
       const plan = await connection.request('turn.resume.query', { sessionId });
       assertActive();
       if (plan.disposition !== 'ready') throw new Error(`Execution cannot resume: ${plan.reason}`);
+      await authorizeExecution();
       const resumed = await connection.request('turn.resume.start', {
         sessionId,
         turnId: env.newId(),
@@ -138,6 +173,7 @@ export async function runMakaSessionCommand(
         const root = observer.snapshot.rootTurn;
         if (root && !terminal(root.status))
           throw new Error('--max-steps cannot be applied to a queued or active Turn');
+        await authorizeExecution();
         const started = await connection.request('turn.start', {
           sessionId,
           turnId: env.newId(),
@@ -147,6 +183,7 @@ export async function runMakaSessionCommand(
         if (started.kind !== 'started') throw new Error('Turn did not start');
         target = started.turn.turnId;
       } else {
+        await authorizeExecution();
         messageId = env.newId();
         const submitted = await connection.request('turn.message.submit', {
           originHostEpoch: connection.hostEpoch,
@@ -206,7 +243,7 @@ export async function runMakaSessionCommand(
         );
         if (unsupported)
           throw new Error(
-            `Pending ${unsupported.request.kind} interaction requires its owning interactive Client; MCP form continuation is not supported by maka run`,
+            `Pending ${unsupported.request.kind} interaction cannot be answered by maka run. The Host Turn is still waiting; use an interactive client on this Host or run maka run --session ${sessionId} --stop with the same Host selection to stop it explicitly.`,
           );
         if (options.result) return { sessionId, status: 'running' };
       }
