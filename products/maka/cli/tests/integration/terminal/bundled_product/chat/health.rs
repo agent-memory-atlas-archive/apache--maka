@@ -137,6 +137,7 @@ fn default_product_health_checks_process_and_independent_endpoint() {
         json!({"ref":reference,"url":url}),
     );
     tui.wait_for("Approval needed");
+    evidence(&tui, "composer-approval");
     click(&mut tui, "Approval needed");
     tui.wait_for("Allow health check access to");
     click(&mut tui, "Deny this call");
@@ -148,7 +149,12 @@ fn default_product_health_checks_process_and_independent_endpoint() {
         std::io::ErrorKind::WouldBlock
     );
     click(&mut tui, "Close");
-    tui.wait_until(|s| !s.contains("Allow health check access to") && s.contains("Message…"));
+    tui.wait_until(|s| {
+        !s.contains("Allow health check access to")
+            && s.contains("Message…")
+            && !s.contains("Approval needed")
+    });
+    evidence(&tui, "composer-settled");
     code_mode::tool_response(
         &mut socket,
         "BackgroundTaskHealth",

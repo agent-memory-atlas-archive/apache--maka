@@ -380,6 +380,10 @@ test('inline approval Escape returns to the retained task and composer', async (
     permissions: { access: 'workspace_write', requestPermissions: true },
     workspace: { path: '/project', directoryIdentity: 'a'.repeat(64), identity: 'workspace-a' },
   };
+  out.frame.state.interactions = {
+    revision: 1,
+    entries: [{ requestId: 'request-a', kind: 'permissions' }],
+  };
   out.frame.state.dialog = 'approval';
   out = module.component.update(out.frame.state, {}, values);
   const nodes = (node) =>
@@ -412,4 +416,19 @@ test('inline approval Escape returns to the retained task and composer', async (
     'closing approval preserves the native draft owner',
   );
   assert.equal(after.props.command, composer.props.command);
+  assert.equal(after.props.approvalPending, true, 'closing a review does not settle its approval');
+  for (const kind of ['service_approval', 'permissions', 'client_capability', 'question', 'form']) {
+    out.frame.state.interactions.entries[0].kind = kind;
+    out = module.component.update(out.frame.state, {}, values);
+    assert.equal(
+      nodes(out.frame.view).find((n) => n.key === 'composer').props.approvalPending,
+      !['question', 'form'].includes(kind),
+    );
+  }
+  out.frame.state.interactions.entries = [];
+  out = module.component.update(out.frame.state, {}, values);
+  assert.equal(
+    nodes(out.frame.view).find((n) => n.key === 'composer').props.approvalPending,
+    false,
+  );
 });

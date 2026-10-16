@@ -502,3 +502,33 @@ for (const target of ['tui', 'desktop']) {
     );
   });
 }
+
+test('pending approval keeps the entire composer border amber through focus and execution, then restores it', async () => {
+  const c = await client('tui');
+  const find = (node) =>
+    node?.key === 'composer-main'
+      ? node
+      : node && typeof node === 'object'
+        ? Object.values(node)
+            .flatMap((value) => (Array.isArray(value) ? value : [value]))
+            .map(find)
+            .find(Boolean)
+        : undefined;
+  for (const running of [false, true]) {
+    c.props.running = running;
+    c.props.approvalPending = true;
+    c.update();
+    assert.equal(validProps(c.props), true, JSON.stringify(validProps.errors));
+    const border = find(c.out.frame.view).border;
+    assert.equal(border.color, theme.terminal.warning);
+    assert.equal(border.focused_color, theme.terminal.warning);
+    assert.equal(border.breathing, false);
+    c.props.approvalPending = false;
+    c.update();
+    assert.equal(
+      find(c.out.frame.view).border.color,
+      running ? theme.terminal.accent : theme.terminal.border,
+    );
+    assert.equal(find(c.out.frame.view).border.focused_color, theme.terminal.accent);
+  }
+});

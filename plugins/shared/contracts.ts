@@ -333,6 +333,7 @@ export interface ComposerSent {
   attachments: string[];
 }
 export interface ComposerProps {
+  approvalPending?: boolean;
   backend: ComposerBackend | null;
   sendLabel?: string;
   dataSource: AgentDataSource | null;
@@ -1166,6 +1167,7 @@ export const composerContract = component(
   'maka.agent.Composer',
   object(
     {
+      approvalPending: { type: 'boolean' },
       backend: composerBackend,
       sendLabel: string,
       context: { anyOf: [{ type: 'string', minLength: 1, maxLength: 512 }, { type: 'null' }] },

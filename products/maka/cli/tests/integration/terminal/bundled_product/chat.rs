@@ -233,6 +233,7 @@ fn evidence(tui: &Pty, name: &str) {
             tui.screen.snapshot().unwrap().screen,
         )
         .unwrap();
+        std::fs::write(Path::new(&path).join(format!("{name}.ansi")), &tui.output).unwrap();
         std::fs::write(Path::new(&path).join("terminal.ansi"), &tui.output).unwrap();
     }
 }

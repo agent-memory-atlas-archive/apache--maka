@@ -29,6 +29,7 @@ import { draftReady } from '../../shared/drafts.js';
 
 import {
   canExecute,
+  reviewTarget,
   selectedBackend,
   catalogPending,
   conversationRoute,
@@ -257,6 +258,11 @@ export function conversationView<N extends Node>(
     'composer',
     'composer',
     {
+      approvalPending:
+        state.plan.page?.current.proposal?.status === 'pending_approval' ||
+        ['service_approval', 'permissions', 'client_capability'].includes(
+          reviewTarget(state)?.kind ?? '',
+        ),
       backend: canExecute(state) ? selectedBackend(state) : null,
       context: state.selected?.id ?? null,
       dataSource: state.selected?.dataSource ?? null,

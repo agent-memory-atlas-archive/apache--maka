@@ -478,7 +478,8 @@ export function composer<N extends Node>(
       {
         row: target === 'tui',
         border: target === 'tui',
-        busy: props.running,
+        borderColor: props.approvalPending ? props.theme.warning : undefined,
+        busy: props.running && !props.approvalPending,
         gap: target === 'tui' ? 0 : 12,
         terminal: { shrink: true },
         style: { width: fill },

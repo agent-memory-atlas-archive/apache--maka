@@ -56,6 +56,7 @@ interface BoxOptions {
   autoFocus?: boolean;
   wheel?: { up: string; down: string };
   border?: boolean;
+  borderColor?: number;
   busy?: boolean;
   shortcuts?: Shortcut[];
   focusShortcuts?: FocusShortcut[];
@@ -435,8 +436,8 @@ function terminalPaint(theme: Theme): Painter<TerminalNode> {
         border: options.border
           ? {
               breathing: options.busy === true && theme.motion,
-              color: color(options.busy ? theme.accent : theme.border),
-              focused_color: color(theme.accent),
+              color: color(options.borderColor ?? (options.busy ? theme.accent : theme.border)),
+              focused_color: color(options.borderColor ?? theme.accent),
               style: theme.ascii ? 'ascii' : 'rounded',
             }
           : null,
