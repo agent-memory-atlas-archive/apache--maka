@@ -20,7 +20,7 @@
 use maka_ui_runtime::{NativeView, PreparedScene};
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 /// The nominal ABI supplied by this presenter's pure scene compiler.
@@ -52,7 +52,7 @@ pub fn finish(prepared: PreparedScene) -> maka_ui_runtime::Result<NativeView<dyn
 }
 fn prepare_with_inputs(
     source: &Value,
-    mut inputs: BTreeMap<String, Value>,
+    inputs: BTreeMap<String, Value>,
 ) -> maka_ui_runtime::Result<PreparedScene> {
     fn scan(source: &Value, depth: usize) -> maka_ui_runtime::Result<()> {
         if depth > 32 {
@@ -77,13 +77,12 @@ fn prepare_with_inputs(
         Node::deserialize(source).map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
     node.validate_root()
         .map_err(maka_ui_runtime::Error::Invalid)?;
-    let mut slots = vec![];
-    let mut hidden_slots = BTreeSet::new();
-    node.metadata(&mut slots, &mut inputs, &mut hidden_slots, true)
-        .map_err(maka_ui_runtime::Error::Invalid)?;
-    node.validate_focus_targets(&slots)
-        .map_err(maka_ui_runtime::Error::Invalid)?;
-    node.shortcut_inputs(&mut inputs, true)
+    let maka_ui_runtime::scene::terminal::Metadata {
+        slots,
+        inputs,
+        hidden_slots,
+    } = node
+        .metadata(inputs)
         .map_err(maka_ui_runtime::Error::Invalid)?;
     let visible = node.visible();
     PreparedScene::new(node, inputs, slots)?

@@ -25,7 +25,7 @@ use gpui_kit::AppContext;
 use maka_ui_runtime::{NativeView, PreparedScene};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 /// The nominal ABI supplied by this presenter's pure scene compiler.
@@ -101,12 +101,14 @@ fn prepare_with_inputs(
         Node::deserialize(source).map_err(|e| maka_ui_runtime::Error::Invalid(e.to_string()))?;
     node.validate_root()
         .map_err(maka_ui_runtime::Error::Invalid)?;
-    let mut slots = vec![];
-    let mut inputs = BTreeMap::new();
-    let mut hidden_slots = BTreeSet::new();
-    node.metadata(&mut slots, &mut inputs, &mut hidden_slots, true)
-        .map_err(maka_ui_runtime::Error::Invalid)?;
-    node.shortcut_inputs(&mut inputs, true)
+    let maka_ui_runtime::scene::desktop::Metadata {
+        slots,
+        mut inputs,
+        hidden_slots,
+        render_depth: depth,
+        slot_depth,
+    } = node
+        .metadata(BTreeMap::new())
         .map_err(maka_ui_runtime::Error::Invalid)?;
     for (key, schema) in additional_inputs {
         if inputs.insert(key, schema).is_some() {
@@ -115,9 +117,6 @@ fn prepare_with_inputs(
             ));
         }
     }
-    let mut depth = 0;
-    let mut slot_depth = BTreeMap::new();
-    node.render_depth(0, true, &mut depth, &mut slot_depth);
     if depth > gpui_kit::MAX_DEFERRED_DEPTH {
         return Err(maka_ui_runtime::Error::Invalid(
             "native scene render depth limit".into(),

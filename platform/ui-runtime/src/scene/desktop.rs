@@ -26,6 +26,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Default)]
+pub struct Metadata {
+    pub slots: Vec<ComponentSlot>,
+    pub inputs: BTreeMap<String, Value>,
+    pub hidden_slots: BTreeSet<String>,
+    pub render_depth: u16,
+    pub slot_depth: BTreeMap<String, u16>,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename = "DesktopDirection")]
@@ -275,97 +284,32 @@ impl Node {
         }
         Ok(())
     }
-    pub fn render_depth(
-        &self,
+    pub fn metadata(&self, inputs: BTreeMap<String, Value>) -> Result<Metadata, String> {
+        let mut metadata = Metadata {
+            inputs,
+            ..Metadata::default()
+        };
+        let mut commands = Vec::new();
+        self.collect_metadata(&mut metadata, &mut commands, true, 0);
+        // Native schemas must all exist before commands can merge or reject collisions.
+        for command in commands {
+            if let Self::Stack { shortcuts, .. } = command {
+                crate::shortcut::inputs(shortcuts, &mut metadata.inputs)?;
+            }
+        }
+        Ok(metadata)
+    }
+
+    fn collect_metadata<'a>(
+        &'a self,
+        metadata: &mut Metadata,
+        commands: &mut Vec<&'a Self>,
+        visible: bool,
         enclosing: u16,
-        visible: bool,
-        depth: &mut u16,
-        slots: &mut BTreeMap<String, u16>,
     ) {
-        if !visible {
-            return;
+        if visible {
+            metadata.render_depth = metadata.render_depth.max(enclosing);
         }
-        *depth = (*depth).max(enclosing);
-        match self {
-            Self::Dialog {
-                background,
-                content,
-                open,
-                ..
-            } => {
-                background.render_depth(enclosing, true, depth, slots);
-                content.render_depth(enclosing + 1, *open, depth, slots);
-            }
-            Self::Popup {
-                trigger,
-                content,
-                open,
-                ..
-            } => {
-                trigger.render_depth(enclosing, true, depth, slots);
-                content.render_depth(enclosing + 1, *open, depth, slots);
-            }
-            Self::Stack {
-                children, visible, ..
-            } => {
-                for child in children {
-                    child.render_depth(enclosing, *visible, depth, slots);
-                }
-            }
-            Self::Component(slot) => {
-                slots.insert(slot.key.clone(), enclosing);
-            }
-            _ => {}
-        }
-    }
-    pub fn shortcut_inputs(
-        &self,
-        inputs: &mut BTreeMap<String, Value>,
-        visible: bool,
-    ) -> Result<(), String> {
-        match self {
-            Self::Stack {
-                children,
-                shortcuts,
-                visible: local,
-                ..
-            } => {
-                if visible && *local {
-                    crate::shortcut::inputs(shortcuts, inputs)?;
-                }
-                for child in children {
-                    child.shortcut_inputs(inputs, visible && *local)?;
-                }
-            }
-            Self::Dialog {
-                background,
-                content,
-                open,
-                ..
-            } => {
-                background.shortcut_inputs(inputs, visible)?;
-                content.shortcut_inputs(inputs, visible && *open)?;
-            }
-            Self::Popup {
-                trigger,
-                content,
-                open,
-                ..
-            } => {
-                trigger.shortcut_inputs(inputs, visible)?;
-                content.shortcut_inputs(inputs, visible && *open)?;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-    pub fn metadata(
-        &self,
-        slots: &mut Vec<ComponentSlot>,
-        inputs: &mut BTreeMap<String, Value>,
-        hidden_slots: &mut BTreeSet<String>,
-        visible: bool,
-    ) -> Result<(), String> {
         match self {
             Self::Dialog {
                 key,
@@ -375,14 +319,14 @@ impl Node {
                 ..
             } => {
                 if visible && *open {
-                    inputs.insert(
+                    metadata.inputs.insert(
                         key.clone(),
                         serde_json::to_value(schemars::schema_for!(crate::dismiss::Input))
                             .expect("dialog input schema"),
                     );
                 }
-                background.metadata(slots, inputs, hidden_slots, visible)?;
-                content.metadata(slots, inputs, hidden_slots, visible && *open)?;
+                background.collect_metadata(metadata, commands, visible, enclosing);
+                content.collect_metadata(metadata, commands, visible && *open, enclosing + 1);
             }
             Self::Popup {
                 key,
@@ -392,29 +336,31 @@ impl Node {
                 ..
             } => {
                 if visible && *open {
-                    inputs.insert(
+                    metadata.inputs.insert(
                         key.clone(),
                         serde_json::to_value(schemars::schema_for!(crate::dismiss::Input))
                             .expect("popup input schema"),
                     );
                 }
-                trigger.metadata(slots, inputs, hidden_slots, visible)?;
-                content.metadata(slots, inputs, hidden_slots, visible && *open)?;
+                trigger.collect_metadata(metadata, commands, visible, enclosing);
+                content.collect_metadata(metadata, commands, visible && *open, enclosing + 1);
             }
             Self::Component(slot) => {
-                slots.push(slot.clone());
-                if !visible {
-                    hidden_slots.insert(slot.key.clone());
+                metadata.slots.push(slot.clone());
+                if visible {
+                    metadata.slot_depth.insert(slot.key.clone(), enclosing);
+                } else {
+                    metadata.hidden_slots.insert(slot.key.clone());
                 }
             }
             Self::Button { key, .. } => {
                 if visible {
-                    inputs.insert(key.clone(), json!(true));
+                    metadata.inputs.insert(key.clone(), json!(true));
                 }
             }
             Self::Canvas { key, .. } => {
                 if visible {
-                    inputs.insert(
+                    metadata.inputs.insert(
                         key.clone(),
                         serde_json::to_value(schemars::schema_for!(canvas::CanvasInput))
                             .expect("canvas input schema"),
@@ -424,15 +370,18 @@ impl Node {
             Self::Stack {
                 children,
                 visible: local,
+                shortcuts,
                 ..
             } => {
+                if visible && *local && !shortcuts.is_empty() {
+                    commands.push(self);
+                }
                 for child in children {
-                    child.metadata(slots, inputs, hidden_slots, visible && *local)?;
+                    child.collect_metadata(metadata, commands, visible && *local, enclosing);
                 }
             }
             _ => {}
         }
-        Ok(())
     }
 }
 
