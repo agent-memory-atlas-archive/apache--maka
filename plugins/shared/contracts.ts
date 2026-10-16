@@ -131,7 +131,8 @@ export interface ModelSetup {
   catalogEpoch: number;
   kind: 'loading' | 'unavailable' | 'connect' | 'choose';
 }
-export interface ToolFileContext {
+export type ToolDisplayStatus = 'succeeded' | 'failed' | 'running' | 'cancelled' | 'unknown';
+export interface ToolDetailsContext {
   sessionId: string;
   through: number;
   toolUseId: string;
@@ -139,6 +140,8 @@ export interface ToolFileContext {
   call: number | null;
   result: number | null;
   path: string | null;
+  status: ToolDisplayStatus | null;
+  expandable: boolean;
 }
 export interface TimelineFileContext {
   sessionId: string;
@@ -833,7 +836,7 @@ export const toolDetailsContract = component(
     focusOnPointer: { type: 'boolean' },
   }),
   {
-    fileContext: object({
+    context: object({
       sessionId: string,
       through: { type: 'integer', minimum: 1 },
       toolUseId: string,
@@ -841,6 +844,8 @@ export const toolDetailsContract = component(
       call: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
       result: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
       path: filePath,
+      status: { enum: ['succeeded', 'failed', 'running', 'cancelled', 'unknown', null] },
+      expandable: { type: 'boolean' },
     }),
   },
 );

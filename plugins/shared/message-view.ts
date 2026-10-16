@@ -18,7 +18,7 @@
  */
 
 import type { HistorySource } from '../../packages/plugin-sdk/src/index.js';
-import type { Theme } from './contracts.js';
+import type { Theme, ToolDisplayStatus } from './contracts.js';
 import { copy } from './locale-catalogs/message-view.js';
 import { toolPresentation } from '../agent/tool-details/index.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
@@ -54,7 +54,12 @@ function timeLabel(millis: number | null): string | null {
 }
 
 export function toolLabel(
-  message: { tool: HistorySource['tool']; live?: boolean; waiting?: boolean },
+  message: {
+    tool: HistorySource['tool'];
+    live?: boolean;
+    waiting?: boolean;
+    detailStatus?: ToolDisplayStatus | null;
+  },
   locale: string,
 ) {
   const text = copy(locale);
@@ -91,7 +96,7 @@ export function toolLabel(
           : result?.isError
             ? 'reportedError'
             : result
-              ? 'returned'
+              ? (message.detailStatus ?? (kind ? 'unresolved' : 'returned'))
               : pending
                 ? message.waiting
                   ? 'waiting'
@@ -106,7 +111,10 @@ export function toolLabel(
     rejected: [text.toolRejected, 'error', '!', '×'],
     unknown: [text.toolUnknown, 'warning', '?', '?'],
     reportedError: [text.toolReportedError, 'error', '!', '×'],
-    returned: [text.toolReturned, 'subtle', '.', '•'],
+    returned: [text.toolReturned, 'success', '+', '•'],
+    unresolved: [text.toolReturned, 'subtle', '.', '•'],
+    succeeded: [text.completed, 'success', '+', '•'],
+    cancelled: [text.toolProcessCancelled, 'warning', '!', '×'],
     waiting: [text.waiting, 'warning', '?', '◇'],
     running: [text.toolDispatched, 'accent', '*', '◌'],
     pending: [text.toolPending, 'accent', '.', '·'],
@@ -125,6 +133,7 @@ export function messageView<N extends Node>(
   message: {
     browse?: { key: string; current: boolean };
     traceDepth?: number;
+    detailStatus?: ToolDisplayStatus | null;
     separate?: boolean;
     id: string;
     role: HistorySource['role'] | 'thinking';

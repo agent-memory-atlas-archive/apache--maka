@@ -31,7 +31,8 @@ import type {
 import {
   toolDetailsContract,
   type ToolDetailsProps,
-  type ToolFileContext,
+  type ToolDetailsContext,
+  type ToolDisplayStatus,
 } from '../../shared/contracts.js';
 import { copy } from './locale.js';
 import { sameValue } from '../../shared/value.js';
@@ -93,8 +94,8 @@ function compactPart(id: string) {
 }
 type Part = {
   field: 'arguments' | 'result';
-  path: string[];
-  format: 'text' | 'json';
+  path: string[] | null;
+  format: 'text' | 'json' | null;
   page: HistorySource | null;
   filePath: string | null;
   failed: boolean;
@@ -109,7 +110,7 @@ type State = {
   context: ToolDetailsProps['context'];
   tool: ToolDetailsProps['tool'];
   parts: Record<string, Part>;
-  published: ToolFileContext | null;
+  published: ToolDetailsContext | null;
 };
 function bytes(text: string) {
   let size = 0;
@@ -138,7 +139,7 @@ function add(
   state: State,
   id: string,
   field: Part['field'],
-  path: string[],
+  path: Part['path'],
   format: Part['format'] = 'text',
 ) {
   state.parts[id] ??= {
@@ -213,8 +214,8 @@ function accept(state: State, part: Part, value: AgentHistorySourcePage, positio
   if (
     page.sequence !== sequence ||
     page.field !== part.field ||
-    !sameValue(page.path, part.path) ||
-    page.format !== part.format ||
+    !sameValue(page.path ?? null, part.path) ||
+    (part.format !== null && page.format !== part.format) ||
     page.tool?.toolUseId !== state.tool.toolUseId ||
     page.tool.call?.sequence !== state.tool.call?.sequence ||
     page.tool.call?.presentation !== state.tool.call?.presentation ||
@@ -251,6 +252,10 @@ export function toolDetails<N extends Node>(
     const file = filePresentation(state.tool.call?.presentation);
     const search = kind === 'glob' || kind === 'grep';
     const process = !!kind && !file && !search;
+    if (!kind && props.expanded) {
+      if (state.tool.call) add(state, 'arguments', 'arguments', null, 'json');
+      if (state.tool.result) add(state, 'result', 'result', null, null);
+    }
     if (search && state.tool.call) {
       add(state, 'pattern', 'arguments', ['pattern']);
       if (props.expanded) add(state, 'searchArguments', 'arguments', [], 'json');
@@ -357,6 +362,8 @@ export function toolDetails<N extends Node>(
     const ui = presentation.paint(props.theme),
       text = copy(props.locale);
     const labels: Record<string, string> = {
+      arguments: text.toolArguments,
+      result: text.toolResult,
       path: text.toolFilePath,
       command: text.terminalCommandLabel,
       reference: text.toolProcessRef,
@@ -725,17 +732,41 @@ export function toolDetails<N extends Node>(
       ),
     );
     out.actions = actions;
-    const context: ToolFileContext = {
+    let status: ToolDisplayStatus | null = null;
+    if (scalar(state, 'status') === 'failed') status = 'failed';
+    else if (scalar(state, 'status') === 'completed') {
+      if (!process) status = 'succeeded';
+      else {
+        const processStatus = scalar(state, 'processStatus');
+        const exit = scalar(state, 'exitCode');
+        if (processStatus === 'cancelled') status = 'cancelled';
+        else if (
+          processStatus === 'failed' ||
+          processStatus === 'timed_out' ||
+          (typeof exit === 'number' && exit !== 0)
+        )
+          status = 'failed';
+        else if (processStatus === 'completed' && exit === 0) status = 'succeeded';
+        else if (processStatus === 'starting' || processStatus === 'running') status = 'running';
+        else if (processStatus === 'orphaned') status = 'unknown';
+      }
+    }
+    const context: ToolDetailsContext = {
       ...props.context,
       toolUseId: props.tool.toolUseId,
       presentation: props.tool.call?.presentation ?? null,
       call: props.tool.call?.sequence ?? null,
       result: props.tool.result?.sequence ?? null,
       path: filePath || null,
+      status,
+      expandable:
+        !!kind ||
+        Object.keys(state.parts).length === 0 ||
+        Object.values(state.parts).some((part) => !complete(part) || !!part.page!.text.trim()),
     };
     if (!sameValue(state.published, context)) {
       state.published = context;
-      out.events.push({ name: 'fileContext', value: context });
+      out.events.push({ name: 'context', value: context });
     }
     return out;
   }

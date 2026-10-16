@@ -134,7 +134,7 @@ test('history fragments keep distinct controls and navigate the original tool ev
     }
   };
   for (const [settlement, isError, hint, tone] of [
-    ['returned', false, 'Returned', 'subtle'],
+    ['returned', false, 'Returned', 'success'],
     ['returned', true, 'Tool reported an error', 'error'],
     ['failed', false, 'Tool execution failed', 'error'],
     ['rejected', false, 'Not executed', 'error'],

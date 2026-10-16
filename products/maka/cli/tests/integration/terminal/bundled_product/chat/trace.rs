@@ -89,6 +89,20 @@ fn default_product_trace_preserves_parents_titles_and_inline_evidence() {
         std::fs::read_to_string(workspace.join("trace-visible.txt")).unwrap(),
         "trace-visible"
     );
+    tui.wait_for("Exit code: 7");
+    tui.wait_until(|screen| {
+        let rows: Vec<_> = screen.lines().collect();
+        let failure = rows.iter().position(|line| line.contains("Exit code: 7"));
+        let clock = rows.iter().position(|line| {
+            let label = line.rsplit('│').next().unwrap().trim();
+            label.contains('s')
+                && label
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || matches!(c, ' ' | 's' | 'm' | 'h'))
+        });
+        matches!((failure, clock), (Some(failure), Some(clock)) if clock > failure)
+    });
+    capture(&tui, "running");
     delta(
         &mut socket,
         "命令运行完毕。第二条命令返回退出码 7，仍需处理。",
@@ -126,6 +140,14 @@ fn default_product_trace_preserves_parents_titles_and_inline_evidence() {
         "collapsed input must remain behind its disclosure: {screen}"
     );
     capture(&tui, "collapsed");
+    click(&mut tui, "› Run tools");
+    tui.wait_for("Tool arguments");
+    tui.wait_for("text(await tools.Shell");
+    tui.wait_for("Tool result");
+    tui.wait_until(|screen| !screen.contains("Loading conversation…"));
+    capture(&tui, "orchestration");
+    click(&mut tui, "⌄ Run tools");
+    tui.wait_until(|screen| !screen.contains("text(await tools.Shell"));
     click(&mut tui, "› 检查工作区");
     tui.wait_for("trace-visible.txt");
     tui.wait_for("Exit code: 0");

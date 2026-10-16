@@ -19,6 +19,8 @@
 
 import { createCopy } from '../locale.js';
 import {
+  msg_completed,
+  msg_toolProcessCancelled,
   msg_assistant,
   msg_collapseTool,
   msg_copy,
@@ -65,6 +67,8 @@ import {
 // This feature owns this explicit message catalog; shared messages remain tree-shakeable.
 
 const messages = {
+  completed: msg_completed,
+  toolProcessCancelled: msg_toolProcessCancelled,
   assistant: msg_assistant,
   collapseTool: msg_collapseTool,
   copy: msg_copy,
