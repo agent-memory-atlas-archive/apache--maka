@@ -24,7 +24,7 @@ pub(crate) mod layout;
 mod presentation;
 pub(crate) use presentation::Geometry;
 
-use std::{collections::VecDeque, ops::Range};
+use std::{collections::VecDeque, ops::Range, sync::Arc};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
@@ -82,7 +82,7 @@ pub struct Editor {
     undo: VecDeque<Edit>,
     redo: Vec<Edit>,
     history_bytes: usize,
-    layout: Layout,
+    layout: Arc<Layout>,
     area: Option<Placement>,
     top: usize,
     preferred_column: Option<usize>,
@@ -106,7 +106,7 @@ impl Default for Editor {
             undo: VecDeque::new(),
             redo: Vec::new(),
             history_bytes: 0,
-            layout: Layout::new("", 1),
+            layout: Arc::new(Layout::new("", 1)),
             area: None,
             top: 0,
             preferred_column: None,
@@ -289,7 +289,7 @@ impl Editor {
     }
 
     fn reflow(&mut self) {
-        self.layout = self.make_layout(self.layout.width);
+        self.layout = Arc::new(self.make_layout(self.layout.width));
     }
 
     fn reveal_cursor(&mut self) {

@@ -26,7 +26,7 @@ use unicode_width::UnicodeWidthStr;
 pub(crate) struct Geometry {
     revision: u64,
     selection: Selection,
-    layout: Layout,
+    layout: Arc<Layout>,
     area: Placement,
     top: usize,
     left: usize,
@@ -270,7 +270,7 @@ impl Editor {
         Geometry {
             revision: self.revision,
             selection: self.selection,
-            layout,
+            layout: Arc::new(layout),
             area,
             top,
             left,
