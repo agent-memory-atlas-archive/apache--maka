@@ -39,6 +39,10 @@ use maka_event_log::{
     context::{ContextEvent, HistoryCapture, HistoryCut, LatestMainContext, ModelContextSource},
 };
 use serde_json::json;
+#[path = "archive/context_performance.rs"]
+mod context_performance;
+#[path = "archive/digest.rs"]
+mod digest;
 #[path = "archive/fixtures.rs"]
 mod fixtures;
 #[path = "archive/lineage.rs"]

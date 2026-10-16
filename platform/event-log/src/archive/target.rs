@@ -25,6 +25,20 @@ use maka_agent_facts::tool_call::ToolOrigin;
 use maka_agent_facts::tool_output::DurableToolProjection;
 use sqlx::{Row, SqliteConnection};
 
+// Keep native and copied targets as separate ordered branches. Joining the
+// combined history view makes SQLite sort the entire remainder on every page.
+// The copied branch exposes h.sequence so its membership index supplies order.
+pub(super) const SOURCES: [&str; 2] = [
+    "SELECT e.sequence,e.event_id,e.invocation_id,e.operation_id,e.event_json,
+       json_extract(e.event_json,'$.invocation.session_id') AS owner_session_id,
+       0 AS inherited,NULL AS archive_sequence
+     FROM runtime_events e WHERE e.kind='tool_settled'",
+    "SELECT h.sequence,e.event_id,e.invocation_id,e.operation_id,e.event_json,
+       h.session_id AS owner_session_id,1 AS inherited,h.archive_sequence
+     FROM session_history_members h CROSS JOIN runtime_events e
+     WHERE e.sequence=h.sequence AND e.kind='tool_settled'",
+];
+
 pub(super) struct Target {
     pub sequence: u64,
     pub event_id: String,

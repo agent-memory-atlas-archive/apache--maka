@@ -92,20 +92,24 @@ async fn scan(
         .expect("prune requires a Session");
     let filter = Selection::predicate("t", "?4");
     let archive_filter = Selection::archive_predicate("t", "a", "9223372036854775807", "?4");
-    let query = format!(
-        "SELECT t.sequence,t.event_id,
+    let branches = target::SOURCES.map(|source| format!(
+        "SELECT t.sequence AS sequence,t.event_id,
            COALESCE(length(CAST(json_extract(t.event_json,'$.fact.outcome.model_projection') AS BLOB)),
                     length(CAST(json_extract(t.event_json,'$.fact.outcome.message') AS BLOB)),0)
-         FROM session_history_events t JOIN runtime_events d ON d.invocation_id=t.invocation_id AND d.operation_id=t.operation_id AND d.kind='tool_dispatched'
-         WHERE t.kind='tool_settled' AND t.sequence>?1 AND t.sequence<=?3 AND t.owner_session_id=?2
+         FROM ({source}) t CROSS JOIN runtime_events d
+         WHERE d.invocation_id=t.invocation_id AND d.operation_id=t.operation_id AND d.kind='tool_dispatched'
+           AND t.sequence>?1 AND t.sequence<=?3 AND t.owner_session_id=?2
            AND {filter} AND json_extract(d.event_json,'$.fact.call.origin.kind')='provider'
-           AND NOT EXISTS(SELECT 1 FROM runtime_events a WHERE a.kind='tool_result_archived' AND CAST(json_extract(a.event_json,'$.fact.placeholder.identity.runtime_event_id') AS TEXT)=t.event_id AND {archive_filter})
-         ORDER BY t.sequence LIMIT ?5"
+           AND NOT EXISTS(SELECT 1 FROM runtime_events a WHERE a.kind='tool_result_archived' AND CAST(json_extract(a.event_json,'$.fact.placeholder.identity.runtime_event_id') AS TEXT)=t.event_id AND {archive_filter})"
+    ));
+    let query = format!(
+        "{} ORDER BY sequence LIMIT ?5",
+        branches.join(" UNION ALL ")
     );
     let mut after = cursor.after_sequence as i64;
     let mut used = 0_usize;
-    // Fetch bounded metadata once: the union's ordering must not be repeated
-    // for every candidate. Keep the cursor at the last admitted result.
+    // Merge the indexed branches into bounded metadata, stopping at the page.
+    // Keep the cursor at the last admitted result.
     let rows: Vec<(i64, String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(query))
         .bind(after)
         .bind(session)

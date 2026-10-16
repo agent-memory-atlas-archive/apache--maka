@@ -39,16 +39,18 @@ def records(kind, output):
                 for m in PRUNE.finditer(output)]
     result = []
     for line in output.splitlines():
-        if line.startswith('{"benchmark":'):
+        if line.startswith('{'):
             row = json.loads(line)
-            if row.get("benchmark") == "engine_long_history":
+            if row.get("benchmark") in ("engine_long_history", "archive_context") and not row.get("summary"):
+                if kind == "context":
+                    row["history_turns"] = row["archived_count"]
                 result.append(row)
     return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--kind", choices=["prune", "engine"], required=True)
+    parser.add_argument("--kind", choices=["prune", "engine", "context"], required=True)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -62,13 +64,15 @@ def main():
         parser.error("--checkpoint applies to the engine harness")
     args.output.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
-    prefix = "MAKA_PRUNE_BENCH" if args.kind == "prune" else "MAKA_ENGINE_PERF"
-    environment[prefix + "_TURNS"] = args.sizes
+    prefix = {"prune": "MAKA_PRUNE_BENCH", "engine": "MAKA_ENGINE_PERF",
+              "context": "MAKA_CONTEXT_BENCH"}[args.kind]
+    environment[prefix + ("_ARCHIVES" if args.kind == "context" else "_TURNS")] = args.sizes
     environment[prefix + "_REPETITIONS"] = "1"
     if args.kind == "engine":
         environment[prefix + "_CHECKPOINT"] = str(int(args.checkpoint))
-    test = ("performance::long_history_prune" if args.kind == "prune"
-            else "long_task_perf::engine_long_history")
+    test = {"prune": "performance::long_history_prune",
+            "engine": "long_task_perf::engine_long_history",
+            "context": "context_performance::archive_heavy_context"}[args.kind]
     evidence = {"kind": args.kind, "sizes": args.sizes, "checkpoint": args.checkpoint,
                 "runs": args.runs, "cpu_count": os.cpu_count(),
                 "load_average": list(os.getloadavg()),
@@ -92,7 +96,9 @@ def main():
                 result_file.write_text(json.dumps(evidence, indent=2) + "\n")
                 raise SystemExit(f"benchmark failed; inspect {output}")
             work = [{key: value for key, value in row.items()
-                     if not key.endswith("_ms") and key != "repetition"} for row in rows]
+                     if not key.endswith("_ms") and key not in
+                     ("repetition", "database_bytes", "database_wal_bytes", "fixture_cached")}
+                    for row in rows]
             if expected_work is None:
                 expected_work = work
             elif work != expected_work:
@@ -112,7 +118,7 @@ def main():
     summary = []
     for key, rows in groups.items():
         metrics = {}
-        for metric in ["prune_ms", "request_receipt_ms", "engine_completion_ms"]:
+        for metric in ["prune_ms", "context_ms", "request_receipt_ms", "engine_completion_ms"]:
             if metric in rows[0]:
                 values = [row[metric] for row in rows]
                 metrics[metric] = dict(n=len(values), median=statistics.median(values),

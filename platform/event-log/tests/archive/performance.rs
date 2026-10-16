@@ -28,6 +28,7 @@ use std::time::Instant;
 // not end-to-end pruning; no machine-dependent timing assertion is made.
 #[tokio::test]
 #[ignore = "release performance regression harness; creates substantial durable history"]
+#[allow(clippy::assertions_on_constants)] // Compile in debug; reject only execution.
 async fn long_history_prune() {
     assert!(!cfg!(debug_assertions), "run this benchmark with --release");
     let sizes = std::env::var("MAKA_PRUNE_BENCH_TURNS").unwrap_or("250,1000".into());

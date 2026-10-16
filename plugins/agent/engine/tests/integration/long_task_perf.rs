@@ -23,6 +23,9 @@
 //! MAKA_ENGINE_PERF_CHECKPOINT=1 adds a real compact Run before each timed Run.
 //! MAKA_ENGINE_PERF_TOOL_EVERY=20 MAKA_ENGINE_PERF_TOOLS_PER_TURN=1 models sparse tools.
 //! Set those to 1 and 8 for dense stress; MAKA_ENGINE_PERF_RESULT_BYTES=128 controls payloads.
+//! Optional MAKA_ENGINE_PERF_FIXTURE_DIR=/tmp/maka-perf and MAKA_ENGINE_PERF_FIXTURE_TAG=<revision>
+//! cache closed pristine databases, copied for every sample. Use separate tags/directories per build.
+//! Checkpoint histories compact every 1000 turns; raw requests retain the HTTP fixture's 16 MiB limit.
 use crate::support::{context as fixture, image_projection::identity};
 use maka_agent_facts::{
     context::ModelPurpose,
@@ -33,8 +36,10 @@ use maka_agent_facts::{
     tool_output::ToolOutput,
 };
 use maka_event_log::EventLog;
-use serde_json::json;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
@@ -51,14 +56,14 @@ fn setting(name: &str, default: usize) -> usize {
 // Batch each closed turn, keeping fixture setup out of the measured interval.
 async fn seed(
     log: &EventLog,
-    turns: usize,
+    range: std::ops::Range<usize>,
     result_bytes: usize,
     tool_every: usize,
     tools_per_turn: usize,
 ) -> (usize, usize) {
     let mut event_count = 0;
     let mut tool_results = 0;
-    for turn in 0..turns {
+    for turn in range {
         let invocation = identity(&format!("history-{turn}"));
         let step = format!("step-{turn}");
         let tool_count = if turn % tool_every == 0 {
@@ -97,7 +102,7 @@ async fn seed(
                 source_scope: LogScope::Session {
                     id: "session".into(),
                 },
-                source_high_water: (event_count + 1) as u64,
+                source_high_water: *log.subscribe_commits().borrow() + 1,
                 source_digest: "legacy".into(),
                 input_digest: "legacy".into(),
                 route_identity: "legacy".into(),
@@ -211,8 +216,120 @@ async fn seed(
     (event_count, tool_results)
 }
 
+// Only fixture setup uses compaction; never include it in the measured Run.
+async fn compact(worker: &maka_agent_engine::Engine, log: &EventLog, through_turn: usize) {
+    println!(
+        "{}",
+        json!({"phase":"compact_start", "through_turn":through_turn})
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let request = fixture::read_request(&mut socket).await;
+        assert!(request["messages"].as_array().unwrap().len() > 1);
+        fixture::respond(&mut socket, fixture::SUMMARY, "stop").await;
+    });
+    let before = *log.subscribe_commits().borrow();
+    let invocation = tokio::time::timeout(
+        Duration::from_secs(300),
+        worker.run(
+            fixture::input(&base, &format!("compact-{through_turn}"), true),
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .expect("compact timed out")
+    .expect("compact failed");
+    server.await.unwrap();
+    let through = *log.subscribe_commits().borrow();
+    let page = log
+        .session_events("session", before, through, 512, 1024 * 1024)
+        .await
+        .unwrap();
+    assert!(page.next_after.is_none(), "unexpectedly large compact Run");
+    assert!(
+        page.events
+            .iter()
+            .any(|event| event.event.invocation == invocation
+                && matches!(event.event.fact, Fact::ContextCheckpointRecorded { .. }))
+    );
+    println!(
+        "{}",
+        json!({"phase":"compact_done", "through_turn":through_turn})
+    );
+}
+
+async fn prepare(
+    log: &Arc<EventLog>,
+    turns: usize,
+    result_bytes: usize,
+    tool_every: usize,
+    tools_per_turn: usize,
+    checkpoint: bool,
+) -> (usize, usize) {
+    println!(
+        "{}",
+        json!({"phase":"seed_start", "history_turns":turns, "checkpoint":checkpoint})
+    );
+    let started = Instant::now();
+    let worker = fixture::engine(log.clone());
+    let mut counts = (0, 0);
+    for start in (0..turns).step_by(1000) {
+        let end = (start + 1000).min(turns);
+        let batch = seed(log, start..end, result_bytes, tool_every, tools_per_turn).await;
+        counts.0 += batch.0;
+        counts.1 += batch.1;
+        if checkpoint {
+            compact(&worker, log, end).await;
+        }
+        println!(
+            "{}",
+            json!({"phase":"seed_progress", "history_turns":end, "history_events":counts.0})
+        );
+    }
+    worker.drain().await;
+    println!(
+        "{}",
+        json!({"phase":"seed_done", "history_turns":turns, "setup_ms":started.elapsed().as_secs_f64()*1000.0})
+    );
+    counts
+}
+
+fn cache_directory() -> Option<PathBuf> {
+    let directory = PathBuf::from(std::env::var_os("MAKA_ENGINE_PERF_FIXTURE_DIR")?);
+    // Never accept an application-data location for benchmark fixture caches.
+    let allowed = [std::env::temp_dir(), PathBuf::from("/tmp")];
+    assert!(
+        allowed.iter().any(|root| directory.starts_with(root)),
+        "fixture directory must be under a temporary directory"
+    );
+    std::fs::create_dir_all(&directory).unwrap();
+    let directory = directory.canonicalize().unwrap();
+    assert!(
+        allowed
+            .iter()
+            .filter_map(|root| root.canonicalize().ok())
+            .any(|root| directory.starts_with(root)),
+        "fixture directory symlink escapes temporary storage"
+    );
+    Some(directory)
+}
+
+fn copy_new(source: &Path, destination: &Path) {
+    let mut source = std::fs::File::open(source).unwrap();
+    let mut destination = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .unwrap();
+    std::io::copy(&mut source, &mut destination).unwrap();
+    destination.sync_all().unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "release performance harness: creates disposable long histories"]
+#[allow(clippy::assertions_on_constants)] // Compile in debug; reject only execution.
 async fn engine_long_history() {
     assert!(
         !cfg!(debug_assertions),
@@ -230,42 +347,129 @@ async fn engine_long_history() {
     assert!(tool_every > 0 && tools_per_turn > 0);
     let checkpoint = setting("MAKA_ENGINE_PERF_CHECKPOINT", 0) == 1;
     assert!(repetitions > 0 && turns.iter().all(|turns| *turns > 0));
+    let cache = cache_directory();
+    let tag = cache.as_ref().map(|_| {
+        std::env::var("MAKA_ENGINE_PERF_FIXTURE_TAG")
+            .expect("cached fixtures require an explicit revision tag")
+    });
+    let source_fingerprint = format!("{:x}", Sha256::digest(include_bytes!("long_task_perf.rs")));
     for turns in turns {
-        for repetition in 0..repetitions {
-            // Fresh store/engine per sample; seeding and optional compaction are untimed.
-            let directory = tempfile::tempdir().unwrap();
-            let log = Arc::new(
-                EventLog::open(&directory.path().join("events.sqlite"))
-                    .await
-                    .unwrap(),
+        let settings = json!({"turns":turns, "result_bytes":result_bytes, "tool_every":tool_every,
+            "tools_per_turn":tools_per_turn, "checkpoint":checkpoint, "fixture_tag":tag,
+            "source_fingerprint":source_fingerprint, "compact_every":1000});
+        let cache_paths = cache.as_ref().map(|directory| {
+            let fingerprint = format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&settings).unwrap())
             );
-            let (history_events, history_tool_results) =
-                seed(&log, turns, result_bytes, tool_every, tools_per_turn).await;
-            let worker = fixture::engine(log.clone());
-            if checkpoint {
-                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let base = format!("http://{}/v1", listener.local_addr().unwrap());
-                let server = tokio::spawn(async move {
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    let request = fixture::read_request(&mut socket).await;
-                    assert!(request["messages"].as_array().unwrap().len() > 1);
-                    fixture::respond(&mut socket, fixture::SUMMARY, "stop").await;
-                });
-                tokio::time::timeout(
-                    Duration::from_secs(300),
-                    worker.run(
-                        fixture::input(&base, "compact", true),
-                        CancellationToken::new(),
-                    ),
+            let stem = format!(
+                "engine-t{turns}-b{result_bytes}-e{tool_every}-n{tools_per_turn}-c{}-{fingerprint}",
+                usize::from(checkpoint)
+            );
+            (
+                directory.join(format!("{stem}.sqlite")),
+                directory.join(format!("{stem}.json")),
+            )
+        });
+        if let Some((database, metadata)) = &cache_paths {
+            if !database.exists() && !metadata.exists() {
+                let staging = tempfile::tempdir_in(cache.as_ref().unwrap()).unwrap();
+                let staging_database = staging.path().join("events.sqlite");
+                let log = Arc::new(EventLog::open(&staging_database).await.unwrap());
+                let (events, tools) = prepare(
+                    &log,
+                    turns,
+                    result_bytes,
+                    tool_every,
+                    tools_per_turn,
+                    checkpoint,
+                )
+                .await;
+                let high_water = *log.subscribe_commits().borrow();
+                Arc::try_unwrap(log)
+                    .ok()
+                    .expect("fixture still has owners")
+                    .close()
+                    .await
+                    .unwrap();
+                copy_new(&staging_database, database);
+                let record = json!({"settings":settings, "history_events":events, "history_tool_results":tools, "high_water":high_water});
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(metadata)
+                    .unwrap();
+                file.write_all(serde_json::to_string(&record).unwrap().as_bytes())
+                    .unwrap();
+                file.sync_all().unwrap();
+            }
+            assert!(
+                database.is_file() && metadata.is_file(),
+                "incomplete fixture cache; use a fresh cache directory"
+            );
+            let record: Value = serde_json::from_slice(&std::fs::read(metadata).unwrap()).unwrap();
+            assert_eq!(record["settings"], settings, "fixture settings mismatch");
+        }
+        for repetition in 0..repetitions {
+            let directory = tempfile::tempdir().unwrap();
+            let database = directory.path().join("events.sqlite");
+            let cached = cache_paths.as_ref().map(|(source, metadata)| {
+                println!("{}", json!({"phase":"fixture_copy_start", "history_turns":turns, "repetition":repetition}));
+                copy_new(source, &database);
+                let record: Value = serde_json::from_slice(&std::fs::read(metadata).unwrap()).unwrap();
+                println!("{}", json!({"phase":"fixture_copy_done", "history_turns":turns, "repetition":repetition}));
+                record
+            });
+            let open_started = Instant::now();
+            let log = Arc::new(
+                EventLog::open(&database)
+                    .await
+                    .expect("fixture store open/schema validation failed"),
+            );
+            let store_open_ms = open_started.elapsed().as_secs_f64() * 1000.0;
+            let (history_events, history_tool_results) = if let Some(record) = cached {
+                assert_eq!(
+                    *log.subscribe_commits().borrow(),
+                    record["high_water"].as_u64().unwrap()
+                );
+                (
+                    record["history_events"].as_u64().unwrap() as usize,
+                    record["history_tool_results"].as_u64().unwrap() as usize,
+                )
+            } else {
+                prepare(
+                    &log,
+                    turns,
+                    result_bytes,
+                    tool_every,
+                    tools_per_turn,
+                    checkpoint,
                 )
                 .await
-                .expect("compact timed out")
-                .expect("compact failed");
-                server.await.unwrap();
-            }
+            };
+            let (last, _) = log
+                .invocation_boundary("session", &format!("invocation-history-{}", turns - 1))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                last.state.terminal_outcome(),
+                Some(InvocationOutcome::Completed)
+            ));
+            let database_bytes = std::fs::metadata(&database).unwrap().len();
+            let database_wal_bytes =
+                std::fs::metadata(database.with_file_name("events.sqlite-wal"))
+                    .map_or(0, |metadata| metadata.len());
+            let worker = fixture::engine(log.clone());
+            let before = *log.subscribe_commits().borrow();
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}/v1", listener.local_addr().unwrap());
             let input = fixture::input(&base, "measured", false);
+            println!(
+                "{}",
+                json!({"phase":"measure_start", "history_turns":turns, "checkpoint":checkpoint, "repetition":repetition})
+            );
             let started = Instant::now();
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
@@ -304,39 +508,38 @@ async fn engine_long_history() {
             .expect("engine Run timed out")
             .expect("engine Run failed");
             let completion_ms = started.elapsed().as_secs_f64() * 1000.0;
+            println!(
+                "{}",
+                json!({"phase":"measure_done", "history_turns":turns, "repetition":repetition})
+            );
             let (receipt_ms, request_bytes, message_bytes, message_count, tool_message_count) =
                 server.await.unwrap();
             worker.drain().await;
             // Verification deliberately outside measured interval. run() success alone is insufficient.
-            let prefix = log
-                .prefix(history_events * 2 + 100, 256 * 1024 * 1024)
+            let (boundary, _) = log
+                .invocation_boundary("session", &invocation.invocation_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                boundary.state.terminal_outcome(),
+                Some(InvocationOutcome::Completed)
+            ));
+            let through = *log.subscribe_commits().borrow();
+            let page = log
+                .session_events("session", before, through, 512, 1024 * 1024)
                 .await
                 .unwrap();
-            let measured: Vec<_> = prefix
-                .events
-                .iter()
-                .filter(|event| event.event.invocation.invocation_id == invocation.invocation_id)
-                .collect();
-            assert!(measured.iter().any(|event| matches!(
-                event.event.fact,
-                Fact::InvocationEnded {
-                    outcome: InvocationOutcome::Completed
-                }
-            )));
-            assert!(measured.iter().any(|event| {
-                match &event.event.fact {
-                    Fact::ModelCompleted { output, .. } => serde_json::to_string(output)
-                        .unwrap()
-                        .contains("benchmark-done"),
-                    _ => false,
-                }
+            assert!(page.next_after.is_none(), "unexpectedly large measured Run");
+            assert!(page.events.iter().any(|event| {
+                event.event.invocation == invocation
+                    && match &event.event.fact {
+                        Fact::ModelCompleted { output, .. } => serde_json::to_string(output)
+                            .unwrap()
+                            .contains("benchmark-done"),
+                        _ => false,
+                    }
             }));
-            if checkpoint {
-                assert!(prefix.events.iter().any(|event| matches!(
-                    event.event.fact,
-                    Fact::ContextCheckpointRecorded { .. }
-                )));
-            }
             println!(
                 "{}",
                 json!({
@@ -345,6 +548,7 @@ async fn engine_long_history() {
                     "history_tool_results":history_tool_results, "tool_every":tool_every, "tools_per_turn":tools_per_turn, "tool_result_content_bytes":result_bytes,
                     "repetition":repetition, "request_receipt_ms":receipt_ms,
                     "engine_completion_ms":completion_ms, "request_bytes":request_bytes,
+                    "store_open_ms":store_open_ms, "database_bytes":database_bytes, "database_wal_bytes":database_wal_bytes, "fixture_cached":cache.is_some(),
                     "request_messages":message_count, "request_tool_messages":tool_message_count,
                     // A wire-size proxy, not model tokenizer output or fake server's fixed usage.
                     "message_bytes_div_3_proxy":message_bytes.div_ceil(3),
