@@ -375,6 +375,7 @@ function settingsComposition(
         'assistant-preferences',
         {},
         {
+          agent: [remote('agent', 'agent')],
           settings: [remote('settings', 'Settings')],
           input: [local('input', 'TextInput')],
           editor: [local('editor', 'Textarea')],
@@ -706,7 +707,12 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
   ];
   if (configuration.agent.skillLibrary != null && configuration.agent.skillLibrary !== 'skills')
     throw new Error('Skill input preparation selects the skills Library import');
-  const skillCalls = [...skillMethods, ...(configuration.agent.skillLibrary ? ['prepare'] : [])];
+  const skillCalls = [
+    ...new Set([
+      ...skillMethods,
+      ...(configuration.agent.skillLibrary ? ['prepare', 'search'] : []),
+    ]),
+  ];
   if (skillCalls.length && !configuration.skills)
     throw new Error('Skill tools require explicitly selected skill collections');
   if (skillMethods.some((method) => method !== 'search' && method !== 'load'))

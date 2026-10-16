@@ -206,6 +206,10 @@ async fn standard_skills_follow_each_actual_session_for_preparation_and_model_re
             write(&path.join(".agents/skills"),"review",instructions);
             let created=f.mutation(2,"create",json!({"title":"Project skill","labels":[],"workspace":{"kind":"directory","selection":roots["roots"][index]["selection"]}}),Uuid::new_v4()).await.unwrap();
             let session=created["session"]["id"].as_str().unwrap();
+            let candidates=f.query("skillCandidates",json!({"sessionId":session,"backend":{"kind":"model","model":f.selection().await},"query":""})).await.unwrap();
+            assert_eq!(candidates["skills"].as_array().unwrap().len(),1,"{candidates}");
+            assert_eq!(candidates["skills"][0]["invocation"],"/skill:review");
+            assert!(candidates["skills"][0]["reference"].as_str().unwrap().starts_with("project:"));
             let sent=f.mutation(2,"send",json!({"sessionId":session,"message":"/skill:review","model":f.selection().await}),Uuid::new_v4()).await.unwrap();
             assert_eq!(sent["kind"],"started","{sent}");
             let (mut socket,_)=listener.accept().await.unwrap();
@@ -219,6 +223,8 @@ async fn standard_skills_follow_each_actual_session_for_preparation_and_model_re
             let (mut socket,catalog)=next(&listener).await;
             assert_eq!(catalog["totalEligible"],1,"{catalog}");
             let reference=catalog["matches"][0]["ref"].as_str().unwrap().to_owned();
+            assert_eq!(candidates["skills"][0]["reference"],reference);
+            assert_eq!(candidates["revision"],catalog["revision"]);
             assert!(reference.starts_with("project:")); references.push(reference);
             tool(&mut socket,"LoadGuide",json!({"name":"review","revision":catalog["revision"]})).await;
             let (mut socket,loaded)=next(&listener).await;
@@ -229,4 +235,81 @@ async fn standard_skills_follow_each_actual_session_for_preparation_and_model_re
         assert_ne!(references[0],references[1]);
         f.app.shutdown().await.unwrap(); f.config.shutdown().await.unwrap();
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn skill_candidates_filter_actual_tools_and_reject_foreign_sessions() {
+    let home = tempfile::tempdir().unwrap();
+    for (name, required) in [("visible", "LoadGuide"), ("incompatible", "Superuser")] {
+        let root = home.path().join(name);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("SKILL.md"), format!("---\nname: {name}\ndescription: Review changes\nrequired-tools: {required}\n---\nInstructions")).unwrap();
+    }
+    let setup = service_tools::Setup::skill_preparation(home.path().to_owned(), true);
+    let f = Fixture::with_services("http://127.0.0.1:9/v1", None, None, Some(setup)).await;
+    let session = f.create("Candidates").await;
+    let mut input = json!({"sessionId":session,"backend":{"kind":"model","model":f.selection().await},"query":""});
+    let page = f.query("skillCandidates", input.clone()).await.unwrap();
+    assert_eq!(page["skills"].as_array().unwrap().len(), 1, "{page}");
+    assert_eq!(page["skills"][0]["invocation"], "/skill:visible");
+    let executor = f.query("skillCandidates",json!({"sessionId":session,"backend":{"kind":"executor","selection":{"executor":"external","settings":{}}},"query":""})).await.unwrap();
+    assert_eq!(executor["skills"], json!([]));
+    assert!(executor["revision"].is_null());
+    let mut restricted = f.create_input("Restricted").await;
+    restricted["tools"] = json!([]);
+    let restricted = f
+        .mutation(2, "create", restricted, Uuid::new_v4())
+        .await
+        .unwrap();
+    let restricted = f
+        .query(
+            "skillCandidates",
+            json!({"sessionId":restricted["session"]["id"],"backend":input["backend"],"query":""}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(restricted["skills"], json!([]));
+    input["query"] = json!("incompatible");
+    assert_eq!(
+        f.query("skillCandidates", input.clone()).await.unwrap()["skills"],
+        json!([])
+    );
+    input["query"] = json!("x".repeat(4097));
+    assert!(f.query("skillCandidates", input.clone()).await.is_err());
+    input["query"] = json!("");
+    input["backend"]["model"]["connectionId"] = json!("missing");
+    assert_eq!(
+        f.query("skillCandidates", input.clone()).await.unwrap()["skills"],
+        json!([])
+    );
+    input["sessionId"] = json!("foreign_session");
+    assert!(
+        f.query("skillCandidates", input)
+            .await
+            .unwrap_err()
+            .contains("agent_session_unavailable")
+    );
+    f.app.shutdown().await.unwrap();
+    f.config.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn skill_candidates_work_with_preparation_only_library() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("review");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("SKILL.md"),
+        "---\nname: Review changes\ndescription: Review\n---\nInstructions",
+    )
+    .unwrap();
+    let setup = service_tools::Setup::skill_preparation(home.path().to_owned(), false);
+    let f = Fixture::with_services("http://127.0.0.1:9/v1", None, None, Some(setup)).await;
+    let session = f.create("Candidates").await;
+    let page = f.query("skillCandidates",json!({"sessionId":session,"backend":{"kind":"model","model":f.selection().await},"query":""})).await.unwrap();
+    assert_eq!(page["skills"].as_array().unwrap().len(), 1, "{page}");
+    assert_eq!(page["skills"][0]["name"], "Review changes");
+    assert_eq!(page["skills"][0]["invocation"], "/skill:review");
+    f.app.shutdown().await.unwrap();
+    f.config.shutdown().await.unwrap();
 }

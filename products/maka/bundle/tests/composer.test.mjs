@@ -571,6 +571,91 @@ for (const target of ['tui', 'desktop']) {
       },
       c.out.actions.find((item) => item.key.startsWith('prefix-')).key,
     );
+  const skill = {
+    reference: 'workspace:review',
+    name: 'review',
+    description: 'Review current changes',
+    invocation: '/skill:review-id',
+  };
+  test(`${target} visible skills use agent authority and click, Enter and Tab insert invocation without sending`, async () => {
+    for (const selection of ['click', 'enter', 'tab']) {
+      const c = await client(target);
+      c.ready('/rev');
+      resolvePrefix(c, '/rev');
+      const search = c.out.actions.find((action) => action.method === 'skillCandidates');
+      assert.deepEqual(search.input, { sessionId: 'session', backend, query: 'rev' });
+      c.reply(
+        { status: 'succeeded', value: { revision: 'catalog-1', skills: [skill] } },
+        search.key,
+      );
+      assert.ok(has(c, 'slash:skill:workspace:review'));
+      assert.ok(JSON.stringify(c.out.frame.view).includes(skill.description));
+      if (selection === 'click') c.raw('slash:skill:workspace:review');
+      else c.emit('navigated', { key: selection, observation: observed('/rev') });
+      assert.deepEqual(c.editor().command.edit, { kind: 'replace', text: '/skill:review-id ' });
+      assert.deepEqual(c.out.events, []);
+      assert.equal(
+        c.out.actions.some((action) => ['send', 'execute'].includes(action.method)),
+        false,
+      );
+    }
+    const c = await client(target);
+    c.ready('/skill:review-id');
+    resolvePrefix(c, '/skill:review-id');
+    assert.equal(c.editor().navigation, null);
+    c.send('/skill:review-id');
+    assert.equal(c.out.actions[0].method, 'send');
+    assert.equal(c.out.actions[0].input.message, '/skill:review-id');
+  });
+  test(`${target} failed skill searches preserve commands and retry when reopened`, async () => {
+    const c = await client(target);
+    c.ready('/');
+    resolvePrefix(c, '/');
+    const search = c.out.actions.find((action) => action.method === 'skillCandidates');
+    c.reply({ status: 'failed', error: 'unavailable' }, search.key);
+    assert.ok(has(c, 'slash:create'));
+    assert.equal(c.editor().command, null);
+    c.emit('navigated', { key: 'escape', observation: observed('/') });
+    c.emit('changed', observed('/', 2));
+    resolvePrefix(c, '/', 2);
+    assert.ok(c.out.actions.some((action) => action.method === 'skillCandidates'));
+  });
+  test(`${target} skill results cannot cross query, session, data source, backend or visibility context`, async () => {
+    for (const change of [
+      'query',
+      'session',
+      'dataSource',
+      'backend',
+      'skillContext',
+      'disabled',
+    ]) {
+      const c = await client(target);
+      c.ready('/rev');
+      resolvePrefix(c, '/rev');
+      const search = c.out.actions.find((action) => action.method === 'skillCandidates');
+      if (change === 'query') c.emit('changed', observed('/new', 2));
+      else {
+        if (change === 'session') c.props.context = 'other-session';
+        if (change === 'dataSource')
+          c.props.dataSource = {
+            ...dataSource,
+            deployment: '00000000-0000-0000-0000-000000000099',
+          };
+        if (change === 'backend')
+          c.props.backend = { ...backend, model: { ...backend.model, modelId: 'other' } };
+        if (change === 'skillContext') c.props.skillContext = 'changed workspace or tools';
+        if (change === 'disabled') c.props.enabled = false;
+        c.update();
+      }
+      c.reply(
+        { status: 'succeeded', value: { revision: 'catalog-1', skills: [skill] } },
+        search.key,
+      );
+      assert.equal(has(c, 'slash:skill:workspace:review'), false, change);
+      c.raw('slash:skill:workspace:review');
+      assert.equal(c.out.events.length, 0, change);
+    }
+  });
   test(`${target} slash menu filters aliases and localized labels and keeps native text out of state`, async () => {
     const c = await client(target);
     c.ready('/');

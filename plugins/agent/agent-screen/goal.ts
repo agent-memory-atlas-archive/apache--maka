@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   AgentGoalChange,
@@ -413,7 +414,11 @@ export function goalView<N extends Node>(
           : presentation.slot(
               'goal-field-' + name,
               'input',
-              { ...common, appearance: theme.input } satisfies InputProps,
+              {
+                menu: editorMenu(theme, locale),
+                ...common,
+                appearance: theme.input,
+              } satisfies InputProps,
               { changed: 'changed' },
             ),
       ],

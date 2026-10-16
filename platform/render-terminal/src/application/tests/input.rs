@@ -1044,3 +1044,85 @@ fn closing_a_surface_waits_for_its_native_child_without_reporting_cleanup_failur
     assert!(tui.can_shutdown());
     tui.shutdown_settled().unwrap();
 }
+
+#[test]
+fn ordinary_inputs_ctrl_v_normalizes_text_and_keeps_secret_menu_private() {
+    for secret in [false, true] {
+        let (_runtime, mut tui) = input_presenter(secret, false);
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"menu":support::brand_appearance()["menu"],"terminalPaste":"spaces"}),
+        );
+        draw(&mut tui, 50, 24);
+        tui.input_settled(Event::Paste("replace me".into()))
+            .unwrap();
+        tui.input_settled(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        let target = tui.focus.clone().unwrap();
+        tui.resources
+            .owners
+            .get_mut(&target.mount.id())
+            .unwrap()
+            .state
+            .downcast_mut::<super::super::editor::Owner>()
+            .unwrap()
+            .clipboard
+            .as_mut()
+            .unwrap()
+            .set_clipboard_text("one\r\ntwo\t三".into());
+        tui.input_settled(Event::Key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            tui.pump_settled().unwrap();
+            let owner = tui.resources.owners[&target.mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap();
+            if owner.editor.text() == "one two 三" {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        tui.input_settled(Event::Key(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        draw(&mut tui, 50, 24);
+        let (_, _, enabled) = tui.resources.editing_menu(&target).unwrap().unwrap();
+        assert_eq!(enabled, [!secret, !secret, true, true]);
+        dispatch(
+            &mut tui,
+            "configure",
+            json!({"menu":support::brand_appearance()["menu"],"readOnly":true}),
+        );
+        draw(&mut tui, 50, 24);
+        let target = tui.focus.clone().unwrap();
+        let (_, _, enabled) = tui.resources.editing_menu(&target).unwrap().unwrap();
+        assert_eq!(enabled, [!secret, false, false, true]);
+        tui.input_settled(Event::Key(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL,
+        )))
+        .unwrap();
+        assert_eq!(
+            tui.resources.owners[&target.mount.id()]
+                .state
+                .downcast_ref::<super::super::editor::Owner>()
+                .unwrap()
+                .editor
+                .text(),
+            "one two 三"
+        );
+        close(&mut tui);
+    }
+}

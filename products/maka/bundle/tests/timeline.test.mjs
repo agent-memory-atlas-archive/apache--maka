@@ -572,3 +572,114 @@ test('trace keeps visible ancestry and keyboard disclosure across bounded histor
   assert.equal(find('indent-nested').layout.basis, 4);
   assert.equal(find('toggle-shell').label, '⌄ shell');
 });
+
+test('user-to-response spacing is one plain row above the response, not part of the user band', () => {
+  const message = (role, index) => ({
+    id: `${role}-${index}`,
+    contentKey: `${role}-${index}`,
+    role,
+    text: 'Message',
+    timestamp: null,
+    source: index + 1,
+    image: false,
+    continued: false,
+    tool:
+      role === 'tool_call'
+        ? {
+            toolUseId: `${role}-${index}`,
+            call: {
+              sequence: index + 1,
+              name: 'Read',
+              title: null,
+              presentation: null,
+              pending: false,
+              dispatched: true,
+              ancestorToolUseIds: [],
+            },
+            result: null,
+          }
+        : null,
+  });
+  for (const roles of [
+    ['user', 'assistant'],
+    ['user', 'thinking', 'assistant'],
+    ['user', 'tool_call', 'tool_call', 'assistant'],
+    ['user', 'user', 'assistant'],
+  ]) {
+    const props = {
+      theme,
+      locale: 'en',
+      copyRequest: null,
+      browse: null,
+      timings: [],
+      markReadEnabled: false,
+      toolContext: { sessionId: 'session', through: 20 },
+      waitingTools: [],
+      liveTools: [],
+      source: null,
+      search: null,
+      loading: false,
+      older: false,
+      newer: false,
+      latest: false,
+      landing: { sequence: 0, edge: 'end' },
+      live: false,
+      messages: roles.map(message),
+    };
+    const out = component.mount(props, {});
+    const paths = [];
+    const visit = (node, ancestors = []) => {
+      if (!node || typeof node !== 'object') return;
+      const path = [...ancestors, node];
+      if (node.key) paths.push(path);
+      for (const child of Object.values(node)) {
+        if (Array.isArray(child)) child.forEach((value) => visit(value, path));
+        else visit(child, path);
+      }
+    };
+    visit(out.frame.view);
+    const find = (key) => paths.find((path) => path.at(-1).key === key);
+    const responseIndex = roles.findIndex((role) => role !== 'user');
+    const responseId = props.messages[responseIndex].id;
+    const userId = props.messages[responseIndex - 1].id;
+    const userCard = find('message-card-' + userId).at(-1);
+    const responseCard = (find('message-card-' + responseId) ?? find('message-' + responseId)).at(
+      -1,
+    );
+    const gap = find('message-space-before-' + responseId);
+    assert.ok(gap, `missing response gap: ${roles}`);
+    const response = find('message-' + responseId).at(-1);
+    assert.equal(response.children[0], gap.at(-1));
+    const content = response.children[1];
+    assert.equal(content.kind, 'context_menu');
+    assert.equal(content.background, responseCard);
+    assert.ok(!gap.includes(content), 'the gap must stay outside the menu trigger rectangle');
+    assert.ok(
+      !responseCard.children[0].key.startsWith('message-space-'),
+      'the menu trigger must align with the first content row',
+    );
+    const keys = paths.map((path) => path.at(-1).key);
+    assert.equal(new Set(keys).size, keys.length, 'wrapping must retain unique scene keys');
+    assert.equal(gap.at(-1).layout.basis, 1);
+    assert.ok(!find('message-space-' + userId), 'the previous user must not retain another gap');
+    assert.notEqual(userCard.background, undefined, 'the user body retains its colored band');
+    assert.ok(
+      gap.every((node) => node.background === undefined || node.background !== userCard.background),
+      'the response gap must not inherit the user background',
+    );
+    assert.equal(
+      find('band-bottom-' + userId).at(-1).layout.basis,
+      1,
+      'intrinsic user padding remains unchanged',
+    );
+    const separators = paths.filter((path) => path.at(-1).key.startsWith('message-space-'));
+    const expected = roles
+      .slice(1)
+      .filter((role, index) => !(role === 'tool_call' && roles[index] === 'tool_call')).length;
+    assert.equal(
+      separators.reduce((rows, path) => rows + path.at(-1).layout.basis, 0),
+      expected,
+      'moving the gap must not add rows or spread adjacent tool calls apart',
+    );
+  }
+});

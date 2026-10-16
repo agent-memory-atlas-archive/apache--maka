@@ -472,10 +472,11 @@ async fn assistant_preferences_and_capability_guidance_freeze_at_message_accepta
             .filter(|message| message["role"] == "system")
             .map(|message| message["content"].as_str().unwrap()).collect::<Vec<_>>().join("\n");
         let original = system(&request(&mut first).await);
-        for value in ["You are Maka", "M4n5ter", "FIRST TONE", "GLOBAL FIRST", "PROJECT FIRST"] {
+        for value in ["You are Maka", "M4n5ter", "GLOBAL FIRST", "PROJECT FIRST"] {
             assert!(original.contains(value), "missing {value}: {original}");
         }
         assert!(!original.contains("OUTSIDE SECRET"));
+        assert!(!original.contains("FIRST TONE"));
         assert_eq!(fixture.send(&session).await.unwrap()["kind"], "queued");
         std::fs::write(global.join("AGENTS.md"), "GLOBAL REPLACED").unwrap();
         std::fs::write(fixture.workspace.join("AGENTS.md"), "PROJECT REPLACED").unwrap();
@@ -492,7 +493,7 @@ async fn assistant_preferences_and_capability_guidance_freeze_at_message_accepta
         assert_eq!(fixture.send(&session).await.unwrap()["kind"], "started");
         let (mut third, _) = listener.accept().await.unwrap();
         let current = system(&request(&mut third).await);
-        assert!(current.contains("FIRST TONE"));
+        assert!(!current.contains("FIRST TONE"));
         assert!(!current.contains("GLOBAL") && !current.contains("PROJECT"));
         response(&mut third).await;
         fixture.drained().await;
@@ -723,4 +724,62 @@ async fn compaction_preferences_accept_custom_prompt_and_reset_to_default() {
         initial["defaultCompactionPrompt"]
     );
     f.app.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn global_instruction_editor_and_admission_share_one_selected_file() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let f = Fixture::configured(
+            &format!("http://{}/v1", listener.local_addr().unwrap()), None, None, None,
+            |settings| settings.assistant = Some(AssistantConfiguration {
+                home: Some(settings.workspace_roots[0].path.parent().unwrap().to_str().unwrap().into()),
+            }),
+        ).await;
+        let home = f._dir.path();
+        std::fs::create_dir(home.join(".agents")).unwrap();
+        std::fs::create_dir(home.join(".maka")).unwrap();
+        std::fs::write(home.join(".agents/AGENTS.md"), "FALLBACK UNIQUE").unwrap();
+        std::fs::write(home.join(".maka/CLAUDE.md"), "OTHER GLOBAL GUIDANCE").unwrap();
+        let session = f.create("Global instructions").await;
+        let workspace = f.owner.session(&session).await.unwrap().configuration.workspace;
+        let fallback = f.query("globalInstructions",json!({})).await.unwrap();
+        assert_eq!(fallback["source"],"agents");
+        assert_eq!(fallback["content"],"FALLBACK UNIQUE");
+        assert_eq!(fallback["path"], home.join(".agents/AGENTS.md").to_str().unwrap());
+        let prompt = f.owner.capture_behavior(&workspace).await.unwrap().unwrap().text;
+        assert!(prompt.contains("FALLBACK UNIQUE") && prompt.contains("OTHER GLOBAL GUIDANCE"));
+        std::fs::write(home.join(".maka/AGENTS.md"), "").unwrap();
+        let empty = f.query("globalInstructions",json!({})).await.unwrap();
+        assert_eq!(empty["source"],"maka");
+        assert_eq!(empty["content"],"");
+        assert!(!f.owner.capture_behavior(&workspace).await.unwrap().unwrap().text.contains("FALLBACK UNIQUE"));
+        let stale = f.mutation(2,"updateGlobalInstructions",json!({"source":fallback["source"],"revision":fallback["revision"],"content":"STALE"}),Uuid::new_v4()).await.unwrap();
+        assert_eq!(stale["kind"],"changed");
+        assert_eq!(std::fs::read_to_string(home.join(".agents/AGENTS.md")).unwrap(),"FALLBACK UNIQUE");
+        let input = json!({"source":empty["source"],"revision":empty["revision"],"content":"SAVED GLOBAL UNIQUE"});
+        let operation = Uuid::new_v4();
+        let saved = f.mutation(2,"updateGlobalInstructions",input.clone(),operation).await.unwrap();
+        assert_eq!(saved["kind"],"saved");
+        assert_eq!(f.send(&session).await.unwrap()["kind"],"started");
+        let (mut socket,_) = listener.accept().await.unwrap();
+        let sent = request(&mut socket).await;
+        let system = sent["messages"].as_array().unwrap().iter().filter(|m|m["role"]=="system")
+            .map(|m|m["content"].as_str().unwrap()).collect::<Vec<_>>().join("\n");
+        assert!(system.contains("SAVED GLOBAL UNIQUE") && system.contains("OTHER GLOBAL GUIDANCE"));
+        assert!(!system.contains("FALLBACK UNIQUE"));
+        response(&mut socket).await;
+        f.drained().await;
+        std::fs::write(home.join(".maka/AGENTS.md"),"EXTERNAL CHANGE").unwrap();
+        assert_eq!(f.mutation(2,"updateGlobalInstructions",input.clone(),operation).await.unwrap(),saved);
+        assert_eq!(std::fs::read_to_string(home.join(".maka/AGENTS.md")).unwrap(),"EXTERNAL CHANGE");
+        assert_eq!(f.mutation(2,"updateGlobalInstructions",input,Uuid::new_v4()).await.unwrap()["kind"],"changed");
+        let large = format!("LARGE GLOBAL UNIQUE{}", "x".repeat(65536));
+        std::fs::write(home.join(".maka/AGENTS.md"),large).unwrap();
+        assert_eq!(f.query("globalInstructions",json!({})).await.unwrap()["kind"],"unavailable");
+        let prompt = f.owner.capture_behavior(&workspace).await.unwrap().unwrap().text;
+        assert!(prompt.contains("LARGE GLOBAL UNIQUE"));
+        assert!(!prompt.contains("FALLBACK UNIQUE"));
+        f.app.shutdown().await.unwrap(); f.config.shutdown().await.unwrap();
+    }).await.unwrap();
 }

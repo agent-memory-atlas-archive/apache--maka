@@ -29,6 +29,7 @@ export const settingsCategories = [
   'models',
   'sessions',
   'assistant',
+  'subagents',
   'insights',
   'web',
   'advanced',
@@ -40,7 +41,6 @@ export function settingsCategory(value: string): SettingsCategory | null {
     host: 'advanced',
     plugins: 'advanced',
     jev: 'advanced',
-    subagents: 'assistant',
   };
   return (
     moved[value] ??
@@ -118,7 +118,9 @@ export function settingsView<N extends Node>(
 ): N {
   const ui = presentation.paint(theme),
     t = (key: string) => tuiText(locale, key);
-  const categories = settingsCategories.filter((key) => key !== 'web' || web);
+  const categories = settingsCategories.filter(
+    (key) => (key !== 'web' || web) && (key !== 'subagents' || subagents),
+  );
   const appearance = state.saved?.appearance ?? theme.configuration;
   const busy = state.command !== null || state.checkpoint?.state.kind !== 'ready';
   const icons: Record<string, [string, string]> = {
@@ -324,7 +326,6 @@ export function settingsView<N extends Node>(
     plugins: [link('settings-plugins', t('route-plugins'))],
   };
   sections.appearance!.push(...sections.interface!);
-  sections.assistant!.push(...sections.subagents!);
   sections.advanced = [
     ui.text('network-heading', t('settings-host'), 14, theme.text, 500),
     ...sections.host!,
@@ -377,7 +378,10 @@ export function settingsView<N extends Node>(
               [
                 ui.box('settings-rows-' + key, sections[key], {
                   gap: 1,
-                  terminal: { basis: 64, shrink: true },
+                  terminal:
+                    key === 'assistant' || key === 'subagents'
+                      ? { grow: 1, shrink: true }
+                      : { basis: 64, shrink: true },
                 }),
               ],
               {

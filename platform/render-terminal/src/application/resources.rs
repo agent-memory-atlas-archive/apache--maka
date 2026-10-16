@@ -58,6 +58,38 @@ pub(super) struct Resources {
     pub(super) budget: maka_ui_runtime::budget::NativeBudget,
 }
 impl Resources {
+    pub fn cancel_pastes(&mut self, keep: Option<Uuid>) -> maka_ui_runtime::Result<()> {
+        for (id, owner) in &mut self.owners {
+            if owner.live
+                && Some(*id) != keep
+                && catch_unwind(AssertUnwindSafe(|| {
+                    owner.recipe.cancel_paste(owner.state.as_mut())
+                }))
+                .is_err()
+            {
+                owner.live = false;
+                let error = "terminal clipboard cancellation cleanup unconfirmed".to_owned();
+                self.failed.insert(*id, error.clone());
+                return Err(Error::Invalid(error));
+            }
+        }
+        Ok(())
+    }
+    pub fn editing_menu(
+        &mut self,
+        target: &paint::TargetIdentity,
+    ) -> maka_ui_runtime::Result<
+        Option<(
+            maka_ui_runtime::textarea::TextareaMenu,
+            maka_ui_runtime::editor::EditorSnapshot,
+            [bool; 4],
+        )>,
+    > {
+        Ok(self
+            .read_native(target, |recipe, state| recipe.editing_menu(state))?
+            .flatten())
+    }
+
     pub fn cancel_pointer(&mut self) -> maka_ui_runtime::Result<()> {
         for (id, owner) in &mut self.owners {
             if owner.live
@@ -254,7 +286,9 @@ impl Resources {
         // limits a producer that continually returns new values.
         for _ in 0..128 {
             match catch_unwind(AssertUnwindSafe(|| {
-                owner.recipe.observe(owner.state.as_mut())
+                let observed = owner.recipe.observe(owner.state.as_mut());
+                self.redraw |= owner.recipe.take_redraw(owner.state.as_mut());
+                observed
             })) {
                 Ok(Some(observed)) => {
                     let captured = owner.observe(observed)?;
@@ -709,6 +743,12 @@ impl Presenter {
     }
     fn sync_native_inner(&mut self, prepare: bool) -> maka_ui_runtime::Result<()> {
         self.resources.deactivate(&self.application);
+        self.resources.cancel_pastes(
+            self.focus
+                .as_ref()
+                .filter(|_| self.window_focused)
+                .map(|focus| focus.mount.id()),
+        )?;
         let mut mounts = if self.application.is_retiring(&self.root)
             || self.application.frame(&self.root).is_err()
         {

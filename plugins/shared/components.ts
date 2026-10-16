@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from './editor-menu.js';
 import { scrollBoundary } from './scroll.js';
 import { tuiText, copy } from './locale-catalogs/components.js';
 import type {
@@ -699,9 +700,16 @@ export function timeline<N extends Node>(
         role: message.role,
         traceDepth: depth,
         detailStatus: state.details[message.id]?.status ?? null,
+        // The user/response gap belongs to the response, outside the user's colored band.
+        separateBefore:
+          index > 0 && message.role !== 'user' && rows[index - 1]!.message.role === 'user',
         separate:
           index < rows.length - 1 &&
-          !(tool && ['tool_call', 'tool_result'].includes(rows[index + 1]!.message.role)),
+          !(tool && ['tool_call', 'tool_result'].includes(rows[index + 1]!.message.role)) &&
+          !(
+            message.role === 'user' &&
+            !['user', 'compaction'].includes(rows[index + 1]!.message.role)
+          ),
         browse: browsing
           ? { key: 'browse-' + message.id, current: browsing.id === message.id }
           : undefined,
@@ -954,6 +962,7 @@ export function timeline<N extends Node>(
                           search.key,
                           'input',
                           {
+                            menu: editorMenu(props.theme, props.locale),
                             appearance: { ...props.theme.input, borderWidth: 0 },
                             accessibilityLabel: text.findConversation,
                             readOnly: false,

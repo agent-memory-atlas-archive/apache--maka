@@ -2021,3 +2021,322 @@ fn primary_copy_requires_selection_and_preserves_the_draft() {
     );
     close(&mut tui);
 }
+
+#[test]
+fn ordinary_textarea_ctrl_v_replaces_selection_without_file_policy() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    let mount = draft(&tui);
+    super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    )
+    .clipboard
+    .as_mut()
+    .unwrap()
+    .set_clipboard_text("Plain 中文\nnext".into());
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+        .editor
+        .text()
+        != "Plain 中文\nnext"
+    {
+        tui.pump_settled().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        observation(&tui)["snapshot"]["text"]["bytes"],
+        "Plain 中文\nnext".len()
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn editor_right_click_menu_copies_cuts_and_selects_original_editor() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    draw(&mut tui, 50, 20);
+    let area = tui.focus.as_ref().unwrap().area.visible();
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    assert!(tui.editor_menu.is_some());
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 50, 20));
+    let painted = tui.paint(buffer.area, &mut buffer).unwrap();
+    let screen: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    for label in ["Copy", "Cut", "Paste", "Select all"] {
+        assert!(screen.contains(label), "missing {label}: {screen}");
+    }
+    // Opening itself has no clipboard side effect, and activation waits for flush.
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert!(!tui.flush_clipboard(&mut Vec::new()).unwrap());
+    tui.present(painted);
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    let mut copied = Vec::new();
+    assert!(tui.flush_clipboard(&mut copied).unwrap());
+    assert_eq!(copied, b"\x1b]52;c;U3RhcnQ=\x07");
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .text(),
+        "Start"
+    );
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)))
+        .unwrap();
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .text(),
+        ""
+    );
+    assert!(tui.flush_clipboard(&mut Vec::new()).unwrap());
+    super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    )
+    .clipboard
+    .as_mut()
+    .unwrap()
+    .set_clipboard_text("menu paste".into());
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Left),
+        area.x + 2,
+        area.y.min(14) + 3,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+        .editor
+        .text()
+        != "menu paste"
+    {
+        tui.pump_settled().unwrap();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    draw(&mut tui, 50, 20);
+    tui.input_settled(Event::Key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE)))
+        .unwrap();
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .selected_text(),
+        "menu paste"
+    );
+    draw(&mut tui, 50, 20);
+    click(
+        &mut tui,
+        MouseEventKind::Down(MouseButton::Right),
+        area.x,
+        area.y,
+    );
+    draw(&mut tui, 50, 20);
+    dispatch(&mut tui, "configure", json!({"readOnly":true}));
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert!(tui.editor_menu.is_none());
+    assert!(!tui.flush_clipboard(&mut Vec::new()).unwrap());
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .text(),
+        "menu paste"
+    );
+    close(&mut tui);
+}
+
+#[test]
+fn pending_editor_paste_is_cancelled_on_window_focus_loss_and_errors_are_visible() {
+    let (_runtime, mut tui) = presenter();
+    draw(&mut tui, 50, 20);
+    let mount = draft(&tui);
+    let owner = super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    );
+    owner
+        .clipboard
+        .as_mut()
+        .unwrap()
+        .set_clipboard_text("must not insert".into());
+    owner.paste(false);
+    tui.input_settled(Event::FocusLost).unwrap();
+    for _ in 0..20 {
+        tui.pump_settled().unwrap();
+    }
+    assert_eq!(
+        editor_owner(tui.resources.owners[&mount.id()].state.as_ref())
+            .editor
+            .text(),
+        "Start"
+    );
+    tui.input_settled(Event::FocusGained).unwrap();
+    let owner = super::super::textarea::editor_owner_mut(
+        tui.resources
+            .owners
+            .get_mut(&mount.id())
+            .unwrap()
+            .state
+            .as_mut(),
+    );
+    owner.editor.error = Some("composer-too-large");
+    let buffer = draw(&mut tui, 50, 20);
+    let screen: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(screen.contains("Text exceeds the input limit"));
+    assert!(!screen.contains("composer-too-large"));
+    close(&mut tui);
+}
+
+#[test]
+fn resize_grip_changes_height_without_editing_text_or_selection() {
+    let (_runtime, mut tui) = presenter();
+    dispatch(
+        &mut tui,
+        "configure",
+        json!({"terminalRows":{"min":3,"max":8,"resizable":true}}),
+    );
+    draw(&mut tui, 50, 40);
+    tui.input_settled(Event::Paste("original draft".into()))
+        .unwrap();
+    tui.input_settled(Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    draw(&mut tui, 50, 40);
+    let mount = draft(&tui);
+    let area = |tui: &Presenter| {
+        tui.scene
+            .iter()
+            .find(|target| target.mount == mount)
+            .unwrap()
+            .area
+            .visible()
+    };
+    let initial = area(&tui);
+    let before = observation(&tui);
+    let column = initial.right() - 2;
+    let row = initial.bottom() - 1;
+    for (kind, row) in [
+        (MouseEventKind::Down(MouseButton::Left), row),
+        (MouseEventKind::Drag(MouseButton::Left), row + 10),
+        (MouseEventKind::Up(MouseButton::Left), row + 10),
+    ] {
+        tui.input_settled(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        draw(&mut tui, 50, 40);
+    }
+    assert_eq!(
+        area(&tui).height,
+        initial.height + 10,
+        "manual height exceeds the automatic preferred maximum"
+    );
+    assert_eq!(observation(&tui), before);
+    let row = area(&tui).bottom() - 1;
+    for (kind, row) in [
+        (MouseEventKind::Down(MouseButton::Left), row),
+        (MouseEventKind::Drag(MouseButton::Left), 0),
+        (MouseEventKind::Up(MouseButton::Left), 0),
+    ] {
+        tui.input_settled(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+        draw(&mut tui, 50, 40);
+    }
+    assert_eq!(area(&tui).height, 5, "minimum text rows plus border");
+    assert_eq!(observation(&tui), before);
+    tui.input_settled(Event::Paste("replacement".into()))
+        .unwrap();
+    assert_eq!(
+        super::super::textarea::editor_owner(&*tui.resources.owners[&mount.id()].state)
+            .editor
+            .text(),
+        "replacement"
+    );
+    close(&mut tui);
+}

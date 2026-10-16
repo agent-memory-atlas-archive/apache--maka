@@ -126,6 +126,10 @@ fn default_product_trace_preserves_parents_titles_and_inline_evidence() {
         .iter()
         .find(|line| line.contains("› Run tools"))
         .unwrap();
+    assert!(
+        parent.trim_end().ends_with('⋯'),
+        "the tool menu must align with its heading, below the response gap: {screen}"
+    );
     assert_eq!(
         rows[first][..rows[first].find('·').unwrap()].width(),
         parent[..parent.find('·').unwrap()].width() + 2,

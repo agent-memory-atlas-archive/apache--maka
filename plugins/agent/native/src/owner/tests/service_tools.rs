@@ -824,7 +824,12 @@ impl Setup {
                         .selections()
                         .into_iter()
                         .map(|tool| tool.method)
-                        .chain(self.prepare_skills.then(|| "prepare".into()))
+                        .chain(
+                            self.prepare_skills
+                                .then_some(["prepare".into(), "search".into()])
+                                .into_iter()
+                                .flatten(),
+                        )
                         .chain(self.web.then(|| "capture".into()))
                         .chain(self.computer.then(|| "state".into()))
                         .chain(

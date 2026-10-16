@@ -135,6 +135,7 @@ export function messageView<N extends Node>(
     traceDepth?: number;
     detailStatus?: ToolDisplayStatus | null;
     separate?: boolean;
+    separateBefore?: boolean;
     id: string;
     role: HistorySource['role'] | 'thinking';
     timestamp: number | null;
@@ -321,7 +322,7 @@ export function messageView<N extends Node>(
         ];
     const hasMenu = !!ui.contextMenu && actions.length > 0;
     const card = ui.box(
-      (hasMenu ? 'message-card-' : 'message-') + message.id,
+      (hasMenu || message.separateBefore ? 'message-card-' : 'message-') + message.id,
       [
         ...(user && !theme.terminal?.terminal
           ? [ui.box('band-top-' + message.id, [], { surface: true, terminal: { basis: 1 } })]
@@ -394,9 +395,22 @@ export function messageView<N extends Node>(
       ],
       { gap: 0, surface: user },
     );
-    return hasMenu
-      ? ui.contextMenu!('message-' + message.id, caption, card, actions, text.copy)
+    const content = hasMenu
+      ? ui.contextMenu!(
+          (message.separateBefore ? 'message-menu-' : 'message-') + message.id,
+          caption,
+          card,
+          actions,
+          text.copy,
+        )
       : card;
+    return message.separateBefore
+      ? ui.box(
+          'message-' + message.id,
+          [ui.box('message-space-before-' + message.id, [], { terminal: { basis: 1 } }), content],
+          { gap: 0 },
+        )
+      : content;
   }
   const label = name
     ? caption + ' · ' + compactLabel(name, target === 'desktop' ? 64 : 24)

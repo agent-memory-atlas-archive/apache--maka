@@ -136,6 +136,10 @@ pub struct TerminalTextareaRows {
     pub min: u16,
     #[schemars(range(min = 1))]
     pub max: u16,
+    /// Allow dragging the lower-right grip to override preferred rows, up to
+    /// the containing viewport height. The minimum still applies.
+    #[serde(default)]
+    pub resizable: bool,
     /// Optional cap relative to the nearest declared layout viewport's height,
     /// or the surface when none is declared. The minimum still applies.
     #[serde(default)]
@@ -147,6 +151,7 @@ impl Default for TerminalTextareaRows {
         Self {
             min: 3,
             max: 8,
+            resizable: false,
             max_viewport_fraction: None,
         }
     }

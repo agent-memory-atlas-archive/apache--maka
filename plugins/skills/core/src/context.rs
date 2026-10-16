@@ -208,7 +208,8 @@ fn normalize(text: &str) -> String {
 }
 fn score(skill: &DiscoveredSkill, query: &str) -> u32 {
     if query.is_empty() {
-        return 0;
+        // An empty discovery query lists the same eligible, ordered inventory.
+        return 1;
     }
     let name = normalize(&skill.document.manifest.name);
     let id = normalize(&skill.location.id);

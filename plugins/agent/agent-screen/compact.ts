@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ComponentInput,
@@ -35,16 +36,11 @@ import type { State } from './state.js';
 export const compactCopy = createCopy({
   title: ['Compact context', '压缩上下文', '壓縮上下文'],
   help: [
-    'Summarize earlier context to make room. Edit the prompt for this compression only; your conversation history stays available.',
-    '总结较早的上下文以腾出空间。此处修改仅用于本次压缩，聊天历史仍可查看。',
-    '總結較早的上下文以騰出空間。此處修改僅用於本次壓縮，聊天歷史仍可查看。',
+    'This prompt applies to this compression only.',
+    '此提示词仅用于本次压缩。',
+    '此提示詞僅用於本次壓縮。',
   ],
   prompt: ['Compression prompt', '压缩提示词', '壓縮提示詞'],
-  copyHint: [
-    'Ctrl+A select all · ⌘C / Ctrl+C copy',
-    'Ctrl+A 全选 · ⌘C / Ctrl+C 复制',
-    'Ctrl+A 全選 · ⌘C / Ctrl+C 複製',
-  ],
   confirm: ['Compact', '开始压缩', '開始壓縮'],
   cancel: ['Cancel', '取消', '取消'],
   check: ['Check operation', '检查操作结果', '檢查操作結果'],
@@ -245,6 +241,7 @@ export function compactView<N extends Node>(
         'compact-prompt',
         'editor',
         {
+          menu: editorMenu(theme, locale),
           accessibilityLabel: text.prompt,
           placeholder: '',
           autoFocus: true,
@@ -258,9 +255,6 @@ export function compactView<N extends Node>(
         } satisfies TextareaProps,
         { changed: 'changed' },
       ),
-      ...(presentation.target === 'tui'
-        ? [ui.text('compact-copy-hint', text.copyHint, 12, theme.muted)]
-        : []),
       ...(edit?.failed ? [ui.text('compact-error', text.failed, 13, theme.warning)] : []),
       ...(state.uncertain?.reference.method === 'compact'
         ? [

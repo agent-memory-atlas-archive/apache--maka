@@ -21,10 +21,10 @@ use super::Placement;
 use super::editor::Owner;
 use super::{NativeInput, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
-use crossterm::event::{Event, KeyCode, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use maka_ui_runtime::{
     ComponentCall, ComponentOutput, NativeCapability, NativeComponent, NativeExport,
-    NativeRegistry, NativeView, editor::*, input::*,
+    NativeRegistry, NativeView, editor::*, input::*, textarea::TextareaMenu,
 };
 use ratatui::{
     buffer::Buffer,
@@ -63,11 +63,13 @@ impl Widget for Recipe {
             .editor
             .cancel_pointer();
     }
-    fn create(&self, _: super::NativeContext) -> Box<dyn Any> {
-        Box::new(Owner::new(
+    fn create(&self, context: super::NativeContext) -> Box<dyn Any> {
+        let mut owner = Owner::new(
             Editor::single_line(self.props.max_bytes as usize, self.secret),
             "",
-        ))
+        );
+        owner.clipboard(context);
+        Box::new(owner)
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui_runtime::Result<Option<NativeInput>> {
         let owner = state
@@ -82,12 +84,19 @@ impl Widget for Recipe {
         if changed {
             owner.apply(self.props.command.as_ref().unwrap());
         }
-        if changed || !owner.announced {
+        owner.poll_paste(!self.props.disabled && !self.props.read_only);
+        let edited = owner.refresh();
+        if changed || edited || !owner.announced {
             owner.announced = true;
             Ok(Some(owner.observation()))
         } else {
             Ok(None)
         }
+    }
+    fn observe(&self, state: &mut dyn Any) -> Option<NativeInput> {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        owner.poll_paste(!self.props.disabled && !self.props.read_only);
+        owner.refresh().then(|| owner.observation())
     }
     fn present_focus(&self, state: &mut dyn Any) -> bool {
         state
@@ -118,6 +127,15 @@ impl Widget for Recipe {
             } else {
                 WidgetInput::Consumed(None)
             });
+        }
+        if let Event::Key(key) = event
+            && key.code == KeyCode::Char('v')
+            && matches!(key.modifiers, KeyModifiers::CONTROL | KeyModifiers::SUPER)
+        {
+            if !self.props.read_only && key.kind == KeyEventKind::Press {
+                owner.paste(matches!(self.props.terminal_paste, TerminalPaste::Spaces));
+            }
+            return Ok(WidgetInput::Consumed(None));
         }
         let handled = match event {
             Event::Key(key) => {
@@ -188,6 +206,33 @@ impl Widget for Recipe {
             .capture(target)
     }
 
+    fn take_redraw(&self, state: &mut dyn Any) -> bool {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        std::mem::take(&mut owner.redraw)
+    }
+    fn cancel_paste(&self, state: &mut dyn Any) {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        owner.cancel_paste();
+    }
+    fn editing_menu(&self, state: &dyn Any) -> Option<(TextareaMenu, EditorSnapshot, [bool; 4])> {
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        if self.props.disabled {
+            return None;
+        }
+        let menu = self.props.menu.clone()?;
+        let selected = !owner.editor.selected_text().is_empty() && !self.secret;
+        let editable = !self.props.read_only;
+        Some((
+            menu,
+            owner.snapshot(),
+            [
+                selected,
+                selected && editable,
+                editable,
+                !owner.editor.text().is_empty(),
+            ],
+        ))
+    }
     fn copy(&self, state: &dyn Any, _: bool) -> maka_ui_runtime::Result<Option<String>> {
         let owner = state.downcast_ref::<Owner>().unwrap();
         if self.secret || self.props.disabled {
@@ -286,6 +331,21 @@ impl Widget for Recipe {
                 inner,
                 buffer,
                 Style::default().fg(muted),
+            );
+        }
+        if let Some(error) = owner.editor.error {
+            let error_area = ratatui::layout::Rect::new(
+                inner.visible().x,
+                inner.visible().bottom().saturating_sub(1),
+                inner.visible().width,
+                1,
+            );
+            buffer.set_stringn(
+                error_area.x,
+                error_area.y,
+                super::editor::error_message(error),
+                usize::from(error_area.width),
+                Style::default().fg(Color::Red).bg(background),
             );
         }
         let autofocus = owner.focus.pending();

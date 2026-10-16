@@ -3973,6 +3973,7 @@ export const contracts = {
             default: {
               min: 3,
               max: 8,
+              resizable: false,
               maxViewportFraction: null,
             },
           },
@@ -4631,6 +4632,12 @@ export const contracts = {
                 format: 'uint16',
                 minimum: 1,
                 maximum: 65535,
+              },
+              resizable: {
+                description:
+                  'Allow dragging the lower-right grip to override preferred rows, up to\nthe containing viewport height. The minimum still applies.',
+                type: 'boolean',
+                default: false,
               },
               maxViewportFraction: {
                 description:
@@ -5709,6 +5716,17 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/InputAppearance',
           },
+          menu: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TextareaMenu',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           accessibilityLabel: {
             type: 'string',
             minLength: 1,
@@ -6067,6 +6085,131 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['top', 'right', 'bottom', 'left'],
+          },
+          TextareaMenu: {
+            description:
+              'Local presentation for user-initiated native editing actions. This is not\na command interface: clipboard access still requires native activation.',
+            type: 'object',
+            properties: {
+              appearance: {
+                $ref: '#/$defs/MenuAppearance',
+              },
+              labels: {
+                $ref: '#/$defs/TextareaMenuLabels',
+              },
+            },
+            additionalProperties: false,
+            required: ['appearance', 'labels'],
+          },
+          MenuAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              activeBackground: {
+                $ref: '#/$defs/Color',
+              },
+              activeForeground: {
+                $ref: '#/$defs/Color',
+              },
+              disabledForeground: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+              rowPadding: {
+                $ref: '#/$defs/Insets',
+              },
+              width: {
+                type: 'number',
+                format: 'float',
+                minimum: 32,
+                maximum: 1024,
+              },
+              windowMargin: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'background',
+              'border',
+              'activeBackground',
+              'activeForeground',
+              'disabledForeground',
+              'borderWidth',
+              'radius',
+              'padding',
+              'rowPadding',
+              'width',
+              'windowMargin',
+            ],
+          },
+          TextareaMenuLabels: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              undo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              redo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              cut: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              copy: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              paste: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              selectAll: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+            },
+            additionalProperties: false,
+            required: ['title', 'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'],
           },
           TerminalPaste: {
             type: 'string',
@@ -6415,6 +6558,17 @@ export const contracts = {
           appearance: {
             $ref: '#/$defs/InputAppearance',
           },
+          menu: {
+            anyOf: [
+              {
+                $ref: '#/$defs/TextareaMenu',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            default: null,
+          },
           accessibilityLabel: {
             type: 'string',
             minLength: 1,
@@ -6773,6 +6927,131 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['top', 'right', 'bottom', 'left'],
+          },
+          TextareaMenu: {
+            description:
+              'Local presentation for user-initiated native editing actions. This is not\na command interface: clipboard access still requires native activation.',
+            type: 'object',
+            properties: {
+              appearance: {
+                $ref: '#/$defs/MenuAppearance',
+              },
+              labels: {
+                $ref: '#/$defs/TextareaMenuLabels',
+              },
+            },
+            additionalProperties: false,
+            required: ['appearance', 'labels'],
+          },
+          MenuAppearance: {
+            type: 'object',
+            properties: {
+              text: {
+                $ref: '#/$defs/TextAppearance',
+              },
+              background: {
+                $ref: '#/$defs/Color',
+              },
+              border: {
+                $ref: '#/$defs/Color',
+              },
+              activeBackground: {
+                $ref: '#/$defs/Color',
+              },
+              activeForeground: {
+                $ref: '#/$defs/Color',
+              },
+              disabledForeground: {
+                $ref: '#/$defs/Color',
+              },
+              borderWidth: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 8,
+              },
+              radius: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 64,
+              },
+              padding: {
+                $ref: '#/$defs/Insets',
+              },
+              rowPadding: {
+                $ref: '#/$defs/Insets',
+              },
+              width: {
+                type: 'number',
+                format: 'float',
+                minimum: 32,
+                maximum: 1024,
+              },
+              windowMargin: {
+                type: 'number',
+                format: 'float',
+                minimum: 0,
+                maximum: 128,
+              },
+            },
+            additionalProperties: false,
+            required: [
+              'text',
+              'background',
+              'border',
+              'activeBackground',
+              'activeForeground',
+              'disabledForeground',
+              'borderWidth',
+              'radius',
+              'padding',
+              'rowPadding',
+              'width',
+              'windowMargin',
+            ],
+          },
+          TextareaMenuLabels: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              undo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              redo: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              cut: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              copy: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              paste: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+              selectAll: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 512,
+              },
+            },
+            additionalProperties: false,
+            required: ['title', 'undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'],
           },
           TerminalPaste: {
             type: 'string',
@@ -10479,6 +10758,65 @@ export const contracts = {
               AgentRecapFailure: {
                 type: 'string',
                 enum: ['empty_or_oversized_output', 'incomplete_output', 'model_unavailable'],
+              },
+            },
+          },
+          resources: {},
+        },
+        globalInstructions: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGlobalInstructionsRead',
+            type: 'object',
+            additionalProperties: false,
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGlobalInstructionsView',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/AgentGlobalInstructionSource',
+                  },
+                  path: {
+                    type: 'string',
+                  },
+                  revision: {
+                    type: 'string',
+                  },
+                  content: {
+                    type: 'string',
+                  },
+                  exists: {
+                    type: 'boolean',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'available',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'source', 'path', 'revision', 'content', 'exists'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
+            $defs: {
+              AgentGlobalInstructionSource: {
+                type: 'string',
+                enum: ['maka', 'agents'],
               },
             },
           },
@@ -21748,6 +22086,177 @@ export const contracts = {
           },
           resources: {},
         },
+        skillCandidates: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSkillCandidatesRead',
+            description:
+              "Read-only suggestions resolved against the session's actual skill context.",
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              backend: {
+                $ref: '#/$defs/AgentSkillCandidatesBackend',
+              },
+              query: {
+                type: 'string',
+                maxLength: 4096,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'backend', 'query'],
+            $defs: {
+              AgentSkillCandidatesBackend: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      model: {
+                        $ref: '#/$defs/ModelSelection',
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'model'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ModelSelection: {
+                description:
+                  'Exact public selection observed by a caller, checked once at run admission.',
+                type: 'object',
+                properties: {
+                  connectionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 512,
+                  },
+                },
+                additionalProperties: false,
+                required: ['connectionId', 'revision', 'modelId'],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSkillCandidates',
+            type: 'object',
+            properties: {
+              revision: {
+                type: ['string', 'null'],
+              },
+              skills: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentSkillCandidate',
+                },
+              },
+            },
+            required: ['skills'],
+            $defs: {
+              AgentSkillCandidate: {
+                type: 'object',
+                properties: {
+                  reference: {
+                    type: 'string',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                  description: {
+                    type: 'string',
+                  },
+                  invocation: {
+                    type: 'string',
+                  },
+                },
+                required: ['reference', 'name', 'description', 'invocation'],
+              },
+            },
+          },
+          resources: {},
+        },
         snapshotPatch: {
           mode: 'mutation',
           input: {
@@ -22532,6 +23041,85 @@ export const contracts = {
             required: ['names'],
             title: 'AgentToolNames',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
+          },
+          resources: {},
+        },
+        updateGlobalInstructions: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGlobalInstructionsUpdate',
+            type: 'object',
+            properties: {
+              source: {
+                $ref: '#/$defs/AgentGlobalInstructionSource',
+              },
+              revision: {
+                type: 'string',
+              },
+              content: {
+                type: 'string',
+                maxLength: 65536,
+              },
+            },
+            additionalProperties: false,
+            required: ['source', 'revision', 'content'],
+            $defs: {
+              AgentGlobalInstructionSource: {
+                type: 'string',
+                enum: ['maka', 'agents'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGlobalInstructionsUpdated',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'saved',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+            ],
           },
           resources: {},
         },

@@ -114,6 +114,10 @@ export type RuntimeProtocol =
   | WebProbe
   | WebEndpoint
   | AgentExecute
+  | AgentGlobalInstructionsRead
+  | AgentGlobalInstructionsView
+  | AgentGlobalInstructionsUpdate
+  | AgentGlobalInstructionsUpdated
   | AgentExecutorsRead
   | AgentExecutors
   | ExecutorExecute
@@ -1601,6 +1605,32 @@ export type ThinkingLevel =
   | 'xhigh'
   | 'max'
   | 'ultra';
+export type AgentGlobalInstructionsView =
+  | {
+      source: AgentGlobalInstructionSource;
+      path: string;
+      revision: string;
+      content: string;
+      exists: boolean;
+      kind: 'available';
+    }
+  | {
+      kind: 'unavailable';
+    };
+export type AgentGlobalInstructionSource = 'maka' | 'agents';
+export type AgentGlobalInstructionsUpdated =
+  | {
+      kind: 'saved';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      kind: 'unavailable';
+    }
+  | {
+      kind: 'rejected';
+    };
 export type ExecutorSetupAction =
   | {
       kind: 'check';
@@ -6204,6 +6234,11 @@ export interface TerminalTextareaRows {
   min: number;
   max: number;
   /**
+   * Allow dragging the lower-right grip to override preferred rows, up to
+   * the containing viewport height. The minimum still applies.
+   */
+  resizable?: boolean;
+  /**
    * Optional cap relative to the nearest declared layout viewport's height,
    * or the surface when none is declared. The minimum still applies.
    */
@@ -6692,6 +6727,7 @@ export interface RowActivated {
 }
 export interface InputProps {
   appearance: InputAppearance;
+  menu?: TextareaMenu | null;
   accessibilityLabel: string;
   readOnly: boolean;
   disabled: boolean;
@@ -6829,7 +6865,7 @@ export interface AgentConfiguration {
 }
 export interface AgentAssistantConfiguration {
   /**
-   * Read only the three instruction files in this home's .maka directory.
+   * Select this home for global instructions and explicit AGENTS.md editing.
    */
   home?: string | null;
 }
@@ -7036,6 +7072,12 @@ export interface AgentExecutorSelection {
 export interface ExecutorSettings {
   model?: string | null;
   thinkingLevel?: ThinkingLevel | null;
+}
+export interface AgentGlobalInstructionsRead {}
+export interface AgentGlobalInstructionsUpdate {
+  source: AgentGlobalInstructionSource;
+  revision: string;
+  content: string;
 }
 export interface AgentExecutorsRead {}
 export interface AgentExecutors {

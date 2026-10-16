@@ -121,14 +121,7 @@ impl Source {
             credentials,
             accepted: AcceptedModel {
                 context: request_context(row, &model.info)?,
-                editing_tools: Some(EditingTools::for_model(
-                    &selection.model_id,
-                    &model.base_url,
-                    row.model_overrides
-                        .as_ref()
-                        .and_then(|models| models.get(&selection.model_id))
-                        .and_then(|overrides| overrides.apply_patch),
-                )),
+                editing_tools: Some(editing_tools(row, &selection.model_id, &model.base_url)),
                 tool_mode: ToolMode::for_model(
                     &selection.model_id,
                     &model.base_url,
@@ -330,6 +323,37 @@ impl ModelSource for Source {
             self.prepare(material, model).await
         })
     }
+}
+
+/// Resolve tool compatibility without preparing credentials or starting execution.
+pub(crate) async fn candidate_editing_tools(
+    configuration: &Arc<ConfigurationStore>,
+    selection: ModelSelection,
+    thinking_level: Option<ThinkingLevel>,
+) -> Result<EditingTools, RunError> {
+    let material = configuration
+        .observe_selected_model(selection.clone())
+        .await
+        .map_err(|_| unavailable())?
+        .ok_or_else(unavailable)?;
+    let row = &material.connection;
+    let definition = maka_providers::definition(&row.provider).map_err(|_| unavailable())?;
+    let model = resolve(&definition, row, &selection.model_id, thinking_level).await?;
+    Ok(editing_tools(row, &selection.model_id, &model.base_url))
+}
+fn editing_tools(
+    row: &maka_agent_facts::configuration::ConnectionCatalogEntry,
+    model: &str,
+    base_url: &str,
+) -> EditingTools {
+    EditingTools::for_model(
+        model,
+        base_url,
+        row.model_overrides
+            .as_ref()
+            .and_then(|models| models.get(model))
+            .and_then(|overrides| overrides.apply_patch),
+    )
 }
 
 async fn resolve(

@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -248,6 +249,7 @@ export function recall<N extends Node>(
             'recall-' + name,
             'input',
             {
+              menu: editorMenu(props.theme, props.locale),
               appearance: props.theme.input,
               accessibilityLabel: label,
               placeholder: name === 'query' ? text.recallFind : 'YYYY-MM-DD',

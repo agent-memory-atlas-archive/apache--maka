@@ -1490,34 +1490,18 @@ export const tui_sessions_unknown: Message = [
 export const tui_settings_appearance: Message = ['Appearance', '外观', '外觀'];
 export const tui_settings_assistant: Message = ['Assistant preferences', '助手偏好', '助理偏好'];
 export const tui_assistant_name: Message = ['Your name', '你的称呼', '你的稱呼'];
-export const tui_assistant_tone: Message = ['Assistant tone', '助手语气', '助理語氣'];
 export const tui_assistant_save: Message = ['Save personalization', '保存个性偏好', '儲存個人偏好'];
 export const tui_assistant_shell_titles: Message = [
   'Shell command titles',
   'Shell 命令标题',
   'Shell 命令標題',
 ];
-export const tui_assistant_shell_titles_help: Message = [
-  'Let the model add short command titles. Turning this off removes the title option from future tool calls; existing titles remain in history.',
-  '让模型为命令添加简短标题。关闭后不再向模型提供命令标题选项；历史标题保留。',
-  '讓模型為命令加入簡短標題。關閉後不再向模型提供命令標題選項；歷史標題保留。',
-];
 
 export const tui_assistant_privacy: Message = ['Privacy mode', '隐私模式', '隱私模式'];
-export const tui_assistant_privacy_help: Message = [
-  'Pauses Recall and web tools. Conversations are still saved and messages are still sent to your selected model.',
-  '暂停 Recall 和网页工具。对话仍会保存，消息仍会发送给所选模型。',
-  '暫停 Recall 和網頁工具。對話仍會儲存，訊息仍會傳送給所選模型。',
-];
 export const tui_assistant_instructions: Message = [
   'Read workspace instructions',
   '读取工作区指令',
   '讀取工作區指令',
-];
-export const tui_assistant_instructions_help: Message = [
-  'Workspace instructions include AGENTS.md, CLAUDE.md and GEMINI.md in the project and ~/.maka. Changes apply to newly accepted messages.',
-  '读取项目和 ~/.maka 中的 AGENTS.md、CLAUDE.md 和 GEMINI.md。更改对新接受的消息生效。',
-  '讀取專案和 ~/.maka 中的 AGENTS.md、CLAUDE.md 和 GEMINI.md。變更對新接受的訊息生效。',
 ];
 export const tui_assistant_reload: Message = [
   'Reload saved preferences (discard edits)',

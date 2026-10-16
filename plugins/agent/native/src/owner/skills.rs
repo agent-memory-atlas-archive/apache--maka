@@ -103,6 +103,105 @@ impl Library {
     }
 }
 impl Owner {
+    pub(crate) async fn skill_candidates(
+        &self,
+        input: SkillCandidatesRead,
+        parent: &Scope,
+    ) -> Result<SkillCandidates, String> {
+        let session = self.session(&input.session_id).await?;
+        if input.query.len() > 16384 || input.query.chars().count() > 4096 {
+            return Err("agent_skill_query_invalid".into());
+        }
+        let Some(library) = &self.skills else {
+            return Ok(SkillCandidates::default());
+        };
+        let SkillCandidatesBackend::Model {
+            model,
+            thinking_level,
+        } = input.backend
+        else {
+            return Ok(SkillCandidates::default());
+        };
+        let editing =
+            match crate::model::candidate_editing_tools(&self.configuration, model, thinking_level)
+                .await
+            {
+                Ok(editing) => editing,
+                Err(_) => return Ok(SkillCandidates::default()),
+            };
+        workspace::validate(
+            &self.workspace_roots,
+            &session.configuration.workspace,
+            &self.managed_worktrees,
+        )
+        .await?;
+        // Only inspect graph selection: opening a new epoch belongs to send admission.
+        let graph = match &self.graphs {
+            Some(graphs) => graphs
+                .current(&input.session_id)
+                .await?
+                .filter(|control| control.selected)
+                .map(|control| control.epoch),
+            None => None,
+        };
+        let basis = MessageBasis {
+            compaction_prompt: None,
+            graph,
+            collaboration_mode: session.configuration.collaboration_mode,
+            background_kind: BackgroundKind::Schedule,
+            tool_discovery: false,
+            allowed_tools: session.configuration.tools.clone(),
+            background: None,
+            internal_tools: vec![],
+            internal_bindings: BTreeMap::new(),
+            behavior: None,
+            model: None,
+            executor: None,
+            workspace: session.configuration.workspace.clone(),
+            fingerprint: String::new(),
+            tools: vec![],
+        };
+        let input = serde_json::to_value(SkillToolRequest {
+            workspace: Some(session.configuration.workspace),
+            tools: self.selected_tools(&basis, false, Some(editing)).names(),
+            input: maka_skills_api::contract::ModelSearch {
+                query: input.query,
+                limit: Some(8),
+            },
+        })
+        .map_err(|_| "agent_skill_query_invalid")?;
+        let import = library.selected.import.clone();
+        let mut ticket = parent
+            .resources
+            .reserve()
+            .map_err(|_| "agent_skill_call_closed")?;
+        let request = library
+            .services
+            .request(parent.identity.clone(), parent.cancellation.child_token())?;
+        let result = self
+            .workers
+            .spawn(async move {
+                ticket.start();
+                let result = AssertUnwindSafe(async {
+                    request
+                        .call(&import, 0, "search".into(), input, Attachments::default())?
+                        .await
+                })
+                .catch_unwind()
+                .await;
+                let cleanup = request.finish().await;
+                ticket.complete(cleanup.clone());
+                cleanup?;
+                result.map_err(|_| "agent_skill_query_panicked".to_owned())
+            })
+            .await
+            .map_err(|_| "agent_skill_query_lost")???;
+        if parent.cancellation.is_cancelled() {
+            return Err("agent_skill_call_cancelled".into());
+        }
+        candidates(result)
+    }
+
     pub(super) async fn prepare_skills(
         &self,
         mut message: MessageInput,
@@ -257,4 +356,46 @@ pub(super) fn prompt(message: &MessageInput) -> Result<Option<SystemPrompt>, Str
         .validate()
         .map_err(|_| "agent_skill_preparation_invalid")?;
     Ok(Some(prompt))
+}
+
+// Deserialize only the metadata we expose; Library.search owns visibility and precedence.
+fn candidates(value: serde_json::Value) -> Result<SkillCandidates, String> {
+    #[derive(Deserialize)]
+    struct Page {
+        revision: String,
+        matches: Vec<Entry>,
+    }
+    #[derive(Deserialize)]
+    struct Entry {
+        #[serde(rename = "ref")]
+        reference: String,
+        id: String,
+        name: String,
+        description: String,
+    }
+    let page: Page = serde_json::from_value(value).map_err(|_| "agent_skill_query_invalid")?;
+    if !maka_agent_facts::archive::valid_projection_digest(&page.revision) || page.matches.len() > 8
+    {
+        return Err("agent_skill_query_invalid".into());
+    }
+    Ok(SkillCandidates {
+        revision: Some(page.revision),
+        skills: page
+            .matches
+            .into_iter()
+            .filter(|entry| {
+                !entry.id.is_empty()
+                    && entry
+                        .id
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+            })
+            .map(|entry| SkillCandidate {
+                invocation: format!("/skill:{}", entry.id),
+                reference: entry.reference,
+                name: entry.name,
+                description: entry.description,
+            })
+            .collect(),
+    })
 }

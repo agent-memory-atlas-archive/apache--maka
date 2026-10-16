@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type { Action, Emission, InputProps } from '../../../packages/plugin-sdk/src/index.js';
 import { bookmarkReady, bookmarkView } from '../../shared/bookmark.js';
 import { type DeploymentProps } from '../../shared/contracts.js';
@@ -292,6 +293,7 @@ export function frame<N extends Node>(
         'deployment-query',
         'input',
         {
+          menu: editorMenu(props.theme, props.locale),
           appearance: props.theme.input,
           accessibilityLabel: text.pluginSearch,
           placeholder: text.pluginSearch,

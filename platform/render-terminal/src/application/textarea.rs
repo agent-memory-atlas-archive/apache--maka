@@ -20,12 +20,25 @@
 use super::Placement;
 use super::editor::Owner as EditorOwner;
 mod clipboard;
-mod paste;
+pub(super) mod paste;
 struct Owner {
     edit: EditorOwner,
     files: paste::Paste,
     visible: bool,
+    rows: Option<u16>,
+    resize_drag: Option<(u16, u16, u16)>,
+    resize: Option<Resize>,
     checkpoint: Option<maka_ui_runtime::checkpoint::EditorCheckpoint>,
+}
+#[derive(Clone, Copy)]
+struct Resize {
+    grip: ratatui::layout::Rect,
+    rows: u16,
+    maximum: u16,
+}
+struct Presented {
+    editor: Geometry,
+    resize: Option<Resize>,
 }
 impl Owner {
     fn checkpoint(&mut self, props: &TextareaProps) {
@@ -94,7 +107,7 @@ pub(super) fn clipboard_text(state: &mut dyn std::any::Any, text: String) {
 }
 use super::{NativeInput, Slots, Widget, WidgetInput};
 use crate::editor::{Editor, Geometry};
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use maka_ui_runtime::{
     ComponentCall, ComponentOutput, NativeCapability, NativeComponent, NativeExport,
     NativeRegistry, NativeView, editor::*, textarea::*,
@@ -139,12 +152,9 @@ impl Widget for Recipe {
     }
 
     fn cancel_pointer(&self, state: &mut dyn Any) {
-        state
-            .downcast_mut::<Owner>()
-            .unwrap()
-            .edit
-            .editor
-            .cancel_pointer();
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        owner.resize_drag = None;
+        owner.edit.editor.cancel_pointer();
     }
     fn create(&self, context: super::NativeContext) -> Box<dyn Any> {
         let checkpoint = self.props.persistence.as_ref().map(|policy| {
@@ -155,17 +165,22 @@ impl Widget for Recipe {
                 context.budget.clone(),
             )
         });
+        let mut edit = EditorOwner::new(
+            Editor::bounded(
+                maka_ui_runtime::textarea::MAX_BUFFER_BYTES,
+                "composer-too-large",
+            ),
+            &self.props.initial_text,
+        );
+        edit.clipboard(context.clone());
         Box::new(Owner {
             checkpoint,
-            edit: EditorOwner::new(
-                Editor::bounded(
-                    maka_ui_runtime::textarea::MAX_BUFFER_BYTES,
-                    "composer-too-large",
-                ),
-                &self.props.initial_text,
-            ),
+            edit,
             files: paste::Paste::new(context),
             visible: true,
+            rows: None,
+            resize_drag: None,
+            resize: None,
         })
     }
     fn commit(&self, state: &mut dyn Any) -> maka_ui_runtime::Result<Option<NativeInput>> {
@@ -195,6 +210,9 @@ impl Widget for Recipe {
                 );
             }
         }
+        owner
+            .edit
+            .poll_paste(owner.visible && !self.props.disabled && !self.props.read_only);
         owner.files.poll(
             &mut owner.edit.editor,
             self.props
@@ -216,6 +234,9 @@ impl Widget for Recipe {
     }
     fn observe(&self, state: &mut dyn Any) -> Option<NativeInput> {
         let owner = state.downcast_mut::<Owner>().unwrap();
+        owner
+            .edit
+            .poll_paste(owner.visible && !self.props.disabled && !self.props.read_only);
         owner.files.poll(
             &mut owner.edit.editor,
             self.props
@@ -267,6 +288,40 @@ impl Widget for Recipe {
                 WidgetInput::Consumed(None)
             });
         }
+        if self.props.terminal_rows.resizable && owner.visible {
+            if let Event::Mouse(mouse) = event {
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if let Some(resize) = owner
+                            .resize
+                            .filter(|resize| resize.grip.contains((mouse.column, mouse.row).into()))
+                        {
+                            owner.edit.editor.cancel_pointer();
+                            owner.edit.cancel_paste();
+                            owner.resize_drag = Some((mouse.row, resize.rows, resize.maximum));
+                            return Ok(WidgetInput::Consumed(None));
+                        }
+                    }
+                    MouseEventKind::Drag(MouseButton::Left)
+                    | MouseEventKind::Up(MouseButton::Left) => {
+                        if let Some((start, rows, maximum)) = owner.resize_drag {
+                            let rows = (i32::from(rows) + i32::from(mouse.row) - i32::from(start))
+                                .clamp(i32::from(self.props.terminal_rows.min), i32::from(maximum))
+                                as u16;
+                            owner.edit.redraw |= owner.rows != Some(rows);
+                            owner.rows = Some(rows);
+                            if matches!(mouse.kind, MouseEventKind::Up(_)) {
+                                owner.resize_drag = None;
+                            }
+                            return Ok(WidgetInput::Consumed(None));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            owner.resize_drag = None;
+        }
         if !read_only
             && owner.visible
             && let Event::Key(key) = event
@@ -305,13 +360,18 @@ impl Widget for Recipe {
             && owner.visible
             && let Event::Key(key) = event
             && key.code == KeyCode::Char('v')
-            && key.modifiers == KeyModifiers::CONTROL
-            && let Some(policy) = &self.props.file_paste
+            && matches!(key.modifiers, KeyModifiers::CONTROL | KeyModifiers::SUPER)
         {
+            if self.props.file_paste.is_none() {
+                if key.kind == KeyEventKind::Press {
+                    owner.edit.paste(false);
+                }
+                return Ok(WidgetInput::Consumed(None));
+            }
             return Ok(if key.kind == KeyEventKind::Press {
                 owner
                     .files
-                    .stage_clipboard(&owner.edit.editor, policy)
+                    .stage_clipboard(&owner.edit.editor, self.props.file_paste.as_ref().unwrap())
                     .map_or(WidgetInput::Consumed(None), WidgetInput::Emitted)
             } else {
                 WidgetInput::Consumed(None)
@@ -386,12 +446,8 @@ impl Widget for Recipe {
         })
     }
     fn pointer_capture(&self, state: &dyn Any) -> bool {
-        state
-            .downcast_ref::<Owner>()
-            .unwrap()
-            .edit
-            .editor
-            .dragging()
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        owner.resize_drag.is_some() || owner.edit.editor.dragging()
     }
     fn handles_tab(&self, state: &dyn Any, _: &str) -> bool {
         let owner = state.downcast_ref::<Owner>().unwrap();
@@ -436,17 +492,39 @@ impl Widget for Recipe {
             0
         };
         let rows = self.props.terminal_rows;
+        let vertical_inset = if inset == 0 && rows.resizable {
+            1
+        } else {
+            inset
+        };
         let maximum = rows.max_viewport_fraction.map_or(rows.max, |fraction| {
             ((f64::from(slots.viewport().height) * fraction) as u16).clamp(rows.min, rows.max)
         });
         Ok((
             width,
             owner
-                .edit
-                .editor
-                .rows(width.saturating_sub(inset))
-                .clamp(rows.min, maximum)
-                .saturating_add(inset)
+                .rows
+                .filter(|_| rows.resizable)
+                .map_or_else(
+                    || {
+                        owner
+                            .edit
+                            .editor
+                            .rows(width.saturating_sub(inset))
+                            .clamp(rows.min, maximum)
+                    },
+                    |rows_override| {
+                        rows_override.clamp(
+                            rows.min,
+                            slots
+                                .viewport()
+                                .height
+                                .saturating_sub(vertical_inset)
+                                .max(rows.min),
+                        )
+                    },
+                )
+                .saturating_add(vertical_inset)
                 .into(),
         ))
     }
@@ -512,7 +590,11 @@ impl Widget for Recipe {
             );
             super::border::inner(area)
         } else {
-            area
+            let mut inner = area;
+            if self.props.terminal_rows.resizable {
+                inner.bounds.height = inner.height.saturating_sub(1);
+            }
+            inner
         };
         let geometry = owner.edit.editor.paint_prepared(
             inner,
@@ -524,7 +606,18 @@ impl Widget for Recipe {
         );
         geometry.paint_scrollbar(
             buffer,
-            Style::default().fg(muted).bg(background),
+            Style::default()
+                .fg(terminal.map_or_else(
+                    || color(appearance.border),
+                    |p| super::paint::color(p.border),
+                ))
+                .bg(background),
+            Style::default()
+                .fg(terminal.map_or_else(
+                    || color(appearance.scrollbar.thumb.color),
+                    |p| super::paint::color(p.scrollbar),
+                ))
+                .bg(background),
             appearance.ascii,
         );
         if owner.edit.editor.text().is_empty() {
@@ -535,8 +628,55 @@ impl Widget for Recipe {
                 Style::default().fg(muted),
             );
         }
+        if let Some(error) = owner.edit.editor.error {
+            let error_area = ratatui::layout::Rect::new(
+                inner.visible().x,
+                inner.visible().bottom().saturating_sub(1),
+                inner.visible().width,
+                1,
+            );
+            buffer.set_stringn(
+                error_area.x,
+                error_area.y,
+                super::editor::error_message(error),
+                usize::from(error_area.width),
+                Style::default().fg(Color::Red).bg(background),
+            );
+        }
         let autofocus = owner.edit.focus.pending();
-        slots.native_geometry(Box::new(geometry))?;
+        let resize =
+            if self.props.terminal_rows.resizable && area.width >= 3 && !self.props.disabled {
+                area.point(
+                    usize::from(area.width - 3),
+                    area.height.saturating_sub(1) as usize,
+                )
+                .and_then(|point| {
+                    let grip = ratatui::layout::Rect::new(point.x, point.y, 3, 1);
+                    (grip.intersection(area.visible()) == grip).then(|| {
+                        buffer.set_string(
+                            point.x,
+                            point.y,
+                            if appearance.ascii { "[=]" } else { " ↕ " },
+                            Style::default().fg(border).bg(background),
+                        );
+                        Resize {
+                            grip,
+                            rows: inner.height.min(u32::from(u16::MAX)) as u16,
+                            maximum: slots
+                                .viewport()
+                                .height
+                                .saturating_sub(if appearance.border_width > 0.0 { 2 } else { 1 })
+                                .max(self.props.terminal_rows.min),
+                        }
+                    })
+                })
+            } else {
+                None
+            };
+        slots.native_geometry(Box::new(Presented {
+            editor: geometry,
+            resize,
+        }))?;
         if !self.props.disabled {
             slots.native_target("observe", area, self.props.tab_index, autofocus)?;
         }
@@ -546,10 +686,38 @@ impl Widget for Recipe {
         let owner = state
             .downcast_mut::<Owner>()
             .expect("terminal editor owner");
-        let geometry = *geometry.downcast::<Geometry>().expect("editor geometry");
-        owner.edit.editor.present_geometry(geometry.clone());
-        owner.edit.presented = Some(geometry);
+        let geometry = *geometry.downcast::<Presented>().expect("editor geometry");
+        owner.resize = geometry.resize;
+        owner.edit.editor.present_geometry(geometry.editor.clone());
+        owner.edit.presented = Some(geometry.editor);
         None
+    }
+    fn take_redraw(&self, state: &mut dyn Any) -> bool {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        std::mem::take(&mut owner.edit.redraw)
+    }
+    fn cancel_paste(&self, state: &mut dyn Any) {
+        let owner = state.downcast_mut::<Owner>().unwrap();
+        owner.edit.cancel_paste();
+    }
+    fn editing_menu(&self, state: &dyn Any) -> Option<(TextareaMenu, EditorSnapshot, [bool; 4])> {
+        let owner = state.downcast_ref::<Owner>().unwrap();
+        if self.props.disabled || !owner.visible {
+            return None;
+        }
+        let menu = self.props.menu.clone()?;
+        let selected = !owner.edit.editor.selected_text().is_empty();
+        let editable = !self.props.read_only && owner.persistence_ready();
+        Some((
+            menu,
+            owner.edit.snapshot(),
+            [
+                selected,
+                selected && editable,
+                editable,
+                !owner.edit.editor.text().is_empty(),
+            ],
+        ))
     }
     fn copy(&self, state: &dyn Any, _: bool) -> maka_ui_runtime::Result<Option<String>> {
         let owner = state.downcast_ref::<Owner>().unwrap();
@@ -578,6 +746,8 @@ impl Widget for Recipe {
         let owner = state.downcast_mut::<Owner>().unwrap();
         owner.visible = visible;
         if !visible {
+            owner.resize = None;
+            owner.resize_drag = None;
             owner.edit.invalidate_geometry();
             owner.files.suspend();
         }

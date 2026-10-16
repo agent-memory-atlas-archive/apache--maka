@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -205,6 +206,7 @@ export function networkSettings<N extends Node>(
             'network-' + name,
             'input',
             {
+              menu: editorMenu(props.theme, props.locale),
               accessibilityLabel: t('network-' + name),
               placeholder: '',
               autoFocus: name === 'host',
@@ -290,6 +292,7 @@ export function networkSettings<N extends Node>(
                 'network-secret',
                 'secret',
                 {
+                  menu: editorMenu(props.theme, props.locale),
                   accessibilityLabel: t('network-password'),
                   placeholder: t('network-password'),
                   autoFocus: false,

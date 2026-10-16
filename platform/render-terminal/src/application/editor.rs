@@ -24,6 +24,8 @@ use serde_json::{Value, json};
 use std::{ops::Range, sync::Arc};
 pub(super) struct Owner {
     pub editor: Editor,
+    pub redraw: bool,
+    pub clipboard: Option<super::textarea::paste::Paste>,
     pub presented: Option<Geometry>,
     pub focus: maka_ui_runtime::focus::FocusOnReveal,
     id: String,
@@ -38,8 +40,29 @@ pub(super) struct Owner {
 }
 impl Owner {
     pub fn invalidate_geometry(&mut self) {
+        self.cancel_paste();
         self.editor.invalidate_geometry();
         self.presented = None;
+    }
+    pub fn clipboard(&mut self, context: super::NativeContext) {
+        self.clipboard = Some(super::textarea::paste::Paste::new(context));
+    }
+    pub fn paste(&mut self, spaces: bool) {
+        if let Some(paste) = &mut self.clipboard {
+            paste.text(&self.editor, spaces);
+        }
+    }
+    pub fn cancel_paste(&mut self) {
+        if let Some(paste) = &mut self.clipboard {
+            paste.cancel_text();
+        }
+    }
+    pub fn poll_paste(&mut self, enabled: bool) {
+        let before = self.editor.error;
+        if let Some(paste) = &mut self.clipboard {
+            paste.poll_text(&mut self.editor, enabled);
+        }
+        self.redraw |= before != self.editor.error;
     }
     pub fn new(mut editor: Editor, initial_text: &str) -> Self {
         editor.insert(initial_text);
@@ -48,6 +71,8 @@ impl Owner {
         let last_selection = (editor.selection_range(), editor.selection_reversed());
         Self {
             editor,
+            clipboard: None,
+            redraw: false,
             presented: None,
             focus: Default::default(),
             id: uuid::Uuid::new_v4().to_string(),
@@ -195,6 +220,15 @@ impl Owner {
             text: owner.editor.text().to_owned(),
             revision: owner.revision,
         }))
+    }
+}
+
+pub(super) fn error_message(error: &str) -> &str {
+    match error {
+        "input-too-large" | "composer-too-large" => "Text exceeds the input limit",
+        "input-control" => "This input requires a single line of text",
+        "composer-control" => "Text contains unsupported control characters",
+        other => other,
     }
 }
 

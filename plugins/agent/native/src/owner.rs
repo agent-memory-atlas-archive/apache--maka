@@ -38,6 +38,7 @@ mod plan;
 mod preferences;
 mod projects;
 pub(crate) use notifications::ReturnRoute;
+mod global_instructions;
 mod patches;
 mod queue;
 mod recall;

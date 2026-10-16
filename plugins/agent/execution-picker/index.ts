@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -391,6 +392,7 @@ function frame<N extends Node>(
               state.editor,
               'input',
               {
+                menu: editorMenu(props.theme, props.locale),
                 appearance: props.theme.input,
                 accessibilityLabel: text.executionModelName,
                 placeholder: text.executionDefault,

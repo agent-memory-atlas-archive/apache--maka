@@ -123,7 +123,7 @@ pub struct Configuration {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentAssistantConfiguration")]
 pub struct AssistantConfiguration {
-    /// Read only the three instruction files in this home's .maka directory.
+    /// Select this home for global instructions and explicit AGENTS.md editing.
     #[serde(default)]
     #[schemars(length(min = 1, max = 4096))]
     pub home: Option<String>,
@@ -409,6 +409,91 @@ pub enum SessionChanged {
     Rejected {
         reason: Rejection,
     },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "AgentGlobalInstructionSource")]
+pub enum GlobalInstructionSource {
+    Maka,
+    Agents,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentGlobalInstructionsView")]
+pub enum GlobalInstructionsView {
+    Available {
+        source: GlobalInstructionSource,
+        path: String,
+        revision: String,
+        content: String,
+        exists: bool,
+    },
+    Unavailable,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentGlobalInstructionsRead")]
+pub struct GlobalInstructionsRead {}
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "AgentGlobalInstructionsUpdate")]
+pub struct GlobalInstructionsUpdate {
+    pub source: GlobalInstructionSource,
+    pub revision: String,
+    #[schemars(length(max = 65536))]
+    pub content: String,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentGlobalInstructionsUpdated")]
+pub enum GlobalInstructionsUpdated {
+    Saved,
+    Changed,
+    Unavailable,
+    Rejected,
+}
+
+/// Read-only suggestions resolved against the session's actual skill context.
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentSkillCandidatesRead")]
+pub struct SkillCandidatesRead {
+    pub session_id: String,
+    pub backend: SkillCandidatesBackend,
+    #[schemars(length(max = 4096))]
+    pub query: String,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "AgentSkillCandidatesBackend")]
+pub enum SkillCandidatesBackend {
+    Model {
+        model: ModelSelection,
+        thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,
+    },
+    Executor {
+        selection: crate::executor::Selection,
+    },
+}
+#[derive(Serialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
+#[schemars(rename = "AgentSkillCandidates")]
+pub struct SkillCandidates {
+    pub revision: Option<String>,
+    pub skills: Vec<SkillCandidate>,
+}
+#[derive(Serialize, JsonSchema)]
+#[schemars(rename = "AgentSkillCandidate")]
+pub struct SkillCandidate {
+    pub reference: String,
+    pub name: String,
+    pub description: String,
+    pub invocation: String,
 }
 /// The next turn's choice, independent of an already admitted execution.
 /// Model revisions are resolved afresh; preferences never grant execution authority.
@@ -1186,6 +1271,20 @@ pub fn contract() -> Contract {
         transport: Transport::Remote,
         interface: Interface::Service {
             methods: BTreeMap::from([
+                (
+                    "globalInstructions".into(),
+                    method::<GlobalInstructionsRead, GlobalInstructionsView>(MethodMode::Query),
+                ),
+                (
+                    "updateGlobalInstructions".into(),
+                    method::<GlobalInstructionsUpdate, GlobalInstructionsUpdated>(
+                        MethodMode::Mutation,
+                    ),
+                ),
+                (
+                    "skillCandidates".into(),
+                    method::<SkillCandidatesRead, SkillCandidates>(MethodMode::Query),
+                ),
                 (
                     "tools".into(),
                     Method {

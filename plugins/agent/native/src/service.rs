@@ -89,6 +89,23 @@ impl Handler for Agent {
                         context.emit(encode(page)?).await?;
                     }
                 }
+                "globalInstructions" => {
+                    let _: GlobalInstructionsRead = decode(input)?;
+                    encode(owner.global_instructions(context.scope()).await?)
+                }
+                "updateGlobalInstructions" => {
+                    context.operation().ok_or("agent_mutation_required")?;
+                    encode(
+                        owner
+                            .update_global_instructions(decode(input)?, context.scope())
+                            .await?,
+                    )
+                }
+                "skillCandidates" => encode(
+                    owner
+                        .skill_candidates(decode(input)?, context.scope())
+                        .await?,
+                ),
                 "tools" => encode(owner.tool_names()),
                 "plan" => encode(owner.plan(decode(input)?).await?),
                 "planHistory" => encode(owner.plan_history(decode(input)?).await?),

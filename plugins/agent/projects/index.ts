@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -320,6 +321,7 @@ export function projects<N extends Node>(
           'project-name',
           'input',
           {
+            menu: editorMenu(props.theme, props.locale),
             appearance: props.theme.input,
             accessibilityLabel: text.projectsName,
             placeholder: text.projectsName,

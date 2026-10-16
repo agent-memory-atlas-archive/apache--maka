@@ -44,6 +44,9 @@ fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() 
     let directory = tempfile::tempdir().unwrap();
     let workspace = directory.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
+    let skill = workspace.join(".agents/skills/pty-visible-skill");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "---\nname: pty-visible-skill\ndescription: PTY visible workspace skill\n---\nPreserve the task context.").unwrap();
     let ui = directory.path().join("ui");
     let host = ui.join("host");
     let host_guard = HostRootGuard::new(&host);
@@ -87,6 +90,21 @@ fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() 
     tui.wait_for("Message…");
     tui.wait_for("fixture-model");
     click(&mut tui, "Message…");
+    tui.send(b"/pty-visible");
+    tui.wait_for("PTY visible workspace skill");
+    evidence(&tui, "visible-skill-candidate");
+    tui.send(b"\t");
+    tui.wait_for("/skill:pty-visible-skill");
+    assert!(
+        !tui.screen
+            .snapshot()
+            .unwrap()
+            .screen
+            .contains("PTY visible workspace skill")
+    );
+    tui.send(b"\x01");
+    tui.send(b"\x7f");
+    tui.wait_for("Message…");
     paste(
         &mut tui,
         "Remember the Unicode decision and keep deployment pending.",
@@ -123,7 +141,7 @@ fn default_product_compaction_edits_one_shot_prompt_and_keeps_durable_divider() 
     for (columns, rows) in [(80, 24), (64, 20), (120, 40)] {
         tui.resize(columns, rows);
         tui.wait_until(|screen| {
-            screen.contains("Ctrl+A select all")
+            screen.contains("This prompt applies to this compression only.")
                 && screen
                     .lines()
                     .any(|line| line.contains("Compact") && line.contains("Cancel"))

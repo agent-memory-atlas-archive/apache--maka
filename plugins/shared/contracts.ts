@@ -340,6 +340,7 @@ export interface ComposerCommand {
   disabled: boolean;
 }
 export interface ComposerProps {
+  skillContext?: string;
   commands?: ComposerCommand[];
   approvalPending?: boolean;
   backend: ComposerBackend | null;
@@ -1177,6 +1178,7 @@ export const composerContract = component(
   'maka.agent.Composer',
   object(
     {
+      skillContext: string,
       approvalPending: { type: 'boolean' },
       commands: {
         type: 'array',

@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -217,6 +218,7 @@ export function subagentSettings<N extends Node>(
             'subagent-' + name,
             'input',
             {
+              menu: editorMenu(props.theme, props.locale),
               accessibilityLabel: t('subagents-' + name),
               placeholder: '',
               autoFocus: name === 'name',

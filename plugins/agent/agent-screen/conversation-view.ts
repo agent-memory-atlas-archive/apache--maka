@@ -265,6 +265,12 @@ export function conversationView<N extends Node>(
           reviewTarget(state)?.kind ?? '',
         ),
       commands: composerCommands(state, locale, target),
+      skillContext: JSON.stringify([
+        state.selected?.workspace,
+        state.selected?.tools,
+        state.selected?.collaborationMode,
+        state.selected?.boundaryRevision,
+      ]),
       backend: canExecute(state) ? selectedBackend(state) : null,
       context: state.selected?.id ?? null,
       dataSource: state.selected?.dataSource ?? null,

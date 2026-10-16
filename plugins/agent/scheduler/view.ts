@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   AgentScheduledDetail,
@@ -177,6 +178,7 @@ export function frame<N extends Node>(
             id,
             'input',
             {
+              menu: editorMenu(props.theme, props.locale),
               ...common,
               appearance:
                 presentation.target === 'tui'

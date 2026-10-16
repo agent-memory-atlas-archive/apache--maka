@@ -43,7 +43,7 @@ for (const target of ['tui', 'desktop'])
     visit(out.frame.view);
     assert.deepEqual(
       editors,
-      new Set(['assistant-name', 'assistant-tone', 'assistant-compaction']),
+      new Set(['assistant-name', 'assistant-global', 'assistant-compaction']),
     );
   });
 
@@ -287,3 +287,220 @@ for (const target of ['tui', 'desktop'])
     );
     assert.equal(out.frame.state.saved.compactionPrompt, 'Built-in instructions');
   });
+
+for (const target of ['tui', 'desktop']) {
+  const globalFixture = async () => {
+    const { component } = await import(`../dist/packages/assistant-preferences/${target}.js`);
+    const props = { theme, locale: 'en', open: true, busy: false, shell: { back: 0 } };
+    let out = component.mount(props, {});
+    const event = (input) => (out = component.event(out.frame.state, input, props, {}));
+    const raw = (key) => event({ kind: 'raw', key, event: {} });
+    const finish = (value) =>
+      event({
+        kind: 'action',
+        key: out.frame.state.global.pending.key,
+        event: { status: 'succeeded', value },
+      });
+    const observed = (content, revision, receipt = null, owner = 'global-editor') => ({
+      revision,
+      snapshot: { text: { owner, revision, bytes: Buffer.byteLength(content) }, marked: null },
+      receipt,
+    });
+    const field = (value) =>
+      event({ kind: 'component', child: 'assistant-global', name: 'changed', event: value });
+    const source = {
+      kind: 'available',
+      source: 'agents',
+      path: '/remote/home/.agents/AGENTS.md',
+      revision: 'source-v1',
+      content: 'Original 中文',
+      exists: true,
+    };
+    const ack = (revision) => {
+      const command = out.frame.state.global.command;
+      field(
+        observed(command.edit.text, revision, {
+          owner: command.owner,
+          sequence: command.sequence,
+          outcome: { status: 'applied' },
+        }),
+      );
+    };
+    finish([]);
+    assert.equal(out.actions[0].method, 'globalInstructions');
+    finish(source);
+    field(observed('', 0));
+    ack(1);
+    const reply = (
+      kind,
+      reference = {
+        contract: { name: 'maka.agent.Agent', version: 1 },
+        method: 'updateGlobalInstructions',
+        operation: 'global-save-1',
+      },
+    ) => ({
+      reference,
+      receipt: { kind: 'recorded', outcome: { kind: 'returned', value: { kind } } },
+    });
+    return {
+      get out() {
+        return out;
+      },
+      event,
+      raw,
+      finish,
+      observed,
+      field,
+      source,
+      ack,
+      reply,
+    };
+  };
+
+  test(`Assistant ${target} global instructions save exact source bytes and preserve unrelated preferences`, async () => {
+    const f = await globalFixture();
+    const preferences = structuredClone(f.out.frame.state.fields);
+    const content = 'Keep all 中文 instructions.\n' + 'x'.repeat(1200);
+    const draft = f.observed(content, 2);
+    f.field(draft);
+    f.raw('global-save');
+    assert.deepEqual(f.out.actions[0].input, { start: 0, end: Buffer.byteLength(content) });
+    assert.deepEqual(f.out.actions[0].resources.text.input, {
+      kind: 'at_revision',
+      owner: 'global-editor',
+      revision: 2,
+    });
+    f.finish({ metadata: draft.snapshot.text, text: content });
+    const action = f.out.actions[0];
+    assert.equal(action.binding, 'agent');
+    assert.equal(action.method, 'updateGlobalInstructions');
+    assert.deepEqual(action.input, { source: 'agents', revision: 'source-v1', content });
+    assert.equal(action.recovery.kind, 'assistant-global-instructions/v1');
+    f.event({
+      kind: 'action',
+      key: action.key,
+      event: { status: 'operation', reply: f.reply('saved') },
+    });
+    f.finish({ ...f.source, revision: 'source-v2', content });
+    assert.equal(f.out.frame.state.global.command.edit.text, content);
+    assert.deepEqual(f.out.frame.state.fields, preferences);
+    assert.equal(f.out.frame.state.global.saved.path, f.source.path);
+  });
+
+  test(`Assistant ${target} source conflict preserves draft until explicit reload`, async () => {
+    const f = await globalFixture();
+    const draft = f.observed('My unsaved draft', 2);
+    f.field(draft);
+    f.raw('global-save');
+    f.finish({ metadata: draft.snapshot.text, text: 'My unsaved draft' });
+    f.event({
+      kind: 'action',
+      key: f.out.actions[0].key,
+      event: { status: 'operation', reply: f.reply('changed') },
+    });
+    f.finish({
+      ...f.source,
+      source: 'maka',
+      path: '/remote/home/.maka/AGENTS.md',
+      revision: 'external',
+      content: 'External edit',
+    });
+    assert.deepEqual(f.out.frame.state.global.observation, draft);
+    assert.equal(f.out.frame.state.global.command, null);
+    assert.equal(f.out.frame.state.global.conflict, true);
+    f.raw('global-save');
+    assert.equal(f.out.actions.length, 0);
+    f.raw('global-reload');
+    f.finish({ ...f.source, revision: 'external', content: 'External edit' });
+    assert.equal(f.out.frame.state.global.command.edit.text, 'External edit');
+    assert.equal(f.out.frame.state.global.conflict, false);
+  });
+
+  test(`Assistant ${target} unknown global save recovers its original receipt without another write`, async () => {
+    const f = await globalFixture();
+    const draft = f.observed('Draft', 2);
+    f.field(draft);
+    f.raw('global-save');
+    f.finish({ metadata: draft.snapshot.text, text: 'Draft' });
+    const action = f.out.actions[0];
+    f.event({
+      kind: 'action',
+      key: action.key,
+      event: { status: 'failed', diagnostic: 'interrupted' },
+    });
+    f.raw('global-save');
+    assert.equal(f.out.actions.length, 0);
+    f.raw('global-history');
+    const reply = f.reply('saved');
+    f.finish([{ cursor: 1, reference: reply.reference, recovery: action.recovery }]);
+    f.finish([]);
+    assert.equal(f.out.actions[0].binding, 'receipts');
+    assert.deepEqual(f.out.actions[0].input, reply.reference);
+    f.finish(reply);
+    f.finish({ ...f.source, revision: 'saved', content: 'Draft' });
+    assert.equal(f.out.frame.state.global.current, null);
+  });
+
+  test(`Assistant ${target} rejects oversized and stale global drafts without truncation`, async () => {
+    const f = await globalFixture();
+    f.field(f.observed('中'.repeat(22000), 2));
+    f.raw('global-save');
+    assert.equal(f.out.actions.length, 0);
+    assert.equal(f.out.frame.state.global.notice, 'assistant-global-limit');
+    const draft = f.observed('first', 3);
+    f.field(draft);
+    f.raw('global-save');
+    f.field(f.observed('changed during read', 4));
+    f.finish({ metadata: draft.snapshot.text, text: 'first' });
+    assert.equal(f.out.actions.length, 0);
+    assert.equal(f.out.frame.state.global.current, null);
+  });
+
+  test(`Assistant ${target} name save clears the legacy tone without reading another editor`, async () => {
+    const { component } = await import(`../dist/packages/assistant-preferences/${target}.js`);
+    const props = { theme, locale: 'en', open: true, busy: false, shell: { back: 0 } };
+    let out = component.mount(props, {});
+    const event = (input) => (out = component.event(out.frame.state, input, props, {}));
+    const finish = (value) =>
+      event({
+        kind: 'action',
+        key: out.frame.state.pending.key,
+        event: { status: 'succeeded', value },
+      });
+    finish([]);
+    finish({
+      revision: 7,
+      displayName: 'Old',
+      assistantTone: 'Legacy',
+      compactionPrompt: 'Prompt',
+      defaultCompactionPrompt: 'Prompt',
+      workspaceInstructions: true,
+      incognitoActive: false,
+      shellTitles: true,
+    });
+    const observed = (text, revision, receipt = null) => ({
+      revision,
+      snapshot: { text: { owner: 'name', revision, bytes: Buffer.byteLength(text) }, marked: null },
+      receipt,
+    });
+    const field = (value) =>
+      event({ kind: 'component', child: 'assistant-name', name: 'changed', event: value });
+    field(observed('', 0));
+    const command = out.frame.state.fields.name.command;
+    field(
+      observed('Old', 1, {
+        owner: command.owner,
+        sequence: command.sequence,
+        outcome: { status: 'applied' },
+      }),
+    );
+    const draft = observed('New', 2);
+    field(draft);
+    event({ kind: 'raw', key: 'save', event: {} });
+    finish({ metadata: draft.snapshot.text, text: 'New' });
+    assert.deepEqual(out.actions[0].input, {
+      expectedRevision: 7,
+      mutation: { kind: 'personalization', displayName: 'New', assistantTone: '' },
+    });
+  });
+}

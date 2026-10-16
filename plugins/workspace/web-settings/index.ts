@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -206,6 +207,7 @@ export function webSettings<N extends Node>(
           'web-secret',
           'secret',
           {
+            menu: editorMenu(props.theme, props.locale),
             appearance:
               presentation.target === 'tui'
                 ? {

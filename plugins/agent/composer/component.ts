@@ -50,6 +50,7 @@ import {
 import { tuiText, copy } from './locale.js';
 import { output, fill, pixels, type Presentation, type Node } from '../../shared/view.js';
 import { sameValue } from '../../shared/value.js';
+import { editorMenu } from '../../shared/editor-menu.js';
 
 interface Submission {
   preview?: { key: string; text: string };
@@ -90,7 +91,20 @@ interface DraftEntry {
   delivery: Delivery | null;
   notice: 'draftKept' | 'empty' | 'skillInputUnavailable' | 'unknownCommand' | null;
 }
+interface SkillCandidate {
+  reference: string;
+  name: string;
+  description: string;
+  invocation: string;
+}
+interface SkillSearch {
+  scope: string;
+  query: string;
+  key: string;
+  items: SkillCandidate[];
+}
 interface Draft {
+  skills: SkillSearch | null;
   revision: number;
   active: string | null;
   serial: number;
@@ -101,13 +115,23 @@ interface Draft {
 }
 // Only a single slash token is command input. Paths and multiline drafts stay prose.
 function slashQuery(text: string): string | null {
+  if (/^\/skill:[A-Za-z0-9._-]+$/u.test(text)) return null;
   return /^\/[^\s/\\]*$/u.test(text) ? text.slice(1).toLocaleLowerCase() : null;
 }
-function candidates(props: ComposerProps, text: string) {
+function candidates(props: ComposerProps, text: string, skills: SkillCandidate[] = []) {
   const query = slashQuery(text);
   return query === null
     ? []
-    : (props.commands ?? []).filter(
+    : [
+        ...(props.commands ?? []).map((item) => ({ ...item, invocation: null as string | null })),
+        ...skills.map((item) => ({
+          id: `skill:${item.reference}`,
+          command: item.name,
+          label: item.description,
+          disabled: false,
+          invocation: item.invocation,
+        })),
+      ].filter(
         (item) =>
           !item.disabled &&
           (item.command.toLocaleLowerCase().includes(query) ||
@@ -304,7 +328,34 @@ export function composer<N extends Node>(
       current.prefix.dismissed !== observation.snapshot.text.revision &&
       shortText !== null &&
       slashQuery(shortText) !== null;
-    const choices = menuOpen ? candidates(props, shortText!) : [];
+    const skillScope = JSON.stringify([
+      props.context,
+      props.dataSource,
+      props.backend,
+      props.skillContext,
+    ]);
+    const skillQuery = shortText === null ? null : slashQuery(shortText);
+    if (
+      !props.enabled ||
+      !props.backend ||
+      skillQuery === null ||
+      current?.prefix.dismissed === observation?.snapshot.text.revision ||
+      state.skills?.scope !== skillScope ||
+      state.skills.query !== skillQuery
+    )
+      state.skills = null;
+    if (menuOpen && props.backend && !state.skills) {
+      const key = `skills-${++state.serial}`;
+      state.skills = { scope: skillScope, query: skillQuery!, key, items: [] };
+      actions.push(
+        action(key, 'agent', 'skillCandidates', {
+          sessionId: props.context,
+          backend: props.backend,
+          query: skillQuery,
+        }),
+      );
+    }
+    const choices = menuOpen ? candidates(props, shortText!, state.skills?.items) : [];
     if (current)
       current.prefix.selected = Math.min(current.prefix.selected, Math.max(0, choices.length - 1));
     const selected = current?.prefix.selected ?? 0;
@@ -358,18 +409,7 @@ export function composer<N extends Node>(
     const textarea: TextareaProps = {
       appearance:
         target === 'tui' ? { ...props.theme.textarea, borderWidth: 0 } : props.theme.textarea,
-      menu: {
-        appearance: props.theme.menu,
-        labels: {
-          title: text.edit,
-          undo: text.undo,
-          redo: text.redo,
-          cut: text.cut,
-          copy: text.copy,
-          paste: text.paste,
-          selectAll: text.selectAll,
-        },
-      },
+      menu: editorMenu(props.theme, props.locale),
       accessibilityLabel: text.draft,
       readOnly: false,
       disabled: false,
@@ -633,6 +673,7 @@ export function composer<N extends Node>(
     mount: (props) =>
       composerFrame(
         {
+          skills: null,
           revision: 0,
           serial: 0,
           active: null,
@@ -653,6 +694,21 @@ export function composer<N extends Node>(
         actions: Action[] = [];
       if (input.kind === 'action') {
         const outcome = input.event as ActionOutcome;
+        if (state.skills?.key === input.key) {
+          const scope = JSON.stringify([
+            props.context,
+            props.dataSource,
+            props.backend,
+            props.skillContext,
+          ]);
+          if (state.skills.scope === scope && outcome.status === 'succeeded') {
+            const result = outcome.value as { skills: SkillCandidate[] };
+            state.skills.items = result.skills.filter((item) =>
+              /^\/skill:[A-Za-z0-9._-]+$/u.test(item.invocation),
+            );
+          }
+          return composerFrame(state, props, events, actions);
+        }
         const prefixEntry = state.entries.find((entry) => entry.prefix.read?.key === input.key);
         if (prefixEntry?.prefix.read) {
           const read = prefixEntry.prefix.read;
@@ -864,7 +920,22 @@ export function composer<N extends Node>(
       const observation = current?.observation;
       let command: string | undefined;
       const shortText = current ? prefixText(current) : null;
-      const choices = shortText === null ? [] : candidates(props, shortText);
+      const skillScope = JSON.stringify([
+        props.context,
+        props.dataSource,
+        props.backend,
+        props.skillContext,
+      ]);
+      const choices =
+        shortText === null
+          ? []
+          : candidates(
+              props,
+              shortText,
+              state.skills?.scope === skillScope && state.skills.query === slashQuery(shortText)
+                ? state.skills.items
+                : [],
+            );
       const menuOpen =
         current &&
         observation &&
@@ -889,7 +960,7 @@ export function composer<N extends Node>(
           current.prefix.selected = choices.length
             ? (selected + (navigation.key === 'up' ? -1 : 1) + choices.length) % choices.length
             : 0;
-        else if (choices[selected] && navigation.key === 'tab') {
+        else if (choices[selected] && (navigation.key === 'tab' || choices[selected].invocation)) {
           current.delivery = {
             kind: 'clear',
             caller: null,
@@ -897,7 +968,12 @@ export function composer<N extends Node>(
               owner: observation.snapshot.text.owner,
               sequence: ++state.serial,
               basedOn: observation.revision,
-              edit: { kind: 'replace', text: `/${choices[selected].command}` },
+              edit: {
+                kind: 'replace',
+                text: choices[selected].invocation
+                  ? `${choices[selected].invocation} `
+                  : `/${choices[selected].command}`,
+              },
             },
           };
         } else if (choices[selected] && navigation.key === 'enter') command = choices[selected].id;
@@ -905,7 +981,21 @@ export function composer<N extends Node>(
       }
       if (input.kind === 'raw' && input.key.startsWith('slash:')) {
         if (!menuOpen) return composerFrame(state, props);
-        command = choices.find((item) => `slash:${item.id}` === input.key)?.id;
+        const choice = choices.find((item) => `slash:${item.id}` === input.key);
+        if (choice?.invocation) {
+          current.delivery = {
+            kind: 'clear',
+            caller: null,
+            command: {
+              owner: observation.snapshot.text.owner,
+              sequence: ++state.serial,
+              basedOn: observation.revision,
+              edit: { kind: 'replace', text: `${choice.invocation} ` },
+            },
+          };
+          return composerFrame(state, props);
+        }
+        command = choice?.id;
         if (!command) return composerFrame(state, props);
       }
       if (input.kind === 'raw' && input.key === 'draft-retry' && current?.checkpoint) {

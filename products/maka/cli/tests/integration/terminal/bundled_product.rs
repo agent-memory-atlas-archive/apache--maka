@@ -66,9 +66,30 @@ fn select_text(tui: &mut Pty, text: &str) {
     );
 }
 
-fn copy_selection(tui: &mut Pty, expected: &str) {
+fn clipboard_output(tui: &mut Pty, start: usize, expected: &str) {
     use base64::{Engine, engine::general_purpose::STANDARD};
     let expected = format!("\x1b]52;c;{}\x07", STANDARD.encode(expected));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        tui.read();
+        if tui.output[start..]
+            .windows(expected.len())
+            .any(|bytes| bytes == expected.as_bytes())
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "selected text did not reach the terminal clipboard"
+        );
+        assert!(
+            tui.child.try_wait().unwrap().is_none(),
+            "copy exited the application"
+        );
+    }
+}
+
+fn copy_selection(tui: &mut Pty, expected: &str) {
     let gestures: &[&[u8]] = if cfg!(target_os = "macos") {
         &[b"\x03", b"\x1b[99;9u"]
     } else {
@@ -77,25 +98,22 @@ fn copy_selection(tui: &mut Pty, expected: &str) {
     for gesture in gestures {
         let start = tui.output.len();
         tui.send(gesture);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            tui.read();
-            if tui.output[start..]
-                .windows(expected.len())
-                .any(|bytes| bytes == expected.as_bytes())
-            {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "selected prompt did not reach the terminal clipboard for {gesture:?}"
-            );
-            assert!(
-                tui.child.try_wait().unwrap().is_none(),
-                "copy exited the application"
-            );
-        }
+        clipboard_output(tui, start, expected);
     }
+}
+
+fn edit_menu(tui: &mut Pty, label: &str) {
+    tui.wait_for(label);
+    let screen = tui.screen.snapshot().unwrap().screen;
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains(label))
+        .unwrap();
+    let column = line[..line.find(label).unwrap()].width() + 2;
+    tui.send(format!("\x1b[<2;{column};{}M\x1b[<2;{column};{}m", row + 1, row + 1).as_bytes());
+    tui.wait_for("Select all");
+    tui.wait_for("Paste");
 }
 
 #[test]
@@ -721,6 +739,70 @@ fn first_install_failure_keeps_original_host_error_after_terminal_restoration() 
     assert!(output.rfind("Host local: plugin").unwrap() > output.rfind("\x1b[?1049l").unwrap());
 }
 
+fn editor_thumb(screen: &str, label: &str) -> Vec<usize> {
+    let lines: Vec<_> = screen.lines().collect();
+    let label = lines
+        .iter()
+        .position(|line| line.contains(label))
+        .expect("editor label");
+    let (border, line) = lines
+        .iter()
+        .enumerate()
+        .skip(label + 1)
+        .find(|(_, line)| line.contains('╭'))
+        .expect("editor border");
+    let right = line[..line.rfind('╮').expect("right border")].width();
+    lines
+        .iter()
+        .enumerate()
+        .skip(border + 1)
+        .take_while(|(_, line)| !line.contains('╰'))
+        .filter_map(|(row, line)| (line.chars().nth(right - 1) == Some('┃')).then_some(row))
+        .collect()
+}
+fn settings_evidence(tui: &Pty, name: &str) {
+    if let Some(path) = std::env::var_os("MAKA_SETTINGS_EVIDENCE") {
+        std::fs::create_dir_all(&path).unwrap();
+        let path = std::path::PathBuf::from(path);
+        std::fs::write(path.join(format!("{name}.ansi")), &tui.output).unwrap();
+        std::fs::write(
+            path.join(format!("{name}.txt")),
+            tui.screen.snapshot().unwrap().screen,
+        )
+        .unwrap();
+    }
+}
+
+fn resize_editor(tui: &mut Pty, label: &str, delta: i32) {
+    let grip = |screen: &str| {
+        let start = screen.lines().position(|line| line.contains(label))?;
+        screen
+            .lines()
+            .enumerate()
+            .skip(start + 1)
+            .find_map(|(row, line)| {
+                let column = line.find('↕')?;
+                Some((row, line[..column].width()))
+            })
+    };
+    tui.wait_until(|screen| grip(screen).is_some());
+    let (row, column) = grip(&tui.screen.snapshot().unwrap().screen).expect("visible resize grip");
+    let end = (row as i32 + delta) as usize;
+    tui.send(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<32;{};{}M\x1b[<0;{};{}m",
+            column + 1,
+            row + 1,
+            column + 1,
+            end + 1,
+            column + 1,
+            end + 1
+        )
+        .as_bytes(),
+    );
+    tui.wait_until(|screen| grip(screen).is_some_and(|(row, _)| row == end));
+}
+
 #[test]
 #[ignore = "opens assistant preferences in the real product PTY and after restart"]
 fn bundled_assistant_preferences_opens_with_compaction_editor() {
@@ -729,16 +811,18 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
     std::fs::create_dir(&workspace).unwrap();
     let ui = directory.path().join("ui");
     let _host_guard = HostRootGuard::new(&ui.join("host"));
+    let home = directory.path().join("home");
+    std::fs::create_dir_all(home.join(".agents")).unwrap();
+    std::fs::write(home.join(".agents/AGENTS.md"), "PTY global instruction.").unwrap();
+    let configuration = directory.path().join("installation.json");
+    std::fs::write(&configuration, serde_json::to_vec(&json!({
+        "presentation":"tui", "locale":"en", "scheme":"dark", "hostRoot":ui.join("host"),
+        "agent":{"assistant":{"home":home},"workspaceRoots":[{"label":"Workspace","path":workspace}], "tools":[],"permissions":{"access":"read_only","requestPermissions":true}}
+    })).unwrap()).unwrap();
     for first in [true, false] {
         let mut args = vec!["application", "launch", "--root", ui.to_str().unwrap()];
         if first {
-            args.extend([
-                "--workspace",
-                workspace.to_str().unwrap(),
-                "--trust-workspace",
-                "--locale",
-                "en",
-            ]);
+            args.extend(["--configuration", configuration.to_str().unwrap()]);
         }
         let mut tui = Pty::spawn(&args);
         tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
@@ -749,12 +833,43 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
         tui.send(b"\r");
         click(&mut tui, "Assistant preferences");
         tui.wait_for("Your name");
-        tui.wait_for("Assistant tone");
+        tui.wait_for("Global instructions");
+        tui.wait_for(if first {
+            "PTY global instruction."
+        } else {
+            "PTY updated global instruction."
+        });
+        assert!(
+            tui.screen
+                .snapshot()
+                .unwrap()
+                .screen
+                .contains(".agents/AGENTS.md")
+        );
+        resize_editor(&mut tui, "Global instructions", 4);
+        resize_editor(&mut tui, "Global instructions", -4);
+        if first {
+            click(&mut tui, "PTY global instruction.");
+            tui.send(b"\x01");
+            tui.send(b"\x1b[200~PTY updated global instruction.\x1b[201~");
+            tui.wait_for("PTY updated global instruction.");
+            click(&mut tui, "Save global instructions");
+            tui.wait_for("Global instructions saved.");
+            assert_eq!(
+                std::fs::read_to_string(home.join(".agents/AGENTS.md")).unwrap(),
+                "PTY updated global instruction."
+            );
+            assert!(!home.join(".maka/AGENTS.md").exists());
+        }
         tui.wait_for("Compression prompt");
-        tui.wait_for("## Critical Context");
+        assert!(
+            !editor_thumb(&tui.screen.snapshot().unwrap().screen, "Compression prompt").is_empty(),
+            "partly clipped prompt must still show its scroll thumb"
+        );
+        settings_evidence(&tui, "settings-overview");
         // Scroll the settings pane until the entire prompt editor fits, then
         // keep wheeling inside it past both boundaries.
-        for _ in 0..24 {
+        for _ in 0..80 {
             let screen = tui.screen.snapshot().unwrap().screen;
             let (row, line) = screen
                 .lines()
@@ -778,7 +893,7 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
             .enumerate()
             .find(|(_, line)| line.contains("Compression prompt"))
             .unwrap();
-        assert!(row <= 4);
+        assert!(row <= 4, "prompt must reach top of settings pane: {screen}");
         let column = line[..line.find("Compression prompt").unwrap()].width() + 4;
         tui.send(
             format!("\x1b[<64;{column};{}M", row + 3)
@@ -795,12 +910,23 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
                 .position(|line| line.contains("Compression prompt")),
             Some(row)
         );
+        let top_thumb = editor_thumb(&tui.screen.snapshot().unwrap().screen, "Compression prompt");
+        assert!(!top_thumb.is_empty());
+        settings_evidence(&tui, "settings-prompt-top");
         tui.send(
             format!("\x1b[<65;{column};{}M", row + 3)
                 .repeat(80)
                 .as_bytes(),
         );
         tui.wait_for("details are needed.");
+        let bottom_thumb =
+            editor_thumb(&tui.screen.snapshot().unwrap().screen, "Compression prompt");
+        assert!(!bottom_thumb.is_empty());
+        assert_ne!(
+            top_thumb, bottom_thumb,
+            "wheel scrolling must move the visible thumb"
+        );
+        settings_evidence(&tui, "settings-prompt-bottom");
         assert_eq!(
             tui.screen
                 .snapshot()
@@ -809,6 +935,21 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
                 .lines()
                 .position(|line| line.contains("Compression prompt")),
             Some(row)
+        );
+        let screen = tui.screen.snapshot().unwrap().screen;
+        let tail = screen
+            .lines()
+            .position(|line| line.contains("details are needed."))
+            .unwrap();
+        assert!(
+            tail >= row + 20,
+            "the prompt should use the full settings pane: {screen}"
+        );
+        resize_editor(&mut tui, "Compression prompt", 5);
+        resize_editor(&mut tui, "Compression prompt", -5);
+        assert!(
+            !screen.contains("New subagent"),
+            "subagents have their own settings category"
         );
         // Mouse-select a visible line, then copy the entire native prompt.
         let line = "## Critical Context";
@@ -820,16 +961,17 @@ fn bundled_assistant_preferences_opens_with_compaction_editor() {
             &mut tui,
             maka_agent_facts::context::DEFAULT_COMPACTION_PROMPT,
         );
-        if let Some(path) = std::env::var_os("MAKA_SETTINGS_EVIDENCE") {
-            std::fs::create_dir_all(&path).unwrap();
-            let path = std::path::PathBuf::from(path);
-            std::fs::write(path.join("settings.ansi"), &tui.output).unwrap();
-            std::fs::write(
-                path.join("settings.txt"),
-                tui.screen.snapshot().unwrap().screen,
-            )
-            .unwrap();
-        }
+        edit_menu(&mut tui, "details are needed.");
+        click(&mut tui, "Select all");
+        edit_menu(&mut tui, "details are needed.");
+        let start = tui.output.len();
+        click(&mut tui, "Copy");
+        clipboard_output(
+            &mut tui,
+            start,
+            maka_agent_facts::context::DEFAULT_COMPACTION_PROMPT,
+        );
+        settings_evidence(&tui, "settings");
         tui.send(b"\x11");
         tui.finish();
         assert!(!String::from_utf8_lossy(&tui.output).contains("invalid UI activation"));

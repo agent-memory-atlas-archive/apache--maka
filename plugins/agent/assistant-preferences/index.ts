@@ -17,6 +17,13 @@
  * under the License.
  */
 
+import {
+  globalInstructionsMount,
+  globalInstructionsEvent,
+  globalInstructionsView,
+  type GlobalInstructionsState,
+} from './global-instructions.js';
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -40,7 +47,7 @@ import { sameValue } from '../../shared/value.js';
 import { copy, tuiText } from './locale.js';
 import { fill, output, type Node, type Presentation } from '../../shared/view.js';
 
-type Name = 'name' | 'tone' | 'compaction';
+type Name = 'name' | 'compaction';
 interface Field {
   observation: EditorObservation | null;
   command: EditorCommand | null;
@@ -54,13 +61,14 @@ type Request =
   | { kind: 'history'; after: number }
   | { kind: 'field'; name: Name; captured: EditorObservation };
 interface State extends PageState {
+  global: GlobalInstructionsState;
   revision: number;
   serial: number;
   saved: SettingsAssistantPreferences | null;
   fields: Record<Name, Field>;
   pending: { key: string; request: Request } | null;
   current: { input: SettingsPreferencesUpdate; reference: RecoveryRef | null } | null;
-  capture: { name: EditorObservation; tone: EditorObservation; displayName: string | null } | null;
+  capture: { name: EditorObservation } | null;
   compactionCapture: EditorObservation | null;
   restoring: boolean;
   notice: string | null;
@@ -186,12 +194,12 @@ export function assistantPreferences<N extends Node>(
       t = (key: string) => tuiText(props.locale, key);
     const busy = disabled(state, props),
       text = copy(props.locale);
-    const fields = (['name', 'tone', 'compaction'] as const).map((name) => {
+    const fields = (['name', 'compaction'] as const).map((name) => {
       const common = {
         accessibilityLabel: t('assistant-' + name),
         placeholder: '',
         autoFocus: name === 'name',
-        tabIndex: name === 'name' ? 1 : name === 'tone' ? 2 : 3,
+        tabIndex: name === 'name' ? 1 : 3,
         readOnly: false,
         disabled: busy || !state.fields[name].ready || !!state.fields[name].command,
         command: state.fields[name].command,
@@ -201,17 +209,22 @@ export function assistantPreferences<N extends Node>(
           ? presentation.slot(
               'assistant-name',
               'input',
-              { ...common, appearance: props.theme.input } satisfies InputProps,
+              {
+                menu: editorMenu(props.theme, props.locale),
+                ...common,
+                appearance: props.theme.input,
+              } satisfies InputProps,
               { changed: 'changed' },
             )
           : presentation.slot(
               'assistant-' + name,
               'editor',
               {
+                menu: editorMenu(props.theme, props.locale),
                 ...common,
                 appearance: props.theme.textarea,
                 softWrap: true,
-                terminalRows: name === 'compaction' ? { min: 6, max: 12 } : { min: 3, max: 5 },
+                terminalRows: { min: 4, max: 24, resizable: true },
               } satisfies TextareaProps,
               { changed: 'changed' },
             );
@@ -224,32 +237,17 @@ export function assistantPreferences<N extends Node>(
     const content = ui.box(
       'assistant-preferences-content',
       [
-        ...fields.slice(0, 2),
-        ui.text(
-          'assistant-notice',
-          state.notice && !state.pending ? t(state.notice) : ' ',
-          13,
-          props.theme.muted,
-        ),
+        fields[0]!,
+        ...(state.notice && !state.pending
+          ? [ui.text('assistant-notice', t(state.notice), 13, props.theme.muted)]
+          : []),
         ui.button(
           'save',
           t('assistant-save'),
-          busy ||
-            (['name', 'tone'] as const).some(
-              (name) => !state.fields[name].ready || !!state.fields[name].command,
-            ),
+          busy || !state.fields.name.ready || !!state.fields.name.command,
         ),
-        fields[2]!,
-        ...(presentation.target === 'tui'
-          ? [
-              ui.text(
-                'compaction-copy-hint',
-                t('assistant-compaction-copy-hint'),
-                12,
-                props.theme.muted,
-              ),
-            ]
-          : []),
+        globalInstructionsView(state.global, props, presentation),
+        fields[1]!,
         ui.button(
           'save-compaction',
           t('assistant-compaction-save'),
@@ -263,20 +261,12 @@ export function assistantPreferences<N extends Node>(
             !state.fields.compaction.ready ||
             !!state.fields.compaction.command,
         ),
-        ui.text('assistant-compaction-help', t('assistant-compaction-help'), 13, props.theme.muted),
-        ui.text('assistant-help', t('assistant-instructions-help'), 13, props.theme.muted),
         ui.button(
           'instructions',
           `${t('assistant-instructions')}: ${state.saved?.workspaceInstructions ? text.settingOn : text.settingOff}`,
           busy || !state.saved,
           false,
           { background: 0, align: 'start' },
-        ),
-        ui.text(
-          'assistant-shell-titles-help',
-          t('assistant-shell-titles-help'),
-          13,
-          props.theme.muted,
         ),
         ui.button(
           'shell-titles',
@@ -285,7 +275,6 @@ export function assistantPreferences<N extends Node>(
           false,
           { background: 0, align: 'start' },
         ),
-        ui.text('assistant-privacy-help', t('assistant-privacy-help'), 13, props.theme.muted),
         ui.button(
           'privacy',
           `${t('assistant-privacy')}: ${state.saved?.incognitoActive ? text.settingOn : text.settingOff}`,
@@ -339,7 +328,8 @@ export function assistantPreferences<N extends Node>(
           revision: 0,
           serial: 0,
           saved: null,
-          fields: { name: field(), tone: field(), compaction: field() },
+          fields: { name: field(), compaction: field() },
+          global: globalInstructionsMount(),
           pending: null,
           current: null,
           capture: null,
@@ -349,6 +339,7 @@ export function assistantPreferences<N extends Node>(
         };
         const actions: Action[] = [];
         history(state, actions);
+        globalInstructionsEvent(state.global, null, props, actions);
         return frame(state, props, actions);
       },
       update(state, props) {
@@ -359,8 +350,9 @@ export function assistantPreferences<N extends Node>(
         state.revision++;
         const actions: Action[] = [],
           events: Emission[] = [];
+        globalInstructionsEvent(state.global, input, props, actions);
         if (input.kind === 'component') {
-          const name = (['name', 'tone', 'compaction'] as const).find(
+          const name = (['name', 'compaction'] as const).find(
             (name) => input.kind === 'component' && input.child === 'assistant-' + name,
           );
           if (name && input.name === 'changed') {
@@ -375,9 +367,7 @@ export function assistantPreferences<N extends Node>(
               field.reset =
                 name === 'name'
                   ? (state.saved?.displayName ?? '')
-                  : name === 'tone'
-                    ? (state.saved?.assistantTone ?? '')
-                    : (state.saved?.compactionPrompt ?? '');
+                  : (state.saved?.compactionPrompt ?? '');
             }
             field.observation = observed;
             const receipt = observed.receipt;
@@ -438,15 +428,11 @@ export function assistantPreferences<N extends Node>(
                 for (const name of (r.reset === 'compaction'
                   ? ['compaction']
                   : r.reset === 'personalization'
-                    ? ['name', 'tone']
-                    : ['name', 'tone', 'compaction']) as Name[]) {
+                    ? ['name']
+                    : ['name', 'compaction']) as Name[]) {
                   state.fields[name].ready = false;
                   state.fields[name].reset =
-                    name === 'name'
-                      ? state.saved.displayName
-                      : name === 'tone'
-                        ? state.saved.assistantTone
-                        : state.saved.compactionPrompt;
+                    name === 'name' ? state.saved.displayName : state.saved.compactionPrompt;
                   initialize(state.fields[name]);
                 }
             }
@@ -482,36 +468,21 @@ export function assistantPreferences<N extends Node>(
                   mutation: { kind: 'compaction_prompt', prompt: chunk.text },
                 });
               else state.notice = 'assistant-invalid';
-            } else if (
-              !state.capture ||
-              !chunk ||
-              !sameValue(chunk.metadata, r.captured.snapshot.text) ||
-              !sameValue(
-                state.fields[r.name].observation?.snapshot.text,
-                r.captured.snapshot.text,
-              ) ||
-              [...chunk.text].length > (r.name === 'name' ? 256 : 4096)
-            ) {
-              state.capture = null;
-              state.notice = 'assistant-invalid';
-            } else if (r.name === 'name') {
-              state.capture.displayName = chunk.text;
-              capture(state, actions, 'tone');
             } else {
-              const current = state.capture;
+              const captured = state.capture?.name;
               state.capture = null;
               if (
-                current.displayName !== null &&
+                captured &&
+                chunk &&
                 state.saved &&
-                sameValue(state.fields.name.observation?.snapshot.text, current.name.snapshot.text)
+                sameValue(chunk.metadata, captured.snapshot.text) &&
+                sameValue(state.fields.name.observation?.snapshot.text, captured.snapshot.text) &&
+                new TextEncoder().encode(chunk.text).length === captured.snapshot.text.bytes &&
+                [...chunk.text].length <= 256
               )
                 mutate(state, actions, {
                   expectedRevision: state.saved.revision,
-                  mutation: {
-                    kind: 'personalization',
-                    displayName: current.displayName,
-                    assistantTone: chunk.text,
-                  },
+                  mutation: { kind: 'personalization', displayName: chunk.text, assistantTone: '' },
                 });
               else state.notice = 'assistant-invalid';
             }
@@ -575,21 +546,15 @@ export function assistantPreferences<N extends Node>(
                 mutation: { kind: 'shell_titles', enabled: !state.saved.shellTitles },
               });
             else if (input.key === 'save' && state.saved) {
-              const name = state.fields.name.observation,
-                tone = state.fields.tone.observation;
+              const name = state.fields.name.observation;
               if (
                 name &&
-                tone &&
                 !name.snapshot.marked &&
-                !tone.snapshot.marked &&
                 name.snapshot.text.bytes <= 1024 &&
-                tone.snapshot.text.bytes <= 16384 &&
                 !state.fields.name.command &&
-                !state.fields.tone.command &&
-                state.fields.name.ready &&
-                state.fields.tone.ready
+                state.fields.name.ready
               ) {
-                state.capture = { name, tone, displayName: null };
+                state.capture = { name };
                 capture(state, actions, 'name');
               } else state.notice = 'assistant-invalid';
             }

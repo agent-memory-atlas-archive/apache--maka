@@ -281,6 +281,7 @@ pub struct PaintedScene {
     next_frame: Option<std::time::Instant>,
     tooltip: Option<(Option<super::dialog::Scope>, Placement, String, Style)>,
     pub(super) viewport: Rect,
+    pub(super) editor_menu: Option<std::rc::Weak<()>>,
     pub(super) targets: Vec<Target>,
     pub(super) keyboard: Option<std::rc::Rc<Ancestor>>,
     focus_offers: Vec<(TargetIdentity, Target)>,
@@ -688,6 +689,7 @@ impl Presenter {
             next_frame: None,
             tooltip: None,
             viewport: area,
+            editor_menu: None,
             targets: Vec::new(),
             focus_offers: Vec::new(),
             placed: Default::default(),
@@ -747,6 +749,7 @@ impl Presenter {
                 None,
             );
         }
+        self.paint_editor_menu(area, buffer, &mut scene);
         scene.next_frame = cache.next_frame.get();
         Ok(scene)
     }
@@ -834,6 +837,8 @@ impl Presenter {
                 self.resources
                     .present(&pending.mount, &pending.owner, pending.geometry);
             }
+            self.present_editor_menu(scene.editor_menu.as_ref());
+            self.viewport = scene.viewport;
             self.scene = scene.targets;
             return;
         }
@@ -987,6 +992,8 @@ impl Presenter {
             }
         }
         self.keyboard = scene.keyboard;
+        self.present_editor_menu(scene.editor_menu.as_ref());
+        self.viewport = scene.viewport;
         self.scene = scene.targets;
         if frames_current {
             let mounts: Vec<_> = scene

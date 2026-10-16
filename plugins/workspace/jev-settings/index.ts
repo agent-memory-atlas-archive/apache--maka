@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Action,
   ActionOutcome,
@@ -296,6 +297,7 @@ export function jevSettings<N extends Node>(
             'jev-' + name,
             name === 'secret' ? 'secret' : 'input',
             {
+              menu: editorMenu(props.theme, props.locale),
               accessibilityLabel: t('jev-' + name),
               placeholder: '',
               autoFocus: name === 'url',

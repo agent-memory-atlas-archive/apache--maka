@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { editorMenu } from '../../shared/editor-menu.js';
 import type {
   Component,
   EditorObservation,
@@ -152,6 +153,7 @@ export function questionEditor<N extends Node>(
                         `answer-${index}`,
                         'editor',
                         {
+                          menu: editorMenu(props.theme, props.locale),
                           appearance: props.theme.textarea,
                           accessibilityLabel: text.questionText,
                           placeholder: text.questionText,

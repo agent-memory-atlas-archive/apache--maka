@@ -48,7 +48,9 @@ mod source;
 mod terminal;
 mod text_file;
 mod textarea;
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use futures_util::{Stream, stream::FuturesUnordered};
 pub use geometry::{CellRect, Placement};
 use maka_packages::Package;
@@ -155,6 +157,20 @@ pub trait Widget: std::any::Any {
     }
     fn pointer_capture(&self, _: &dyn std::any::Any) -> bool {
         false
+    }
+    fn take_redraw(&self, _: &mut dyn std::any::Any) -> bool {
+        false
+    }
+    fn cancel_paste(&self, _: &mut dyn std::any::Any) {}
+    fn editing_menu(
+        &self,
+        _: &dyn std::any::Any,
+    ) -> Option<(
+        maka_ui_runtime::textarea::TextareaMenu,
+        maka_ui_runtime::editor::EditorSnapshot,
+        [bool; 4],
+    )> {
+        None
     }
     fn copy(&self, _: &dyn std::any::Any, _: bool) -> maka_ui_runtime::Result<Option<String>> {
         Ok(None)
@@ -301,6 +317,8 @@ pub struct Presenter {
     reported: std::collections::BTreeSet<String>,
     /// One bounded physical clipboard intent, flushed before the next OS event.
     clipboard: Option<std::rc::Rc<str>>,
+    editor_menu: Option<context_menu::EditorMenu>,
+    viewport: ratatui::layout::Rect,
 }
 impl Presenter {
     pub fn new(
@@ -532,6 +550,8 @@ impl Presenter {
             surface: SurfaceState::Live,
             reported: Default::default(),
             clipboard: None,
+            editor_menu: None,
+            viewport: ratatui::layout::Rect::default(),
         };
         if let Err(error) = presenter.sync_native() {
             // No terminal was created. Native initialization may still have
@@ -626,6 +646,17 @@ impl Presenter {
         ) {
             self.clear_hover()?;
         }
+        if matches!(
+            event,
+            Event::FocusLost
+                | Event::Resize(..)
+                | Event::Key(KeyEvent {
+                    code: KeyCode::Tab | KeyCode::BackTab,
+                    ..
+                })
+        ) {
+            self.resources.cancel_pastes(None)?;
+        }
         if matches!(event, Event::FocusLost | Event::Resize(..)) {
             self.resources.cancel_pointer()?;
             self.drag = None;
@@ -662,7 +693,9 @@ impl Presenter {
         } else {
             None
         };
-        if raw_pointer_target.is_none() && self.open_context_menu(&event)? {
+        if raw_pointer_target.is_none()
+            && (self.editor_context_menu(&event)? || self.open_context_menu(&event)?)
+        {
             return Ok(());
         }
         if let Event::Mouse(mouse) = &event

@@ -33,24 +33,39 @@ pub(crate) struct Geometry {
     scrollbar: Option<Placement>,
 }
 impl Geometry {
-    pub(crate) fn paint_scrollbar(&self, buffer: &mut Buffer, style: Style, ascii: bool) {
+    pub(crate) fn paint_scrollbar(
+        &self,
+        buffer: &mut Buffer,
+        track: Style,
+        thumb_style: Style,
+        ascii: bool,
+    ) {
         let Some(bar) = self.scrollbar else { return };
-        let height = bar.height as usize;
-        let thumb = (height * height / self.layout.rows.len()).max(1);
-        let maximum = self.layout.rows.len().saturating_sub(height).max(1);
+        let visible = bar.visible();
+        let height = usize::from(visible.height);
+        if height == 0 {
+            return;
+        }
+        // The editor may be partly clipped by its page. Keep its logical
+        // scroll range, but fit the whole track into the visible cells.
+        let thumb = (height * bar.height as usize / self.layout.rows.len()).clamp(1, height);
+        let maximum = self
+            .layout
+            .rows
+            .len()
+            .saturating_sub(bar.height as usize)
+            .max(1);
         let top = self.top * (height - thumb) / maximum;
         for row in 0..height {
-            if let Some(point) = bar.point(0, row) {
-                let active = (top..top + thumb).contains(&row);
-                buffer[(point.x, point.y)]
-                    .set_char(match (ascii, active) {
-                        (true, true) => '#',
-                        (true, false) => '|',
-                        (false, true) => '┃',
-                        (false, false) => '│',
-                    })
-                    .set_style(style);
-            }
+            let active = (top..top + thumb).contains(&row);
+            buffer[(visible.x, visible.y + row as u16)]
+                .set_char(match (ascii, active) {
+                    (true, true) => '#',
+                    (true, false) => '|',
+                    (false, true) => '┃',
+                    (false, false) => '│',
+                })
+                .set_style(if active { thumb_style } else { track });
         }
     }
 }
@@ -75,8 +90,9 @@ impl Editor {
             match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left) => {
                     let maximum = self.layout.rows.len().saturating_sub(bar.height as usize);
-                    let row = (i64::from(mouse.row) - bar.y) as usize;
-                    self.top = row * maximum / (bar.height.saturating_sub(1) as usize).max(1);
+                    let visible = bar.visible();
+                    let row = usize::from(mouse.row - visible.y);
+                    self.top = row * maximum / usize::from(visible.height.saturating_sub(1)).max(1);
                     return true;
                 }
                 MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -262,7 +278,7 @@ mod tests {
             Style::default(),
             Style::default(),
         );
-        geometry.paint_scrollbar(&mut buffer, Style::default(), false);
+        geometry.paint_scrollbar(&mut buffer, Style::default(), Style::default(), false);
         (geometry, buffer)
     }
     #[test]
@@ -318,7 +334,7 @@ mod tests {
             &geometry
         ));
         assert_eq!(editor.selection, selection);
-        geometry.paint_scrollbar(&mut buffer, Style::default(), true);
+        geometry.paint_scrollbar(&mut buffer, Style::default(), Style::default(), true);
         assert_eq!(buffer[(5, 0)].symbol(), "|");
         assert_eq!(buffer[(5, 2)].symbol(), "#");
         let wheel = MouseEvent {
@@ -332,6 +348,79 @@ mod tests {
         let (_, top) = paint(&editor, area);
         assert_eq!(top[(0, 0)].symbol(), "a");
         assert_eq!(top[(5, 0)].symbol(), "┃");
+        assert_eq!(editor.selection, selection);
+    }
+    #[test]
+    fn clipped_editor_keeps_a_visible_moving_scrollbar_thumb() {
+        use ratatui::style::Color;
+        let mut editor = Editor::default();
+        editor.insert(
+            &(0..40)
+                .map(|n| format!("line-{n:02}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        let area = Placement::new(
+            crate::application::CellRect::new(0, 0, 12, 12),
+            Rect::new(0, 0, 12, 4),
+        );
+        let draw = |editor: &Editor| {
+            let mut buffer = Buffer::empty(area.visible());
+            let geometry = editor.paint_prepared(
+                area,
+                &mut buffer,
+                false,
+                Style::default(),
+                Style::default(),
+                Style::default(),
+            );
+            geometry.paint_scrollbar(
+                &mut buffer,
+                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Gray),
+                false,
+            );
+            (geometry, buffer)
+        };
+        let (geometry, bottom) = draw(&editor);
+        assert_eq!(
+            bottom[(11, 3)].symbol(),
+            "┃",
+            "the thumb must remain visible when the parent clips the editor"
+        );
+        assert_eq!(bottom[(11, 3)].fg, Color::Gray);
+        assert_eq!(bottom[(11, 0)].fg, Color::DarkGray);
+        editor.present_geometry(geometry.clone());
+        let selection = editor.selection;
+        for _ in 0..40 {
+            assert!(editor.mouse_presented(
+                MouseEvent {
+                    kind: MouseEventKind::ScrollUp,
+                    column: 11,
+                    row: 1,
+                    modifiers: KeyModifiers::NONE
+                },
+                &geometry
+            ));
+        }
+        let (geometry, top) = draw(&editor);
+        assert_eq!(top[(11, 0)].symbol(), "┃");
+        assert_eq!(top[(11, 3)].symbol(), "│");
+        assert_eq!(top[(11, 0)].fg, Color::Gray);
+        assert_eq!(editor.selection, selection);
+        editor.mouse_presented(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 11,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            },
+            &geometry,
+        );
+        assert_eq!(
+            editor.top, 28,
+            "clicks use the visible track, including after clipping"
+        );
         assert_eq!(editor.selection, selection);
     }
     #[test]

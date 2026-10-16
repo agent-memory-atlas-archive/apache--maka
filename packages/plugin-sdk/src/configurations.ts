@@ -256,7 +256,7 @@ export const configurations = {
         type: 'object',
         properties: {
           home: {
-            description: "Read only the three instruction files in this home's .maka directory.",
+            description: 'Select this home for global instructions and explicit AGENTS.md editing.',
             type: ['string', 'null'],
             minLength: 1,
             maxLength: 4096,
@@ -756,7 +756,7 @@ export const configurations = {
         properties: {
           home: {
             type: ['string', 'null'],
-            description: "Read only the three instruction files in this home's .maka directory.",
+            description: 'Select this home for global instructions and explicit AGENTS.md editing.',
             minLength: 1,
             maxLength: 4096,
             default: null,
