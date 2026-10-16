@@ -1409,6 +1409,25 @@ export function timeline<N extends Node>(
         return out;
       }
       if (input.kind === 'raw' && !props.source) {
+        const collapsed = timelineRows(props).find(
+          ({ message }) =>
+            next.expanded.includes(message.id) && input.key === 'collapse-' + message.id,
+        )?.message;
+        if (collapsed) {
+          next.expanded = next.expanded.filter((id) => id !== collapsed.id);
+          if (next.browse) focusMessage(next, collapsed.id);
+          else
+            next.command = {
+              sequence: (next.command?.sequence ?? 0) + 1,
+              target: { kind: 'reveal_child', key: 'message-' + collapsed.id },
+            };
+          const out = timelineFrame(next, props, messageCopyObservation(state));
+          out.events.push({
+            name: 'detached',
+            value: { landing: props.landing.sequence, value: true },
+          });
+          return out;
+        }
         const tool = timelineRows(props).find(
           (row) =>
             expandable(row, props, state.details) && input.key === 'toggle-' + row.message.id,

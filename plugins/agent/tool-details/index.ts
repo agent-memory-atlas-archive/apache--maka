@@ -669,7 +669,7 @@ export function toolDetails<N extends Node>(
       const exit = scalar(state, 'exitCode');
       const statusText =
         typeof status === 'string' && Object.hasOwn(statusLabels, status)
-          ? `${text.toolProcessRecorded}: ${statusLabels[status]}${typeof exit === 'number' ? ` · ${text.toolExitCode}: ${exit}` : ''}`
+          ? `${statusLabels[status]}${typeof exit === 'number' ? ` · ${text.toolExitCode}: ${exit}` : ''}`
           : scalar(state, 'status') === 'failed'
             ? text.toolBusinessFailure
             : null;

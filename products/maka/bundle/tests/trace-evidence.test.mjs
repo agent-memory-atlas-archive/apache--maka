@@ -328,3 +328,21 @@ for (const [processStatus, exit, expectedStatus, tone, symbol] of [
     assert.equal(find(out, 'marker-shell').text, symbol);
   });
 }
+
+test('bottom collapse preserves other expanded tools and returns to its own heading', () => {
+  const p = props([
+    message('first', 1, tool('first', 1, 2)),
+    message('second', 3, tool('second', 3, 4)),
+  ]);
+  let out = timeline.mount(p, {});
+  assert.equal(find(out, 'collapse-first'), undefined);
+  out = raw(out, p, 'toggle-first');
+  out = raw(out, p, 'toggle-second');
+  assert.equal(find(out, 'collapse-first').label, '↑ Hide details');
+  assert.equal(find(out, 'tool-panel-first').children.at(-1).key, 'collapse-first');
+  out = raw(out, p, 'collapse-first');
+  assert.deepEqual(out.frame.state.expanded, ['second']);
+  assert.equal(find(out, 'collapse-first'), undefined);
+  assert.deepEqual(out.frame.state.command.target, { kind: 'reveal_child', key: 'message-first' });
+  assert.ok(out.events.some(({ name, value }) => name === 'detached' && value.value === true));
+});

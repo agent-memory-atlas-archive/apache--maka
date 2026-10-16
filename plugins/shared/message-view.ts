@@ -332,6 +332,17 @@ export function messageView<N extends Node>(
                             terminal: { wrap: true },
                           },
                         ),
+                        ...(expanded && message.toggle
+                          ? [
+                              ui.button(
+                                'collapse-' + message.id,
+                                `${theme.ascii ? '^' : '↑'} ${text.collapseTool}`,
+                                false,
+                                false,
+                                { background: 0, align: 'start' },
+                              ),
+                            ]
+                          : []),
                       ],
                       { gap: 0, terminal: { grow: 1, shrink: true } },
                     ),

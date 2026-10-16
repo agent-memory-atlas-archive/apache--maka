@@ -115,7 +115,7 @@ fn default_product_trace_preserves_parents_titles_and_inline_evidence() {
             && screen.contains("Run tools")
     });
     tui.wait_for("Exit code: 7");
-    tui.wait_until(|screen| !screen.contains("Recorded process status: Finished"));
+    tui.wait_until(|screen| !screen.contains("Finished"));
     let screen = tui.screen.snapshot().unwrap().screen;
     let rows: Vec<_> = screen.lines().collect();
     let first = rows
@@ -146,8 +146,27 @@ fn default_product_trace_preserves_parents_titles_and_inline_evidence() {
     tui.wait_for("Tool result");
     tui.wait_until(|screen| !screen.contains("Loading conversation…"));
     capture(&tui, "orchestration");
-    click(&mut tui, "⌄ Run tools");
+    tui.resize(80, 20);
+    tui.wait_until(|screen| screen.lines().count() == 20);
+    for _ in 0..12 {
+        tui.send(b"\x1b[<65;70;10M");
+    }
+    tui.wait_for("↑ Hide details");
+    assert!(
+        !tui.screen
+            .snapshot()
+            .unwrap()
+            .screen
+            .contains("⌄ Run tools"),
+        "the bottom control must work with the heading outside the viewport"
+    );
+    capture(&tui, "bottom");
+    click(&mut tui, "↑ Hide details");
+    tui.wait_for("› Run tools");
     tui.wait_until(|screen| !screen.contains("text(await tools.Shell"));
+    capture(&tui, "recollapsed");
+    tui.resize(120, 40);
+    tui.wait_for("› 检查工作区");
     click(&mut tui, "› 检查工作区");
     tui.wait_for("trace-visible.txt");
     tui.wait_for("Exit code: 0");
@@ -157,6 +176,14 @@ fn default_product_trace_preserves_parents_titles_and_inline_evidence() {
             .any(|line| line.trim_end().ends_with("trace-visible"))
     });
     tui.wait_until(|screen| !screen.contains("Loading conversation…"));
+    assert!(
+        !tui.screen
+            .snapshot()
+            .unwrap()
+            .screen
+            .contains("Recorded process status:"),
+        "the process outcome needs no redundant prefix"
+    );
     capture(&tui, "expanded");
     click(&mut tui, "⌄ 检查工作区");
     tui.wait_until(|screen| !screen.contains("printf trace-visible"));
