@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{boundary, evidence, invalid, selection::Selection};
+use super::{boundary, invalid, selection::Selection};
 use crate::{StoreError, sequence_number};
 use maka_agent_facts::context::ContextCheckpoint;
 use maka_agent_facts::context::ModelPurpose;
@@ -52,12 +52,14 @@ fn decode(row: Option<(i64, Option<String>)>) -> Result<(u64, RuntimeEvent), Sto
     Ok((sequence_number(sequence)?, serde_json::from_str(&json)?))
 }
 
+/// Validate the proof and return its exact source selection. The chain reader
+/// must also verify every raw source digest before accepting the chain.
 pub(super) async fn validate(
     connection: &mut SqliteConnection,
     event: &RuntimeEvent,
     sequence: u64,
     checkpoint: &ContextCheckpoint,
-) -> Result<(), StoreError> {
+) -> Result<Selection, StoreError> {
     checkpoint.validate().map_err(invalid)?;
     let (opened, opening) = by_kind(
         connection,
@@ -91,13 +93,6 @@ pub(super) async fn validate(
         != checkpoint.covered_through
     {
         return Err(invalid("coverage is not the complete closed source"));
-    }
-    if evidence::selected(connection, &selection, checkpoint.covered_through)
-        .await?
-        .digest
-        != checkpoint.source_digest
-    {
-        return Err(invalid("source digest changed"));
     }
     let (requested, request) = by_kind(
         connection,
@@ -195,5 +190,5 @@ pub(super) async fn validate(
     {
         return Err(invalid("summary does not match its completed model step"));
     }
-    Ok(())
+    Ok(selection)
 }

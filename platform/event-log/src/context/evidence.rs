@@ -39,17 +39,56 @@ pub(crate) async fn selected(
     selection: &Selection,
     through: u64,
 ) -> Result<SourceEvidence, StoreError> {
-    let scope = selection.scope.clone();
+    let digest = digests(connection, selection, &[through])
+        .await?
+        .pop()
+        .expect("one requested prefix");
+    Ok(SourceEvidence {
+        scope: selection.scope.clone(),
+        high_water: through,
+        digest,
+    })
+}
+
+/// Hash one exact selection once for strictly increasing source boundaries.
+/// Each boundary must select a complete row (or the empty prefix at zero).
+/// Only hash states and digest strings are retained, never the source payloads.
+pub(super) async fn digests(
+    connection: &mut SqliteConnection,
+    selection: &Selection,
+    throughs: &[u64],
+) -> Result<Vec<String>, StoreError> {
+    let Some(through) = throughs.last().copied() else {
+        return Ok(Vec::new());
+    };
     let session = selection
         .session
         .as_deref()
         .ok_or_else(|| invalid("context requires a Session"))?;
-    let encoded = serde_json::to_vec(&scope)?;
+    let encoded = serde_json::to_vec(&selection.scope)?;
     let mut digest = Sha256::new();
     digest.update(b"maka.log-prefix.v1\0");
     digest.update((encoded.len() as u64).to_be_bytes());
     digest.update(encoded);
-    digest.update(through.to_be_bytes());
+    let mut boundaries = throughs.iter().copied().peekable();
+    let mut result = Vec::new();
+    let mut finish = |digest: &Sha256, sequence: u64| -> Result<(), StoreError> {
+        if let Some(&boundary) = boundaries.peek() {
+            if sequence > boundary {
+                return Err(invalid("coverage is not a selected source high-water"));
+            }
+            if sequence == boundary {
+                let mut prefix = digest.clone();
+                // The high-water suffix lets overlapping prefixes share the
+                // stream while still binding each digest to its exact cut.
+                prefix.update(boundary.to_be_bytes());
+                result.push(format!("sha256:{:x}", prefix.finalize()));
+                boundaries.next();
+            }
+        }
+        Ok(())
+    };
+    finish(&digest, 0)?;
     let filter = Selection::predicate("e", "?4");
     let columns = "e.sequence, length(CAST(e.event_json AS BLOB)),
         CASE WHEN length(CAST(e.event_json AS BLOB)) <= 65536 THEN CAST(e.event_json AS BLOB) END";
@@ -73,12 +112,16 @@ pub(crate) async fn selected(
                 .bind(&selection.lineage)
                 .fetch(&mut *connection);
             while let Some((sequence, bytes, payload)) = rows.try_next().await? {
+                if sequence <= after {
+                    return Err(invalid("source selection repeats or reorders a record"));
+                }
                 let bytes = sequence_number(bytes)?;
                 digest.update(sequence_number(sequence)?.to_be_bytes());
                 digest.update(bytes.to_be_bytes());
                 after = sequence;
                 if let Some(payload) = payload {
                     digest.update(payload);
+                    finish(&digest, sequence_number(sequence)?)?;
                 } else {
                     oversized = Some((sequence, bytes));
                     break;
@@ -99,15 +142,12 @@ pub(crate) async fn selected(
             offset += slice.len() as u64;
             digest.update(slice);
         }
+        finish(&digest, sequence_number(sequence)?)?;
     }
-    if sequence_number(after)? != through {
+    if boundaries.peek().is_some() {
         return Err(invalid("coverage is not a selected source high-water"));
     }
-    Ok(SourceEvidence {
-        scope,
-        high_water: through,
-        digest: format!("sha256:{:x}", digest.finalize()),
-    })
+    Ok(result)
 }
 
 pub(super) async fn high_water(
@@ -119,3 +159,6 @@ pub(super) async fn high_water(
         .high_water(connection, sequence_number(before.saturating_sub(1))?)
         .await
 }
+
+#[cfg(test)]
+mod tests;

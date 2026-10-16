@@ -76,7 +76,6 @@ impl EventLog {
         let scope_bytes = serde_json::to_vec(&scope)?;
         digest.update((scope_bytes.len() as u64).to_be_bytes());
         digest.update(scope_bytes);
-        digest.update(sequence_number(high_water)?.to_be_bytes());
         let mut events = Vec::new();
         {
             let statement = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -98,6 +97,7 @@ impl EventLog {
                 });
             }
         }
+        digest.update(sequence_number(high_water)?.to_be_bytes());
         transaction.commit().await?;
         Ok(LogPrefix {
             scope,

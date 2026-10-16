@@ -38,6 +38,8 @@ use serde_json::json;
 
 #[path = "context_compaction/active.rs"]
 mod active;
+#[path = "context_compaction/chain.rs"]
+mod chain;
 #[path = "context_compaction/fixtures.rs"]
 mod fixtures;
 #[path = "context_compaction/frozen.rs"]

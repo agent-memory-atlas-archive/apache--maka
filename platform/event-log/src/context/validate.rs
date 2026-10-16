@@ -145,28 +145,31 @@ pub(super) async fn chain(
     let mut event = first.clone();
     let mut sequence = first_sequence;
     let mut needs_terminal = committed;
+    let mut sources: Vec<(Selection, Vec<(u64, String)>)> = Vec::new();
     loop {
         let Fact::ContextCheckpointRecorded { checkpoint } = &event.fact else {
             return Err(invalid("predecessor is not a checkpoint"));
         };
-        proof::validate(connection, &event, sequence, checkpoint).await?;
+        let selection = proof::validate(connection, &event, sequence, checkpoint).await?;
         if needs_terminal && matches!(checkpoint.mode, CheckpointMode::Standalone) {
             require_terminal(connection, &event).await?;
         }
         // A missing predecessor cannot silently discard the already adopted baseline.
-        let (_, opening) = proof::by_kind(
-            connection,
-            &event.invocation.invocation_id,
-            "invocation_opened",
-            None,
-        )
-        .await?;
-        let selection = Selection::for_opening(connection, &opening).await?;
         let latest = read::latest_record(connection, &selection, checkpoint.covered_through)
             .await?
             .map(|r| r.event.id);
         if latest != checkpoint.previous_checkpoint_id {
             return Err(invalid("predecessor is not the selected source baseline"));
+        }
+        // Coverage decreases along the chain. Only identical selections share
+        // a scan; lineage predicates and copied-history ownership stay intact.
+        let expected = (checkpoint.covered_through, checkpoint.source_digest.clone());
+        if let Some((prior, prefixes)) = sources.last_mut()
+            && *prior == selection
+        {
+            prefixes.push(expected);
+        } else {
+            sources.push((selection, vec![expected]));
         }
         let Some(id) = &checkpoint.previous_checkpoint_id else {
             break;
@@ -190,6 +193,17 @@ pub(super) async fn chain(
         event = previous;
         sequence = previous_sequence;
         needs_terminal = true;
+    }
+    for (selection, prefixes) in sources {
+        let throughs: Vec<_> = prefixes.iter().rev().map(|(through, _)| *through).collect();
+        let actual = evidence::digests(connection, &selection, &throughs).await?;
+        if actual
+            .iter()
+            .zip(prefixes.iter().rev())
+            .any(|(actual, (_, expected))| actual != expected)
+        {
+            return Err(invalid("source digest changed"));
+        }
     }
     Ok(())
 }
