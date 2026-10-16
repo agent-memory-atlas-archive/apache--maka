@@ -48,3 +48,20 @@ python3 scripts/rust/benchmark-startup.py --binary target/debug/maka \
 ```
 
 基准使用独立数据目录，首次安装单独计时，重开按前后版本交替执行。它等待首页出现并确认命令面板可用后退出。输出目录保留原始终端输出、失败次数及耗时中位数和范围。两版应使用相同构建配置，测量期间避免同时构建。
+
+长任务对比使用两个版本保留的 release 测试可执行文件，基准夹具必须相同。
+通过 `cargo test --release --no-run` 构建 `maka-event-log --test archive`
+和 `maka-agent-engine --test integration`，然后运行：
+
+```sh
+python3 scripts/rust/benchmark-long-task.py --kind engine \
+  --baseline /tmp/engine-before --candidate /tmp/engine-after \
+  --sizes 250,1000 --runs 5 --output /tmp/maka-long-task
+```
+
+归档测试可执行文件使用 `--kind prune`；真实上下文压缩后的 Engine 测量使用
+`--checkpoint`。脚本交替运行两个版本，检查实际完成的工作相同，保留原始日志、
+错误、中位数和范围。造数据不计时；Engine 耗时涵盖请求送达与执行完成，不包含
+Host IPC。[Engine 夹具](../../plugins/agent/engine/tests/integration/long_task_perf.rs)
+和 [prune 夹具](../../platform/event-log/tests/archive/performance.rs) 提供工具稀疏、
+工具密集及投影大小等参数。测量时不要同时构建；CPU 剖析与耗时对比分开运行。

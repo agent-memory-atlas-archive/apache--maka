@@ -61,10 +61,17 @@ pub(super) async fn read(
            AND c.sequence<d.sequence AND d.sequence<t.sequence) AS identities
          FROM session_history_events t LEFT JOIN runtime_events d ON d.invocation_id = t.invocation_id
            AND d.operation_id = t.operation_id AND d.kind = 'tool_dispatched'
-         LEFT JOIN accepted_calls c ON c.invocation_id = t.invocation_id
+         LEFT JOIN (
+           SELECT * FROM accepted_calls
+           WHERE invocation_id=(SELECT invocation_id FROM runtime_events WHERE event_id=?1)
+             AND step_id=(SELECT json_extract(d.event_json,'$.fact.call.origin.step_id')
+               FROM runtime_events t JOIN runtime_events d ON d.operation_id=t.operation_id
+                 AND d.invocation_id=t.invocation_id AND d.kind='tool_dispatched'
+               WHERE t.event_id=?1)
+         ) c ON c.invocation_id = t.invocation_id
            AND c.step_id = json_extract(d.event_json, '$.fact.call.origin.step_id')
            AND json_extract(c.call,'$.id') = json_extract(d.event_json,'$.fact.call.tool_call_id')
-         WHERE t.event_id = ? AND t.kind = 'tool_settled' AND t.owner_session_id = ?",
+         WHERE t.event_id = ?1 AND t.kind = 'tool_settled' AND t.owner_session_id = ?2",
     )).bind(id).bind(session).fetch_optional(&mut *connection).await?;
     let Some(row) = row else {
         return Ok(None);

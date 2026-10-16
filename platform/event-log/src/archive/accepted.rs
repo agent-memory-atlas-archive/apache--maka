@@ -136,7 +136,7 @@ pub(crate) async fn find(
     let rows: Vec<(i64, Option<String>,String,String)> = sqlx::query_as(
         "SELECT sequence, CASE WHEN length(CAST(event_json AS BLOB)) <= 32768 THEN event_json END,event_id,invocation_id
          FROM runtime_events WHERE kind = 'tool_result_archived'
-         AND json_extract(event_json, '$.fact.placeholder.identity.runtime_event_id') = ?1 AND sequence < ?2
+         AND CAST(json_extract(event_json, '$.fact.placeholder.identity.runtime_event_id') AS TEXT) = ?1 AND sequence < ?2
          AND json_extract(event_json, '$.invocation.session_id') = ?3 LIMIT 2",
     ).bind(target_id).bind(before as i64).bind(session).fetch_all(&mut *connection).await?;
     if rows.len() > 1 {
@@ -242,7 +242,7 @@ async fn selected(
         "SELECT json_extract(a.event_json,'$.invocation.session_id'), a.sequence, t.archive_sequence
          FROM session_history_events t LEFT JOIN runtime_events a
            ON a.kind='tool_result_archived'
-           AND json_extract(a.event_json,'$.fact.placeholder.identity.runtime_event_id')=t.event_id
+           AND CAST(json_extract(a.event_json,'$.fact.placeholder.identity.runtime_event_id') AS TEXT)=t.event_id
            AND {filter}
          WHERE t.owner_session_id=?1 AND t.event_id=?2 LIMIT 2"
     )))

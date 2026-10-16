@@ -195,7 +195,8 @@ pub(super) async fn materialize_selected(
     max_bytes: usize,
     latest_main: super::LatestMainContext,
 ) -> Result<ModelContextSource, StoreError> {
-    let baseline = latest_selected(connection, selection, high_water).await?;
+    let (baseline, source_evidence) =
+        latest_with_evidence(connection, selection, high_water).await?;
     let anchor = if let Some(ContextBaseline { checkpoint, .. }) = &baseline {
         if let CheckpointMode::MidTurn { anchor_event_id } = &checkpoint.mode {
             let (sequence, event) = proof::by_id(connection, anchor_event_id).await?;
@@ -230,7 +231,6 @@ pub(super) async fn materialize_selected(
         remaining_bytes,
     )
     .await?;
-    let source_evidence = evidence::selected(connection, selection, high_water).await?;
     let effective_source_digest =
         crate::archive::digest_selected(connection, selection, &source_evidence, before).await?;
     Ok(ModelContextSource {
@@ -253,7 +253,7 @@ pub(crate) async fn latest_selected(
     else {
         return Ok(None);
     };
-    validate::chain(connection, &event, sequence, true).await?;
+    validate::chain(connection, &event, sequence, true, None).await?;
     let Fact::ContextCheckpointRecorded { checkpoint } = event.fact else {
         return Err(invalid("checkpoint kind mismatch"));
     };
@@ -261,6 +261,46 @@ pub(crate) async fn latest_selected(
         event_id: event.id,
         checkpoint,
     }))
+}
+
+/// Validate the baseline and authenticate the current source in the same scan
+/// wherever checkpoint coverage uses the exact current selection.
+pub(super) async fn latest_with_evidence(
+    connection: &mut SqliteConnection,
+    selection: &Selection,
+    through: u64,
+) -> Result<(Option<ContextBaseline>, super::SourceEvidence), StoreError> {
+    let Some(StoredEvent { sequence, event }) =
+        latest_record(connection, selection, through).await?
+    else {
+        return Ok((
+            None,
+            evidence::selected(connection, selection, through).await?,
+        ));
+    };
+    let digest = validate::chain(
+        connection,
+        &event,
+        sequence,
+        true,
+        Some((selection, through)),
+    )
+    .await?
+    .expect("requested current source digest");
+    let Fact::ContextCheckpointRecorded { checkpoint } = event.fact else {
+        return Err(invalid("checkpoint kind mismatch"));
+    };
+    Ok((
+        Some(ContextBaseline {
+            event_id: event.id,
+            checkpoint,
+        }),
+        super::SourceEvidence {
+            scope: selection.scope.clone(),
+            high_water: through,
+            digest,
+        },
+    ))
 }
 
 /// Select without traversing predecessors, so chain validation stays iterative.

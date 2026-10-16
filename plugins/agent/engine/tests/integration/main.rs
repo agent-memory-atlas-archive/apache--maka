@@ -33,6 +33,7 @@ mod handoff;
 mod handoff_compaction;
 mod image_projection;
 mod lifetime;
+mod long_task_perf;
 mod model_interruption;
 mod pruning;
 mod session_import;

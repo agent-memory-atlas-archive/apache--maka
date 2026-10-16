@@ -62,7 +62,7 @@ pub(crate) async fn validate_append(
             if current != checkpoint.previous_checkpoint_id {
                 return Err(invalid("checkpoint predecessor changed before adoption"));
             }
-            chain(connection, event, i64::MAX as u64, false).await?;
+            chain(connection, event, i64::MAX as u64, false, None).await?;
         }
         Fact::InvocationEnded { outcome } => {
             let compact: bool = sqlx::query_scalar(
@@ -100,48 +100,20 @@ pub(crate) async fn validate_append(
                 _ => {}
             }
         }
-        Fact::ModelRequested {
-            checkpoint_event_id: Some(id),
-            source_scope,
-            source_high_water,
-            source_digest,
-            ..
-        } => {
-            let (_, opening) = proof::by_kind(
-                connection,
-                &event.invocation.invocation_id,
-                "invocation_opened",
-                None,
-            )
-            .await?;
-            let selection = Selection::for_opening(connection, &opening).await?;
-            if source_scope != &selection.scope {
-                return Err(invalid("request checkpoint belongs to another scope"));
-            }
-            let baseline = read::latest_selected(connection, &selection, *source_high_water)
-                .await?
-                .ok_or_else(|| invalid("missing request baseline"))?;
-            if baseline.event_id != *id
-                || evidence::selected(connection, &selection, *source_high_water)
-                    .await?
-                    .digest
-                    != *source_digest
-            {
-                return Err(invalid("request baseline evidence changed"));
-            }
-        }
         _ => {}
     }
     Ok(())
 }
 
 /// Strictly decreasing coverage and record sequence make cycles impossible.
+/// An optional current source cut must be at or after the first record.
 pub(super) async fn chain(
     connection: &mut SqliteConnection,
     first: &RuntimeEvent,
     first_sequence: u64,
     committed: bool,
-) -> Result<(), StoreError> {
+    source: Option<(&Selection, u64)>,
+) -> Result<Option<String>, StoreError> {
     let mut event = first.clone();
     let mut sequence = first_sequence;
     let mut needs_terminal = committed;
@@ -194,9 +166,22 @@ pub(super) async fn chain(
         sequence = previous_sequence;
         needs_terminal = true;
     }
+    let mut source_digest = None;
     for (selection, prefixes) in sources {
-        let throughs: Vec<_> = prefixes.iter().rev().map(|(through, _)| *through).collect();
-        let actual = evidence::digests(connection, &selection, &throughs).await?;
+        let mut throughs: Vec<_> = prefixes.iter().rev().map(|(through, _)| *through).collect();
+        // The current source and checkpoint prefixes share raw-byte hashing
+        // only when their full selection (including lineage) is identical.
+        let current =
+            source.filter(|(selected, _)| **selected == selection && source_digest.is_none());
+        if let Some((_, through)) = current {
+            throughs.push(through);
+        }
+        let mut actual = evidence::digests(connection, &selection, &throughs).await?;
+        if current.is_some() {
+            // Current coverage follows the first checkpoint record, so its
+            // digest is after every checkpoint source boundary in the stream.
+            source_digest = actual.pop();
+        }
         if actual
             .iter()
             .zip(prefixes.iter().rev())
@@ -205,7 +190,16 @@ pub(super) async fn chain(
             return Err(invalid("source digest changed"));
         }
     }
-    Ok(())
+    if let Some((selection, through)) = source
+        && source_digest.is_none()
+    {
+        source_digest = Some(
+            evidence::selected(connection, selection, through)
+                .await?
+                .digest,
+        );
+    }
+    Ok(source_digest)
 }
 
 pub(crate) async fn require_terminal(

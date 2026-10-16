@@ -52,3 +52,22 @@ The benchmark uses isolated roots, measures installation separately, and alterna
 reopens. It waits for the home screen and verifies the command palette before
 quitting. The output directory retains raw terminal output, failures, and timing
 medians/ranges. Keep build profiles equal and run without competing builds.
+
+Long-task comparisons use retained release test executables from both revisions,
+with the same benchmark fixtures. Build `maka-event-log --test archive` and
+`maka-agent-engine --test integration` using `cargo test --release --no-run`, then run:
+
+```sh
+python3 scripts/rust/benchmark-long-task.py --kind engine \
+  --baseline /tmp/engine-before --candidate /tmp/engine-after \
+  --sizes 250,1000 --runs 5 --output /tmp/maka-long-task
+```
+
+Use `--kind prune` for the archive test executables and `--checkpoint` for an
+Engine run after real context compaction. The script alternates revisions and
+checks equal completed work, preserving raw logs, errors, medians and ranges.
+Fixture setup is excluded; Engine timings cover request delivery and completion,
+not Host IPC. The [Engine fixture](../../plugins/agent/engine/tests/integration/long_task_perf.rs)
+and [prune fixture](../../platform/event-log/tests/archive/performance.rs) expose
+workload settings for sparse tools, dense tools and projection sizes. Run without
+competing builds; collect CPU profiles separately from timing comparisons.

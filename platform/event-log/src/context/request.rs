@@ -17,7 +17,7 @@
  * under the License.
  */
 
-use super::{boundary, evidence, invalid, proof, safety, selection::Selection};
+use super::{boundary, invalid, proof, safety, selection::Selection};
 use crate::StoreError;
 use maka_agent_facts::context::CheckpointMode;
 use maka_agent_facts::context::ModelPurpose;
@@ -61,6 +61,19 @@ pub(super) async fn validate(
     let resolved = resolve_model_purpose(input, *purpose).map_err(invalid)?;
     if resolved == ModelPurpose::Main && matches!(input, InvocationInput::Message { .. }) {
         safety::summary_boundary(connection, &event.invocation.invocation_id).await?;
+        if let Some(id) = checkpoint_event_id {
+            let selection = Selection::for_opening(connection, &opening).await?;
+            if source_scope != &selection.scope {
+                return Err(invalid("request checkpoint belongs to another scope"));
+            }
+            let (baseline, source) =
+                super::read::latest_with_evidence(connection, &selection, *source_high_water)
+                    .await?;
+            let baseline = baseline.ok_or_else(|| invalid("missing request baseline"))?;
+            if baseline.event_id != *id || source.digest != *source_digest {
+                return Err(invalid("request baseline evidence changed"));
+            }
+        }
         return Ok(());
     }
     let selection = Selection::for_opening(connection, &opening).await?;
@@ -101,26 +114,19 @@ pub(super) async fn validate(
         safety::model_source_unchanged(connection, &selection, event).await?;
         *source_high_water
     };
-    if source_scope != &selection.scope
-        || high != *source_high_water
-        || evidence::selected(connection, &selection, high)
-            .await?
-            .digest
-            != *source_digest
-    {
+    if source_scope != &selection.scope || high != *source_high_water {
         return Err(invalid("model request source changed"));
     }
-    let baseline = super::read::latest_selected(connection, &selection, high).await?;
+    let (baseline, source) =
+        super::read::latest_with_evidence(connection, &selection, high).await?;
+    if source.digest != *source_digest {
+        return Err(invalid("model request source changed"));
+    }
     if baseline.as_ref().map(|b| &b.event_id) != checkpoint_event_id.as_ref() {
         return Err(invalid(
             "model request omitted or changed the selected baseline",
         ));
     }
-    let source = super::SourceEvidence {
-        scope: source_scope.clone(),
-        high_water: high,
-        digest: source_digest.clone(),
-    };
     crate::archive::validate_summary(
         connection,
         &source,

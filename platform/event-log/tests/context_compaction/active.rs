@@ -204,6 +204,32 @@ async fn active_anchor_is_atomic_bounded_and_survives_next_turn_and_reopen() {
         .read_model_context("session", Some("next"))
         .await
         .unwrap();
+    let valid_request = request("next", "next-main", ModelPurpose::Main, &source);
+    for changed in ["scope", "checkpoint", "digest"] {
+        let mut forged = valid_request.event().clone();
+        let Fact::ModelRequested {
+            source_scope,
+            checkpoint_event_id,
+            source_digest,
+            ..
+        } = &mut forged.fact
+        else {
+            unreachable!()
+        };
+        match changed {
+            "scope" => *source_scope = LogScope::Session { id: "other".into() },
+            "checkpoint" => *checkpoint_event_id = Some("missing-checkpoint".into()),
+            "digest" => *source_digest = format!("sha256:{}", "0".repeat(64)),
+            _ => unreachable!(),
+        }
+        assert!(
+            log.append(&EventWrite::plain(forged).unwrap())
+                .await
+                .is_err(),
+            "manual message request must authenticate its {changed}"
+        );
+    }
+    log.append(&valid_request).await.unwrap();
     assert_eq!(source.anchor.unwrap().event, *anchor.event());
     assert!(
         source

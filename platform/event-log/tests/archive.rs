@@ -43,6 +43,10 @@ use serde_json::json;
 mod fixtures;
 #[path = "archive/lineage.rs"]
 mod lineage;
+#[path = "archive/performance.rs"]
+mod performance;
+#[path = "archive/streaming.rs"]
+mod streaming;
 use fixtures::*;
 
 #[tokio::test]

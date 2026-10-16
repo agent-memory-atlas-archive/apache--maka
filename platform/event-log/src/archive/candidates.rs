@@ -99,22 +99,22 @@ async fn scan(
          FROM session_history_events t JOIN runtime_events d ON d.invocation_id=t.invocation_id AND d.operation_id=t.operation_id AND d.kind='tool_dispatched'
          WHERE t.kind='tool_settled' AND t.sequence>?1 AND t.sequence<=?3 AND t.owner_session_id=?2
            AND {filter} AND json_extract(d.event_json,'$.fact.call.origin.kind')='provider'
-           AND NOT EXISTS(SELECT 1 FROM runtime_events a WHERE a.kind='tool_result_archived' AND json_extract(a.event_json,'$.fact.placeholder.identity.runtime_event_id')=t.event_id AND {archive_filter})
-         ORDER BY t.sequence LIMIT 1"
+           AND NOT EXISTS(SELECT 1 FROM runtime_events a WHERE a.kind='tool_result_archived' AND CAST(json_extract(a.event_json,'$.fact.placeholder.identity.runtime_event_id') AS TEXT)=t.event_id AND {archive_filter})
+         ORDER BY t.sequence LIMIT ?5"
     );
     let mut after = cursor.after_sequence as i64;
     let mut used = 0_usize;
-    loop {
-        let row: Option<(i64, String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(query.clone()))
-            .bind(after)
-            .bind(session)
-            .bind(cursor.through as i64)
-            .bind(&selection.lineage)
-            .fetch_optional(&mut *connection)
-            .await?;
-        let Some((sequence, id, bytes)) = row else {
-            break;
-        };
+    // Fetch bounded metadata once: the union's ordering must not be repeated
+    // for every candidate. Keep the cursor at the last admitted result.
+    let rows: Vec<(i64, String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(query))
+        .bind(after)
+        .bind(session)
+        .bind(cursor.through as i64)
+        .bind(&selection.lineage)
+        .bind((max_candidates + 1) as i64)
+        .fetch_all(&mut *connection)
+        .await?;
+    for (sequence, id, bytes) in rows {
         if output.candidates.len() >= max_candidates
             || (!output.candidates.is_empty() && bytes as usize > max_bytes.saturating_sub(used))
         {

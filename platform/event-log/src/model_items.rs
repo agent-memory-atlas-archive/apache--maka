@@ -158,7 +158,7 @@ macro_rules! accepted_calls {
         SELECT o.invocation_id, r.operation_id, o.sequence, o.event_id,
                json_extract(o.event_json,'$.fact.event.data')
         FROM runtime_events r JOIN runtime_events o ON o.invocation_id=r.invocation_id
-          AND o.kind='model_observed' AND json_extract(o.event_json,'$.fact.step_id')=r.operation_id
+          AND o.kind='model_observed' AND CAST(json_extract(o.event_json,'$.fact.step_id') AS TEXT)=r.operation_id
         WHERE r.kind='model_requested' AND json_extract(r.event_json,'$.fact.item_acceptance')=1
           AND json_extract(o.event_json,'$.fact.event.kind')='tool_call'
     )" };
