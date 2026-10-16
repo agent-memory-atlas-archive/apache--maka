@@ -36,6 +36,7 @@ mod plan;
 mod recap;
 mod title;
 mod todo;
+mod trace;
 
 async fn seed_connection(
     host: &Path,

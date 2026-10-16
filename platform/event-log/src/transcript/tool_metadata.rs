@@ -22,7 +22,7 @@ use crate::StoreError;
 use maka_agent_ports::session::history::Tool;
 use sqlx::SqliteConnection;
 
-const METADATA_SQL: &str = "WITH owner AS (
+const METADATA_SQL: &str = "WITH RECURSIVE owner AS (
             SELECT session_id, turn_id, sequence, message_id,
                 json_extract(payload, '$.type') AS kind,
                 CASE json_extract(payload, '$.type') WHEN 'tool_call' THEN message_id
@@ -41,6 +41,24 @@ const METADATA_SQL: &str = "WITH owner AS (
                 AND row.message_id = owner.tool_id AND row.turn_id = owner.turn_id
             WHERE row.sequence <= ?3 AND json_extract(row.payload, '$.type') = 'tool_call'
                 AND json_type(row.payload, '$.args') IS NOT NULL
+        ), ancestors(message_id, sequence, parent_id, depth) AS (
+            SELECT parent.message_id, parent.sequence,
+                CASE WHEN json_extract(parent.payload, '$.origin') IN ('host_sdk', 'code_mode')
+                    THEN json_extract(parent.payload, '$.parentToolCallId') END, 1
+            FROM transcript_rows parent JOIN owner
+                ON parent.session_id = owner.session_id AND parent.turn_id = owner.turn_id
+                JOIN call_row ON parent.message_id = call_row.parent_call
+            WHERE parent.sequence < call_row.sequence AND json_extract(parent.payload, '$.type') = 'tool_call'
+                AND call_row.origin IN ('host_sdk', 'code_mode')
+            UNION ALL
+            SELECT parent.message_id, parent.sequence,
+                CASE WHEN json_extract(parent.payload, '$.origin') IN ('host_sdk', 'code_mode')
+                    THEN json_extract(parent.payload, '$.parentToolCallId') END, ancestors.depth + 1
+            FROM transcript_rows parent JOIN owner
+                ON parent.session_id = owner.session_id AND parent.turn_id = owner.turn_id
+                JOIN ancestors ON parent.message_id = ancestors.parent_id
+            WHERE parent.sequence < ancestors.sequence AND json_extract(parent.payload, '$.type') = 'tool_call'
+                AND ancestors.depth < 32
         ), activity AS MATERIALIZED (
             SELECT row.sequence, json_extract(row.payload, '$.toolName') AS name,
                 json_extract(row.payload, '$.title') AS title,
@@ -51,6 +69,7 @@ const METADATA_SQL: &str = "WITH owner AS (
             ORDER BY row.sequence LIMIT 2
         ), call AS (
             SELECT call_row.*, json_object('sequence', call_row.sequence, 'name', call_row.name,
+                'ancestorToolUseIds', json((SELECT json_group_array(message_id) FROM (SELECT message_id FROM ancestors ORDER BY depth))),
                 'dispatched', json(CASE WHEN (SELECT count(*) FROM activity) = 1
                     AND EXISTS(SELECT 1 FROM activity WHERE activity.sequence > call_row.sequence AND activity.name = call_row.name)
                     THEN 'true' ELSE 'false' END),
@@ -91,7 +110,7 @@ const METADATA_SQL: &str = "WITH owner AS (
         ), metadata AS (
             SELECT json_object('toolUseId', tool_id,
                 'call', json(CASE kind WHEN 'tool_call' THEN COALESCE((SELECT reference FROM call),
-                    json_object('sequence', sequence, 'name', name, 'title', NULL, 'presentation', NULL, 'pending', json('false'), 'dispatched', json('false')))
+                    json_object('sequence', sequence, 'name', name, 'ancestorToolUseIds', json_array(), 'title', NULL, 'presentation', NULL, 'pending', json('false'), 'dispatched', json('false')))
                     ELSE (SELECT call_ref FROM pair) END),
                 'result', json(CASE kind WHEN 'tool_result' THEN json_object('sequence', sequence, 'settlement', settlement,
                     'isError', json(CASE error WHEN 1 THEN 'true' ELSE 'false' END),
@@ -192,6 +211,58 @@ mod tests {
             .await
             .unwrap();
     }
+    #[tokio::test]
+    async fn trace_parent_is_an_earlier_native_call_in_the_same_turn() {
+        for (origin, parent_session, parent_turn, parent_sequence, expected) in [
+            ("code_mode", "a", "turn", 1, Some("parent")),
+            ("host_sdk", "a", "turn", 1, Some("parent")),
+            ("imported", "a", "turn", 1, None),
+            ("provider", "a", "turn", 1, None),
+            ("code_mode", "other", "turn", 1, None),
+            ("code_mode", "a", "other", 1, None),
+            ("code_mode", "a", "turn", 3, None),
+        ] {
+            let mut db = database().await;
+            insert(
+                &mut db,
+                parent_session,
+                parent_turn,
+                parent_sequence,
+                "parent",
+                call(),
+            )
+            .await;
+            let mut child = call();
+            child["origin"] = json!(origin);
+            child["parentToolCallId"] = json!("parent");
+            child["parentOperationId"] = json!("parent-operation");
+            insert(&mut db, "a", "turn", 2, "child", child).await;
+            let metadata = read(&mut db, "a", 2, 2, 65536).await.unwrap().unwrap();
+            assert_eq!(
+                metadata.call.unwrap().ancestor_tool_use_ids,
+                expected.into_iter().map(str::to_owned).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn trace_ancestors_retain_the_chain_through_internal_cells() {
+        let mut db = database().await;
+        insert(&mut db, "a", "turn", 1, "exec", call()).await;
+        for (sequence, id, parent) in [(2, "cell", "exec"), (3, "shell", "cell")] {
+            let mut child = call();
+            child["origin"] = json!("code_mode");
+            child["parentToolCallId"] = json!(parent);
+            child["parentOperationId"] = json!(format!("operation-{parent}"));
+            insert(&mut db, "a", "turn", sequence, id, child).await;
+        }
+        let metadata = read(&mut db, "a", 3, 3, 65536).await.unwrap().unwrap();
+        assert_eq!(
+            metadata.call.unwrap().ancestor_tool_use_ids,
+            ["cell", "exec"]
+        );
+    }
+
     #[tokio::test]
     async fn paired_references_are_unique_ordered_scoped_and_fenced() {
         let mut db = database().await;

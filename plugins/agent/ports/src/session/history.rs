@@ -241,6 +241,9 @@ pub struct Tool {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "HistoryToolCall")]
 pub struct ToolCall {
+    /// Recorded ancestors in this Turn, nearest first; display references only.
+    #[schemars(length(max = 32))]
+    pub ancestor_tool_use_ids: Vec<String>,
     /// Opaque display contract captured at dispatch; no execution authority.
     #[serde(default)]
     #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<String>")]

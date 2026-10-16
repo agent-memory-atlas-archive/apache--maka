@@ -33,6 +33,7 @@ test('history fragments keep distinct controls and navigate the original tool ev
       title: null,
       presentation: null,
       pending: false,
+      ancestorToolUseIds: [],
       dispatched: true,
     },
     result: null,
@@ -133,7 +134,7 @@ test('history fragments keep distinct controls and navigate the original tool ev
     }
   };
   for (const [settlement, isError, hint, tone] of [
-    ['returned', false, 'Returned', 'success'],
+    ['returned', false, 'Returned', 'subtle'],
     ['returned', true, 'Tool reported an error', 'error'],
     ['failed', false, 'Tool execution failed', 'error'],
     ['rejected', false, 'Not executed', 'error'],
@@ -159,7 +160,7 @@ test('history fragments keep distinct controls and navigate the original tool ev
     out = component.update(out.frame.state, props, {});
     assert.equal(
       find(out.frame.view, 'toggle-call').label,
-      title.translations[locale] ?? title.fallback,
+      '⌄ ' + (title.translations[locale] ?? title.fallback),
     );
   }
 });
@@ -480,3 +481,89 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(source().props.terminal.foreground, theme.terminal.foreground);
   });
 }
+
+test('trace keeps visible ancestry and keyboard disclosure across bounded history windows', () => {
+  const message = (id, sequence, ancestors = []) => ({
+    id,
+    contentKey: id,
+    role: 'tool_call',
+    text: '{}',
+    timestamp: null,
+    source: sequence,
+    image: false,
+    continued: false,
+    tool: {
+      toolUseId: id,
+      call: {
+        sequence,
+        name: id,
+        title: { fallback: id },
+        presentation: null,
+        pending: false,
+        dispatched: true,
+        ancestorToolUseIds: ancestors,
+      },
+      result: { sequence: sequence + 10, isError: false, settlement: 'returned', image: false },
+    },
+  });
+  const props = {
+    theme,
+    locale: 'en',
+    copyRequest: null,
+    browse: 1,
+    timings: [],
+    markReadEnabled: false,
+    toolContext: { sessionId: 'session', through: 20 },
+    waitingTools: [],
+    liveTools: [],
+    source: null,
+    search: null,
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
+    live: false,
+    messages: [
+      message('run', 1),
+      message('shell', 3, ['hidden-cell', 'run']),
+      message('nested', 4, ['shell', 'hidden-cell', 'run']),
+    ],
+  };
+  let out = component.mount(props, {});
+  const nodes = (node) =>
+    node && typeof node === 'object'
+      ? [
+          node,
+          ...Object.values(node).flatMap((value) =>
+            Array.isArray(value) ? value.flatMap(nodes) : nodes(value),
+          ),
+        ]
+      : [];
+  const find = (key) => nodes(out.frame.view).find((node) => node.key === key);
+  const raw = (key, kind = 'activate') => {
+    out = component.event(out.frame.state, { kind: 'raw', key, event: { kind } }, props, {});
+  };
+  assert.equal(find('marker-run').text, '•');
+  assert.equal(find('marker-shell').text, '│ •');
+  assert.equal(find('marker-nested').text, '│ │ •');
+  raw('browse-next');
+  assert.deepEqual(out.frame.state.command.target, { kind: 'focus_item', key: 'browse-shell' });
+  assert.equal(find('toggle-shell').label, '› shell');
+  raw('browse-shell', 'submit');
+  assert.equal(find('toggle-shell').label, '⌄ shell');
+  raw('browse-collapse');
+  assert.equal(find('toggle-shell').label, '› shell');
+  raw('browse-expand');
+  assert.equal(find('toggle-shell').label, '⌄ shell');
+  raw('browse-next');
+  raw('browse-previous');
+  assert.deepEqual(out.frame.state.command.target, { kind: 'focus_item', key: 'browse-shell' });
+  raw('browse-close');
+  assert.ok(out.events.some((event) => event.name === 'browseClosed' && event.value.request === 1));
+  props.messages = props.messages.slice(1);
+  out = component.update(out.frame.state, props, {});
+  assert.equal(find('marker-shell').text, '•');
+  assert.equal(find('marker-nested').text, '│ •');
+  assert.equal(find('toggle-shell').label, '⌄ shell');
+});

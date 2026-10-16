@@ -628,12 +628,13 @@ export function toolDetails<N extends Node>(
       }
     }
     if (process) {
+      const titled = presentation.target === 'tui' && !!props.tool.call?.title;
       const commandPart = state.parts.command;
       const command =
         commandPart?.page?.offset === 0 && !commandPart.failed
           ? commandPart.page.text + (complete(commandPart) ? '' : '…')
           : scalar(state, 'reference');
-      if (typeof command === 'string')
+      if (!titled && typeof command === 'string')
         summary.push(
           ui.text(
             'process-summary',
@@ -642,7 +643,11 @@ export function toolDetails<N extends Node>(
             props.theme.muted,
           ),
         );
-      if (command == null && (state.parts.command?.pending || state.parts.reference?.pending))
+      if (
+        !titled &&
+        command == null &&
+        (state.parts.command?.pending || state.parts.reference?.pending)
+      )
         summary.push(ui.text('process-summary-loading', text.loading, 13, props.theme.muted));
       const status = scalar(state, 'processStatus');
       const statusLabels: Record<string, string> = {
@@ -662,8 +667,14 @@ export function toolDetails<N extends Node>(
             ? text.toolBusinessFailure
             : null;
       if (statusText) {
-        summary.push(ui.text('process-summary-status', statusText, 13, props.theme.muted));
-        sections.unshift(ui.text('process-status', statusText, 13, props.theme.muted));
+        const failed =
+          ['failed', 'timed_out', 'orphaned'].includes(String(status)) ||
+          (typeof exit === 'number' && exit !== 0) ||
+          scalar(state, 'status') === 'failed';
+        const color = failed ? props.theme.error : props.theme.muted;
+        if (!titled || status !== 'completed' || exit !== 0)
+          summary.push(ui.text('process-summary-status', statusText, 13, color));
+        sections.unshift(ui.text('process-status', statusText, 13, color));
       }
       for (const id of ['stdoutTruncated', 'stderrTruncated', 'truncated', 'redacted']) {
         const part = state.parts[id];

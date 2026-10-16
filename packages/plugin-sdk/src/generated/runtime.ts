@@ -10005,6 +10005,12 @@ export interface HistoryTool {
 }
 export interface HistoryToolCall {
   /**
+   * Recorded ancestors in this Turn, nearest first; display references only.
+   *
+   * @maxItems 32
+   */
+  ancestorToolUseIds: string[];
+  /**
    * Opaque display contract captured at dispatch; no execution authority.
    */
   presentation?: string | null;

@@ -10851,6 +10851,15 @@ export const contracts = {
               HistoryToolCall: {
                 type: 'object',
                 properties: {
+                  ancestorToolUseIds: {
+                    description:
+                      'Recorded ancestors in this Turn, nearest first; display references only.',
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 32,
+                  },
                   presentation: {
                     description:
                       'Opaque display contract captured at dispatch; no execution authority.',
@@ -10888,7 +10897,14 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'name', 'title', 'pending', 'dispatched'],
+                required: [
+                  'ancestorToolUseIds',
+                  'sequence',
+                  'name',
+                  'title',
+                  'pending',
+                  'dispatched',
+                ],
               },
               DisplayText: {
                 description:
@@ -21820,6 +21836,15 @@ export const contracts = {
               HistoryToolCall: {
                 type: 'object',
                 properties: {
+                  ancestorToolUseIds: {
+                    description:
+                      'Recorded ancestors in this Turn, nearest first; display references only.',
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                    maxItems: 32,
+                  },
                   presentation: {
                     description:
                       'Opaque display contract captured at dispatch; no execution authority.',
@@ -21857,7 +21882,14 @@ export const contracts = {
                   },
                 },
                 additionalProperties: false,
-                required: ['sequence', 'name', 'title', 'pending', 'dispatched'],
+                required: [
+                  'ancestorToolUseIds',
+                  'sequence',
+                  'name',
+                  'title',
+                  'pending',
+                  'dispatched',
+                ],
               },
               DisplayText: {
                 description:

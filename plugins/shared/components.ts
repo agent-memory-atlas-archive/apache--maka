@@ -564,7 +564,7 @@ export function timeline<N extends Node>(
           (message.source !== null || message.text.length > 0),
       );
     state.expanded = state.expanded.filter((id) => tools.some((message) => message.id === id));
-    const messages: N[] = rows.flatMap(({ message, result }) => {
+    const messages: N[] = rows.flatMap(({ message, result, depth }, index) => {
       const tool = message.role === 'tool_call' || message.role === 'tool_result';
       const expanded = state.expanded.includes(message.id);
       const structured =
@@ -640,6 +640,10 @@ export function timeline<N extends Node>(
         : props.theme;
       const messageNode = messageView(presentation, target, messageTheme, props.locale, {
         ...message,
+        traceDepth: depth,
+        separate:
+          index < rows.length - 1 &&
+          !(tool && ['tool_call', 'tool_result'].includes(rows[index + 1]!.message.role)),
         browse: browsing
           ? { key: 'browse-' + message.id, current: browsing.id === message.id }
           : undefined,
@@ -800,7 +804,7 @@ export function timeline<N extends Node>(
           : []),
       ],
       {
-        gap: target === 'desktop' ? 24 : 1,
+        gap: target === 'desktop' ? 24 : 0,
         style: {
           width: fill,
           height: fill,

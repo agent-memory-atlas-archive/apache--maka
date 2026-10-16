@@ -319,7 +319,11 @@ impl<'a> StepTools<'a> {
                     let effect: PreparedEffect = PreparedEffect::new(move |cancellation| {
                         Box::pin(async move { code.start(executor, cancellation).await })
                     });
-                    Ok(effect)
+                    Ok(effect.titled(maka_agent_facts::display::Text::localized(
+                        "Run tools",
+                        "执行工具",
+                        "執行工具",
+                    )))
                 } else if call.name == "wait" && run.mode == ToolMode::CodeMode {
                     let input = cell::wait_input(&call.input)?;
                     let code = run.code.clone();

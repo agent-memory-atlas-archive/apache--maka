@@ -280,10 +280,10 @@ async fn tool_boundaries_page_independently_and_rebuild_exact_ids_without_readin
     );
     assert_eq!(values[11]["status"], "completed");
     // Search scans only bounded disposable-index batches, including large
-    // nested results; normal orchestration stays hidden and errors searchable.
+    // nested results; visible trace parents and errors remain searchable.
     for (query, include_internal, expected) in [
         ("xxxx", false, 3),
-        ("toolCalls", false, 0),
+        ("toolCalls", false, 1),
         ("toolCalls", true, 1),
         ("path required", false, 1),
     ] {
