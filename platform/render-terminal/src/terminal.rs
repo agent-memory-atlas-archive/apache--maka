@@ -89,6 +89,7 @@ pub(crate) fn render(
     screen: &mut Screen,
     render: impl FnOnce(&mut ratatui::Frame<'_>),
 ) -> io::Result<Vec<u8>> {
+    let _span = maka_ui_runtime::diagnostics::Span::new("slow_render");
     queue!(
         screen.terminal.backend_mut().writer_mut(),
         BeginSynchronizedUpdate
@@ -129,6 +130,7 @@ impl Output {
             .name("maka-terminal-output".into())
             .spawn(move || {
                 while let Ok(request) = receive.recv() {
+                    let _span = maka_ui_runtime::diagnostics::Span::new("slow_stdout_write");
                     let result = writer
                         .write_all(&request.bytes)
                         .and_then(|_| writer.flush());

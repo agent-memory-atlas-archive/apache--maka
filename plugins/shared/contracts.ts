@@ -262,6 +262,7 @@ export interface SourcePage {
   landing: 'start' | 'end';
 }
 export interface ToolDetailsProps {
+  load?: boolean;
   theme: Theme;
   locale: string;
   context: { sessionId: string; through: number };
@@ -270,6 +271,7 @@ export interface ToolDetailsProps {
   focusOnPointer: boolean;
 }
 export interface TimelineProps {
+  active?: boolean;
   leadingPrompt?: { source: number; text: string } | null;
   activeOutput?: Message | null;
   copyRequest: number | null;
@@ -824,14 +826,18 @@ export const imageViewerContract = component(
 const filePath = { anyOf: [{ type: 'string', minLength: 1, maxLength: 4096 }, { type: 'null' }] };
 export const toolDetailsContract = component(
   'maka.agent.ToolDetails',
-  object({
-    theme: { $ref: '#/$defs/Theme' },
-    locale,
-    context: object({ sessionId: string, through: { type: 'integer', minimum: 1 } }),
-    tool: { $ref: '#/$defs/HistoryTool' },
-    expanded: { type: 'boolean' },
-    focusOnPointer: { type: 'boolean' },
-  }),
+  object(
+    {
+      load: { type: 'boolean' },
+      theme: { $ref: '#/$defs/Theme' },
+      locale,
+      context: object({ sessionId: string, through: { type: 'integer', minimum: 1 } }),
+      tool: { $ref: '#/$defs/HistoryTool' },
+      expanded: { type: 'boolean' },
+      focusOnPointer: { type: 'boolean' },
+    },
+    ['theme', 'locale', 'context', 'tool', 'expanded', 'focusOnPointer'],
+  ),
   {
     fileContext: object({
       sessionId: string,
@@ -848,6 +854,7 @@ export const timelineContract = component(
   'maka.agent.Timeline',
   object(
     {
+      active: { type: 'boolean' },
       leadingPrompt: {
         anyOf: [
           object({ source: { type: 'integer', minimum: 1 }, text: string }),

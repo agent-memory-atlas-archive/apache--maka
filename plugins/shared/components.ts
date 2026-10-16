@@ -659,6 +659,11 @@ export function timeline<N extends Node>(
                 locale: props.locale,
                 context: props.toolContext,
                 tool: message.tool,
+                load:
+                  props.active !== false &&
+                  (expanded ||
+                    visible.includes('message-' + message.id) ||
+                    browsing?.id === message.id),
                 expanded,
                 focusOnPointer: !search,
               },

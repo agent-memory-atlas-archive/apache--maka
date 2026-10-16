@@ -24,6 +24,7 @@ impl Presenter {
     pub(super) fn clear_hover(&mut self) -> maka_ui_runtime::Result<()> {
         if let Some(target) = self.hover.take() {
             self.resources.hover(&target, None)?;
+            self.resources.redraw = true;
         }
         Ok(())
     }
@@ -49,7 +50,9 @@ impl Presenter {
             self.clear_hover()?;
         }
         if let Some(target) = target {
-            self.resources.hover(&target, Some(position))?;
+            let entering = self.hover.is_none();
+            let changed = self.resources.hover(&target, Some(position))?;
+            self.resources.redraw |= entering || changed;
             self.hover = Some(target);
         }
         Ok(())

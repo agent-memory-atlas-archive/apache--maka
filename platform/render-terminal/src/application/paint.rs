@@ -672,6 +672,7 @@ pub(super) fn color(value: impl Into<maka_ui_runtime::scene::terminal::Color>) -
 }
 impl Presenter {
     pub fn paint(&self, area: Rect, buffer: &mut Buffer) -> maka_ui_runtime::Result<PaintedScene> {
+        let _span = maka_ui_runtime::diagnostics::Span::new("slow_paint");
         if !self.surface.is_live() {
             return Err(maka_ui_runtime::Error::Invalid(
                 "terminal surface retired".into(),

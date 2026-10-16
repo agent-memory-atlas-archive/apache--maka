@@ -480,3 +480,90 @@ for (const target of ['tui', 'desktop']) {
     assert.equal(source().props.terminal.foreground, theme.terminal.foreground);
   });
 }
+
+test('tool details follow the visible viewport and suspend in a cached reader', () => {
+  const props = {
+    theme,
+    locale: 'en',
+    active: true,
+    copyRequest: null,
+    browse: null,
+    timings: [],
+    markReadEnabled: false,
+    toolContext: { sessionId: 'session', through: 8 },
+    waitingTools: [],
+    liveTools: [],
+    source: null,
+    search: null,
+    loading: false,
+    older: false,
+    newer: false,
+    latest: false,
+    landing: { sequence: 0, edge: 'end' },
+    live: false,
+    messages: Array.from({ length: 40 }, (_, i) => ({
+      id: 'tool-' + i,
+      contentKey: 'tool-' + i,
+      role: 'tool_call',
+      text: 'Read',
+      timestamp: null,
+      source: 7,
+      image: false,
+      continued: false,
+      tool: {
+        toolUseId: 'read-' + i,
+        call: {
+          sequence: 7,
+          name: 'Read',
+          title: null,
+          presentation: 'maka.workspace.Files@1/readText',
+          pending: false,
+          dispatched: true,
+        },
+        result: { sequence: 8, isError: false, settlement: 'returned', image: false },
+      },
+    })),
+  };
+  const find = (node, key) => {
+    if (!node || typeof node !== 'object') return undefined;
+    if (node.key === key) return node;
+    for (const value of Object.values(node)) {
+      for (const child of Array.isArray(value) ? value : [value]) {
+        const found = find(child, key);
+        if (found) return found;
+      }
+    }
+  };
+  let out = component.mount(props, {});
+  const detail = (index) => find(out.frame.view, 'tool-details-tool-' + index).props;
+  assert.equal(detail(0).load, false, 'initial placeholders can present without fetching details');
+  out = component.event(
+    out.frame.state,
+    {
+      kind: 'component',
+      child: 'reading',
+      name: 'observed',
+      event: {
+        readingRevision: 1,
+        selectedChildKey: null,
+        pendingCommand: null,
+        receipt: null,
+        viewport: {
+          readingRevision: 1,
+          atStart: false,
+          atEnd: false,
+          visibleChildKeys: ['message-tool-4', 'message-tool-5'],
+        },
+      },
+    },
+    props,
+    {},
+  );
+  for (let i = 0; i < 40; i++) assert.equal(detail(i).load, i === 4 || i === 5);
+  props.active = false;
+  out = component.update(out.frame.state, props, {});
+  assert.equal(detail(4).load, false);
+  props.active = true;
+  out = component.update(out.frame.state, props, {});
+  assert.equal(detail(4).load, true);
+});

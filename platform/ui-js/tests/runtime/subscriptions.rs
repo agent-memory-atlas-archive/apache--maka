@@ -129,6 +129,7 @@ fn sequence(index: usize, stop: CancellationToken, mode: Mode) -> StreamFuture {
 enum Mode {
     Causal,
     Many,
+    Burst,
     Panic,
     BadItem,
     WideItem,
@@ -175,6 +176,15 @@ impl NativeComponent<()> for Parent {
                 on: BTreeMap::from([("change".into(), "changed".into())]),
             });
         }
+        if matches!(self.0, Mode::Burst) {
+            slots.extend((0..8).map(|index| ComponentSlot {
+                key: format!("tool-{index}"),
+                binding: "child".into(),
+                member: 0,
+                props: json!({"cycle":0}),
+                on: BTreeMap::new(),
+            }));
+        }
         let mut output = Frame {
             revision: state["revision"].as_u64().unwrap(),
             state: state.clone(),
@@ -191,7 +201,11 @@ impl NativeComponent<()> for Parent {
             )?,
         }
         .output(vec![]);
-        let count = if matches!(self.0, Mode::Many) { 16 } else { 1 };
+        let count = match self.0 {
+            Mode::Many => 16,
+            Mode::Burst => 7,
+            _ => 1,
+        };
         output.subscriptions = (0..count)
             .map(|i| Action {
                 recovery: Value::Null,
@@ -249,19 +263,25 @@ impl NativeComponent<()> for Parent {
         Ok(output)
     }
 }
-struct Child;
+struct Child(Mode);
 impl NativeComponent<()> for Child {
     fn call(
         &self,
         call: ComponentCall<'_>,
         _: &maka_ui_runtime::abi::ValueBindings,
     ) -> maka_ui_runtime::Result<ComponentOutput<NativeView<()>>> {
+        let initial = matches!(&call, ComponentCall::Mount { .. });
         let (revision, cycle, emit) = match call {
             ComponentCall::Mount { props } => (0, props["cycle"].clone(), false),
             ComponentCall::Update { state, props } => (
                 state["revision"].as_u64().unwrap() + 1,
                 props["cycle"].clone(),
                 props["cycle"] != state["cycle"],
+            ),
+            ComponentCall::Event { state, .. } if matches!(self.0, Mode::Burst) => (
+                state["revision"].as_u64().unwrap() + 1,
+                state["cycle"].clone(),
+                false,
             ),
             _ => panic!("no child raw inputs"),
         };
@@ -273,13 +293,28 @@ impl NativeComponent<()> for Child {
         } else {
             vec![]
         };
-        Ok(Frame {
+        let mut output = Frame {
             revision,
             state: json!({"revision":revision,"cycle":cycle}),
             surface: None,
             view: NativeView::new(Rc::new(()), BTreeMap::new(), vec![])?,
         }
-        .output(events))
+        .output(events);
+        if initial && matches!(self.0, Mode::Burst) {
+            output.actions = (0..12)
+                .map(|index| Action {
+                    recovery: Value::Null,
+                    continuations: Vec::new(),
+                    key: format!("source-{index}"),
+                    binding: "stream".into(),
+                    member: 0,
+                    method: "query".into(),
+                    input: Value::Null,
+                    resources: BTreeMap::new(),
+                })
+                .collect();
+        }
+        Ok(output)
     }
 }
 fn component_contract(name: &str, events: BTreeMap<String, Value>) -> Contract {
@@ -359,6 +394,24 @@ fn fixture_data(
     packages.push(package);
     let service = native_package("native.stream", "test.stream", service_contract());
     let child = native_package("native.child", "test.child", child_contract.clone());
+    let child = if matches!(mode, Mode::Burst) {
+        let mut declaration = child.manifest().application.clone().unwrap();
+        declaration
+            .entries
+            .get_mut(&EntryTarget::Desktop)
+            .unwrap()
+            .imports
+            .insert(
+                "stream".into(),
+                Import {
+                    contract: service_contract(),
+                    cardinality: Cardinality::One,
+                },
+            );
+        support::package("native.child", declaration, None)
+    } else {
+        child
+    };
     for (name, key, package) in [("stream", 3, &service), ("child", 4, &child)] {
         input
             .instances
@@ -367,6 +420,15 @@ fn fixture_data(
             name.into(),
             vec![Target::Instance {
                 path: vec![name.into()],
+                export: "Export".into(),
+            }],
+        );
+    }
+    if matches!(mode, Mode::Burst) {
+        input.instances.get_mut("child").unwrap().bindings.insert(
+            "stream".into(),
+            vec![Target::Instance {
+                path: vec!["stream".into()],
                 export: "Export".into(),
             }],
         );
@@ -392,7 +454,7 @@ fn fixture_data(
                 "Export".into(),
                 NativeExport {
                     contract: child_contract.clone(),
-                    value: NativeCapability::Component(Rc::new(Child)),
+                    value: NativeCapability::Component(Rc::new(Child(mode))),
                 },
             )]))
         })
@@ -503,6 +565,107 @@ fn temporary_causal_demand_changes_do_not_restart_original_committed_execution()
     assert_eq!(starts.load(Ordering::SeqCst), 1);
     close(&mut app, &[root]);
 }
+#[test]
+fn composed_reads_wait_for_executor_and_feedback_capacity_without_rejecting_the_frame() {
+    let timer = timer();
+    let (mut app, starts) = fixture(Mode::Burst, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    assert_eq!(app.pending_action_count(), 103);
+    app.capture_actions(&root, |_| panic!("no resources"))
+        .unwrap();
+    let mut first = Vec::new();
+    while let Some(task) = app.start_task(&root).unwrap() {
+        first.push(task);
+    }
+    assert_eq!(first.len(), 64);
+    assert_eq!(app.accepted_action_count(), 64);
+    let mut subscriptions = Vec::new();
+    for task in first {
+        let (id, completion) = run(&timer, task);
+        if let Some(next) = app.finish_task(id, completion).unwrap() {
+            subscriptions.push(next);
+        }
+    }
+    assert_eq!(app.accepted_action_count(), 7);
+    assert_eq!(app.pending_action_count(), 103);
+    assert!(
+        app.start_task(&root).unwrap().is_none(),
+        "undelivered feedback retains capacity"
+    );
+    assert_eq!(
+        app.deliver_action_results(&root, |_, _, _| Ok(false))
+            .unwrap(),
+        64
+    );
+    let mut remaining = Vec::new();
+    while let Some(task) = app.start_task(&root).unwrap() {
+        remaining.push(task);
+    }
+    assert_eq!(remaining.len(), 39);
+    for task in remaining {
+        let (id, completion) = run(&timer, task);
+        if let Some(next) = app.finish_task(id, completion).unwrap() {
+            subscriptions.push(next);
+        }
+    }
+    assert_eq!(starts.load(Ordering::SeqCst), 7);
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
+    assert_eq!(app.accepted_action_count(), 7);
+    app.retire(&root).unwrap();
+    for task in subscriptions {
+        let (id, completion) = run(&timer, task);
+        assert!(app.finish_task(id, completion).unwrap().is_none());
+    }
+    assert_eq!(app.accepted_action_count(), 0);
+    close(&mut app, &[root]);
+}
+
+#[test]
+fn queued_reads_remain_bounded_and_an_overflow_rolls_back_only_its_own_frame() {
+    let timer = timer();
+    let (mut app, _) = fixture(Mode::Burst, &timer);
+    let roots = (0..9)
+        .map(|_| app.mount_launch(json!({})).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(app.pending_action_count(), 927);
+    assert!(
+        matches!(app.mount_launch(json!({})), Err(maka_ui_runtime::Error::Invalid(reason)) if reason == "pending action limit")
+    );
+    assert_eq!(app.pending_action_count(), 927);
+    assert_eq!(app.accepted_action_count(), 0);
+    close(&mut app, &roots);
+}
+
+#[test]
+fn retiring_a_full_executor_queue_rejects_unstarted_reads_without_releasing_running_work() {
+    let timer = timer();
+    let (mut app, _) = fixture(Mode::Burst, &timer);
+    let root = app.mount_launch(json!({})).unwrap();
+    app.capture_actions(&root, |_| panic!("no resources"))
+        .unwrap();
+    let mut tasks = Vec::new();
+    while let Some(task) = app.start_task(&root).unwrap() {
+        tasks.push(task);
+    }
+    assert_eq!(tasks.len(), 64);
+    app.retire(&root).unwrap();
+    assert!(app.start_task(&root).unwrap().is_none());
+    assert_eq!(
+        app.accepted_action_count(),
+        64,
+        "retirement is not executor cleanup"
+    );
+    for task in tasks {
+        let (id, completion) = run(&timer, task);
+        assert!(app.finish_task(id, completion).unwrap().is_none());
+    }
+    app.deliver_action_results(&root, |_, _, _| Ok(false))
+        .unwrap();
+    assert_eq!(app.pending_action_count(), 0);
+    close(&mut app, &[root]);
+}
+
 #[test]
 fn one_pending_feedback_does_not_double_charge_each_of_48_live_requests() {
     let timer = timer();

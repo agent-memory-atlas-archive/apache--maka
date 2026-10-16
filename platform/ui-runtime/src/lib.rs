@@ -26,6 +26,7 @@ pub mod backend;
 pub mod budget;
 pub mod checkpoint;
 mod deployment;
+pub mod diagnostics;
 pub mod diff;
 pub mod dismiss;
 pub mod editor;

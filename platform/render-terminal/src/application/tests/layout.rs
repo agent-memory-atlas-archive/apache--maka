@@ -1490,6 +1490,80 @@ fn anchored_model_dialog_follows_its_trigger_across_viewport_sizes() {
 }
 
 #[test]
+fn unchanged_button_hover_does_not_redraw_or_clear_an_existing_redraw() {
+    let source = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
+        {"kind":"button","key":"tool","label":"Read file","hint":"Show details"}
+    ]});
+    let (_runtime, mut presenter) = native(View::Scene(source), Rc::new(Cell::new(true)));
+    flushed(&mut presenter, 32, 6);
+    let mouse = |column, row| {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    presenter.resources.redraw = false;
+    presenter.input(mouse(30, 5)).unwrap();
+    assert!(
+        !presenter.resources.redraw,
+        "empty space has no hover feedback"
+    );
+    presenter.input(mouse(2, 0)).unwrap();
+    assert!(presenter.resources.redraw, "entering shows the hint");
+    let buffer = flushed(&mut presenter, 32, 6);
+    assert!(
+        buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .contains("Show details")
+    );
+    let revision = presenter
+        .application
+        .frame(&presenter.root)
+        .unwrap()
+        .revision;
+    presenter.resources.redraw = false;
+    for column in [3, 4, 5, 6, 7, 6, 5, 4] {
+        presenter.input_with_capture(mouse(column, 0)).unwrap();
+        assert!(!presenter.resources.redraw, "same button at {column}");
+    }
+    assert_eq!(
+        presenter
+            .application
+            .frame(&presenter.root)
+            .unwrap()
+            .revision,
+        revision
+    );
+    presenter.resources.redraw = true;
+    presenter.input(mouse(3, 0)).unwrap();
+    assert!(
+        presenter.resources.redraw,
+        "pending business redraw survives"
+    );
+    presenter.resources.redraw = false;
+    presenter.input(mouse(30, 5)).unwrap();
+    assert!(presenter.resources.redraw, "leaving removes the hint");
+    let buffer = flushed(&mut presenter, 32, 6);
+    assert!(
+        !buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .contains("Show details")
+    );
+    presenter
+        .surface_closed(&presenter.surface(), Ok(()))
+        .unwrap();
+    presenter.shutdown_settled().unwrap();
+}
+
+#[test]
 fn passive_text_hint_hover_never_steals_focus_or_activation() {
     let source = json!({"kind":"stack","key":"root","direction":"column","gap":0,"padding":0,"background":0,"children":[
         {"kind":"text","key":"status","text":"•","color":0x00ff00,"hint":"Succeeded"},

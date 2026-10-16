@@ -348,6 +348,7 @@ export function toolDetails<N extends Node>(
     }
     for (const [id, part] of Object.entries(state.parts))
       if (
+        props.load !== false &&
         (props.expanded || compactPart(id)) &&
         (!part.page || part.preparing) &&
         !part.pending &&
@@ -787,6 +788,7 @@ export function toolDetails<N extends Node>(
               };
             if (
               value.kind === 'preparing' &&
+              props.load !== false &&
               !part.failed &&
               (props.expanded || compactPart(entry![0]))
             )

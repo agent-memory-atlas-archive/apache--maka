@@ -88,7 +88,15 @@ pub trait Widget: std::any::Any {
     fn cancel_pointer(&self, _: &mut dyn std::any::Any) {}
     /// Local pointer feedback against the last presented target. Leaving clears
     /// feedback; hovering never selects, focuses, or invokes guest code.
-    fn hover(&self, _: &mut dyn std::any::Any, _: &str, _: Option<ratatui::layout::Position>) {}
+    /// Return whether native feedback changed and needs another paint.
+    fn hover(
+        &self,
+        _: &mut dyn std::any::Any,
+        _: &str,
+        _: Option<ratatui::layout::Position>,
+    ) -> bool {
+        false
+    }
     fn same_presentation(&self, _: &dyn std::any::Any) -> bool {
         false
     }
@@ -586,7 +594,6 @@ impl Presenter {
     /// scene. Crossterm supplies no screen epoch; never re-resolve a captured key.
     /// 输入立即绑定到最后成功输出的场景和真实 mount/revision。
     pub fn input(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
-        self.resources.redraw = true;
         let result = self.input_inner(event, false, None);
         self.recover_result(result)
     }
@@ -594,7 +601,6 @@ impl Presenter {
         &mut self,
         event: Event,
     ) -> maka_ui_runtime::Result<Option<activation::CapturedActivation>> {
-        self.resources.redraw = true;
         let mut captured = None;
         let result = self.input_inner(event, false, Some(&mut captured));
         self.recover_result(result)?;
@@ -605,7 +611,6 @@ impl Presenter {
     pub(super) fn wheel(&mut self, event: Event) -> maka_ui_runtime::Result<()> {
         debug_assert!(matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)));
-        self.resources.redraw = true;
         let result = self.input_inner(event, true, None);
         self.recover_result(result)
     }
@@ -615,6 +620,11 @@ impl Presenter {
         defer_scroll: bool,
         mut capture: Option<&mut Option<activation::CapturedActivation>>,
     ) -> maka_ui_runtime::Result<()> {
+        // Ordinary pointer motion can leave presentation entirely unchanged.
+        // Native hover reports its own changes below; other input retains the
+        // original redraw policy, including raw terminal pointer forwarding.
+        self.resources.redraw |=
+            !matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Moved);
         match event {
             Event::FocusLost => self.window_focused = false,
             Event::FocusGained => self.window_focused = true,
@@ -662,6 +672,9 @@ impl Presenter {
         } else {
             None
         };
+        if raw_pointer_target.is_some() {
+            self.resources.redraw = true;
+        }
         if raw_pointer_target.is_none() && self.open_context_menu(&event)? {
             return Ok(());
         }
@@ -1195,7 +1208,19 @@ impl Presenter {
                     && !self.resources.owners.contains_key(&mount.id())
             })
             .cloned();
+        let started = maka_ui_runtime::diagnostics::started();
         let result = self.pump_inner(input_waiting);
+        if let Some(started) = started
+            && started.elapsed() >= std::time::Duration::from_millis(16)
+        {
+            maka_ui_runtime::diagnostics::record("slow_pump", || {
+                json!({
+                    "elapsed_us": started.elapsed().as_micros(),
+                    "pending_actions": self.application.pending_action_count(),
+                    "input_waiting": input_waiting, "failed": result.is_err(),
+                })
+            });
+        }
         if let (Some(mount), Err(error @ (Error::Script(_) | Error::Invalid(_)))) =
             (replacement, &result)
             && !self.application.logical_pending()
@@ -1260,9 +1285,11 @@ impl Presenter {
         if let Err(error) = advancement {
             self.report(&error);
         }
+        let advance_span = maka_ui_runtime::diagnostics::Span::new("slow_advance_ui");
         if self.application.advance_ui()? {
             self.resources.redraw = true;
         }
+        drop(advance_span);
         self.sync_native()?;
         // Each join observer stays with the actual owner, independently of UI.
         self.finish_jobs()?;
@@ -1272,6 +1299,7 @@ impl Presenter {
             }
             if !input_waiting {
                 let resources = &mut self.resources;
+                let _span = maka_ui_runtime::diagnostics::Span::new("slow_feedback");
                 self.application.deliver_action_results(
                     &self.root,
                     |target, recipe, witness| {
@@ -1356,6 +1384,7 @@ impl Presenter {
         failure.map_or(Ok(()), Err)
     }
     fn finish_jobs(&mut self) -> maka_ui_runtime::Result<()> {
+        let _span = maka_ui_runtime::diagnostics::Span::new("slow_finish_jobs");
         let wake = self.application.waker();
         let mut cx = std::task::Context::from_waker(&wake);
         while let std::task::Poll::Ready(Some(completion)) =

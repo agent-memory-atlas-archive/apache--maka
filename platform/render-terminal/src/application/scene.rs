@@ -131,13 +131,14 @@ impl super::Widget for Node {
         state: &mut dyn std::any::Any,
         key: &str,
         point: Option<ratatui::layout::Position>,
-    ) {
+    ) -> bool {
         if let Some(Node::Choice(choice)) = self.overlay(key) {
-            state
+            return state
                 .downcast_mut::<super::scroll::SceneState>()
                 .unwrap()
                 .choice_hover(choice, point);
         }
+        false
     }
     fn same_presentation(&self, previous: &dyn std::any::Any) -> bool {
         previous
