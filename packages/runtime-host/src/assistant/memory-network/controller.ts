@@ -665,19 +665,97 @@ export class MemoryController {
       throw error;
     }
   }
-  /** Refresh observations only; never begin a work range or dispatch an indexing Agent. */
+  /** One observation batch shares source I/O, but retains each index's own coverage. */
+  async observeMany(indexIds: string[]) {
+    const indexes = indexIds.map((id) => this.store.index(id));
+    const before = new Map<string, Promise<string[]>>();
+    const refreshed = new Map<
+      string,
+      Promise<{ allowed: string[]; checkedAt: number; error?: unknown }>
+    >();
+    const sourcesOf = (index: (typeof indexes)[number]) => index.sources ?? ['maka'];
+    const visibility = (source: string) => {
+      let result = before.get(source);
+      if (!result) {
+        result = this.visible([source]);
+        before.set(source, result);
+      }
+      return result;
+    };
+    const refresh = (source: string) => {
+      let result = refreshed.get(source);
+      if (!result) {
+        result = (async () => {
+          const members = indexes.filter((index) => sourcesOf(index).includes(source));
+          const sessions = members.some((index) => !index.sessions?.length)
+            ? []
+            : [...new Set(members.flatMap((index) => index.sessions))];
+          const checkedAt = Date.now();
+          let error: unknown;
+          try {
+            await this.sync([source], sessions);
+          } catch (failure) {
+            error = failure;
+          }
+          // Recheck permissions after I/O, once per source rather than per index.
+          return { allowed: await this.visible([source]), checkedAt, error };
+        })();
+        // Retain completed promises until this batch ends as well as in-flight ones.
+        refreshed.set(source, result);
+      }
+      return result;
+    };
+    return Promise.allSettled(
+      indexes.map(async (index) => {
+        const sources = [...new Set(sourcesOf(index))];
+        const initial = (await Promise.all(sources.map(visibility))).flat();
+        this.store.assertIndexVisible(index.id, initial);
+        const checkedAt = Date.now();
+        this.store.saveWorker(index.id, {
+          ...this.store.worker(index.id),
+          lastCheckAttemptAt: checkedAt,
+        });
+        try {
+          const settled = await Promise.allSettled(sources.map(refresh));
+          const results = settled.map((result) => {
+            if (result.status === 'rejected') throw result.reason;
+            return result.value;
+          });
+          const allowed = [...new Set(results.flatMap((result) => result.allowed))];
+          this.store.assertIndexVisible(index.id, allowed);
+          const failed = results.find((result) => result.error !== undefined);
+          if (failed) {
+            this.store.saveWorker(index.id, {
+              ...this.store.worker(index.id),
+              lastCheckError: String(failed.error),
+            });
+          } else {
+            const cursor = this.store.capture(sources, allowed, index.sessions);
+            const observedAt = Math.min(checkedAt, ...results.map((result) => result.checkedAt));
+            this.store.recordCheck(cursor.id, observedAt);
+            this.store.saveWorker(index.id, {
+              ...this.store.worker(index.id),
+              latestCursor: cursor.id,
+              lastCheckedAt: observedAt,
+              lastCheckError: undefined,
+            });
+          }
+          return allowed;
+        } catch (error) {
+          this.store.saveWorker(index.id, {
+            ...this.store.worker(index.id),
+            lastCheckError: String(error),
+          });
+          throw error;
+        }
+      }),
+    );
+  }
+  /** Refresh observations only; never dispatch an indexing Agent. */
   async observe(indexId: string) {
-    const index = this.store.index(indexId);
-    this.store.assertIndexVisible(indexId, await this.indexVisible(indexId));
-    try {
-      await this.capture(index.sources ?? ['maka'], index.sessions, indexId);
-    } catch {
-      // capture records the failure and preserves the last successful observation.
-      // Recheck visibility below: source failure must never bypass the caller's permissions.
-    }
-    const allowed = await this.indexVisible(indexId);
-    this.store.assertIndexVisible(indexId, allowed);
-    return allowed;
+    const [result] = await this.observeMany([indexId]);
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
   }
   interval(indexId: string) {
     return this.store.worker(indexId)?.intervalMs ?? this.config.intervalMs ?? 43200000;

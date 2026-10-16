@@ -193,14 +193,18 @@ export async function initializeMemory(
   );
   register(
     'MemoryIndexList',
-    'List a compact directory of ALL available index IDs, names, organizing criteria and essential freshness. Use MemoryIndexRead for the complete document directory, MemoryIndexContent for batch/full reading or search. Automatically refreshes source observations before returning, updating freshness/knownPending; does not organize the index or advance coveredCursor.',
+    'List a compact directory of ALL available index IDs, names, organizing criteria and essential freshness. Use MemoryIndexRead for the complete document directory, MemoryIndexContent for batch/full reading or search. Automatically refreshes each distinct source once per list call, with different sources refreshed concurrently, updating freshness/knownPending; does not organize the index or advance coveredCursor.',
     z.object({}),
     async () => {
       await ctx.sessionQuery.historyList();
       const results = [];
-      for (const { covered, view, sessions, ...index } of store.list()) {
+      const indexes = store.list();
+      const observations = await controller.observeMany(indexes.map((index) => index.id));
+      for (const [position, { covered, view, sessions, ...index }] of indexes.entries()) {
         try {
-          const allowed = await controller.observe(index.id);
+          const observation = observations[position];
+          if (observation.status === 'rejected') throw observation.reason;
+          const allowed = observation.value;
           store.assertIndexVisible(index.id, allowed);
           const f = controller.freshness(index.id, allowed);
           results.push({
