@@ -18,6 +18,7 @@
  */
 
 import { useId, useState, type ReactNode } from 'react';
+import { Markdown } from './markdown.js';
 import { ChevronDown } from './icons.js';
 import { assistantChatCopy } from './assistant-chat-copy.js';
 import { useUiLocale } from './locale-context.js';
@@ -31,7 +32,7 @@ export function MessageSummary({ summary, children }: { summary?: string; childr
   const labels = assistantChatCopy(locale);
   return (
     <div className="maka-message-summary">
-      <div className="maka-message-summary-preview">{summary}</div>
+      <div className="maka-message-summary-preview"><Markdown text={summary} density="compact" /></div>
       <div id={bodyId} className="maka-message-summary-body" hidden={!expanded}>{children}</div>
       <button
         type="button"
