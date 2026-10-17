@@ -126,8 +126,14 @@ test('prepared release binds its source and recovers partial publication and mis
     );
     assert.match(manifest.description, /Unofficial experimental.*not an ASF release/);
     const readme = execFileSync('tar', ['-xOf', packed, 'package/README.md'], { encoding: 'utf8' });
-    assert.match(readme, /not an official release of the Apache Software Foundation/);
-    assert.match(readme, /@maka-agent\/cli@latest.*empty placeholders/);
+    assert.match(
+      readme,
+      /not an official Apache Software Foundation release and is not approved, endorsed or supported by the ASF/,
+    );
+    assert.match(
+      readme,
+      /The `latest` tags remain empty placeholders, including the separate `maka-agent` package\. They contain no CLI, runtime, dependencies or install scripts\./,
+    );
     assert.deepEqual(manifest.makaSource, source);
     await publicationRecovery(t, stage, packages);
     await writeFile(packed, 'tampered');
