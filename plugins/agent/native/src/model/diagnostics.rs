@@ -54,16 +54,7 @@ pub(super) fn provider(
 }
 
 pub(super) fn configuration(stage: &'static str, error: &ConfigError, connection_id: Option<&str>) {
-    let cause = match error {
-        ConfigError::Invalid(_) => "config_invalid",
-        ConfigError::UnsupportedDatabase => "config_unsupported_database",
-        ConfigError::CommitUnknown => "config_commit_unknown",
-        ConfigError::Io(_) => "config_io",
-        ConfigError::Sqlx(_) => "config_sqlx",
-        ConfigError::Migration(_) => "config_migration",
-        ConfigError::Store(_) => "config_store",
-        ConfigError::Json(_) => "config_json",
-    };
+    let cause = crate::diagnostics::config_cause(error);
     match error {
         ConfigError::Io(error) => tracing::warn!(
             stage, cause, connection_id, error_kind = ?error.kind(), os_code = error.raw_os_error(),

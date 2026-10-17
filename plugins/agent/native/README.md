@@ -47,7 +47,7 @@ The default Maka composition enables `automaticTitles`. Conversations created wi
 
 Automatic-title preparation, model and invalid-output failures are durable session diagnostics. Empty or output-limited responses retain their actual physical usage while recording the logical title failure. Stopping the owner and policy skips do not report title failures; uncertain persistence or cleanup retains its original recovery priority.
 
-Model preparation and OAuth refresh failures emit Host warnings before their original cause is reduced to a public error. Warnings include a safe error category and existing connection/session identifiers when available; they exclude credentials, configuration, request content and arbitrary provider error text. Re-reading a failed refresh does not log the original failure again.
+Model preparation and OAuth refresh failures emit Host warnings before their original cause is reduced to a public error. Warnings include a safe error category and existing connection/session identifiers when available; they exclude credentials, configuration, request content and arbitrary provider error text. Re-reading a failed refresh does not log the original failure again. Fatal queue and auxiliary-request errors record safe Host diagnostics with available owner, invocation or request identity. Diagnostics distinguish session quarantine from owner shutdown; the original recovery and resource-custody rules remain authoritative.
 
 Model context capacity, any independent input ceiling and the compaction threshold are captured with the accepted model selection and retained across queueing and restart. Without an explicit threshold, known input capacity sets the proactive threshold at 85%; output reserve remains a separate engine calculation.
 

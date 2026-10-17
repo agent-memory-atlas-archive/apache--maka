@@ -57,7 +57,19 @@ impl Owner {
         if runs.closing {
             return;
         }
-        if self.schedule_locked(&mut runs).await.is_err() {
+        if let Err(error) = self.schedule_locked(&mut runs).await {
+            if !(self.stop.is_cancelled()
+                && matches!(
+                    &error,
+                    RunError::Cancelled
+                        | RunError::Commit(maka_agent_facts::event::CommitError::Retired)
+                        | RunError::Store(StoreError::SessionRetired)
+                ))
+            {
+                tracing::error!(stage = "queue_schedule_failed", cause = crate::diagnostics::run_cause(&error),
+                    consequence = "owner_closing", activation = %self.revision.activation, instance = ?self.data_source.namespace,
+                    "Agent queue scheduling failed");
+            }
             runs.closing = true;
             self.stop.cancel();
         }
@@ -125,11 +137,21 @@ impl Owner {
         Box::pin(async move {
             let session = running.invocation().session_id.clone();
             loop {
+                let invocation = running.invocation().clone();
                 let completion = std::panic::AssertUnwindSafe(running.completion())
                     .catch_unwind()
                     .await;
                 let mut runs = self.runs.lock().await;
                 if !matches!(completion, Ok(ref value) if value.cleanup.is_ok()) {
+                    let stage = if completion.is_err() {
+                        "queue_completion_panicked"
+                    } else {
+                        "queue_cleanup_unconfirmed"
+                    };
+                    tracing::error!(stage, cause = "cleanup_unconfirmed", consequence = "session_quarantined",
+                        session_id = %invocation.session_id, turn_id = %invocation.turn_id,
+                        run_id = %invocation.run_id, invocation_id = %invocation.invocation_id,
+                        activation = %self.revision.activation, "Agent invocation cleanup is unconfirmed");
                     runs.controls
                         .get_mut(&session)
                         .expect("original worker control")
@@ -156,6 +178,22 @@ impl Owner {
                         return;
                     }
                     Err(error) => {
+                        if !((self.stop.is_cancelled() || runs.closing)
+                            && matches!(
+                                &error,
+                                RunError::Cancelled
+                                    | RunError::Commit(
+                                        maka_agent_facts::event::CommitError::Retired
+                                    )
+                                    | RunError::Store(StoreError::SessionRetired)
+                            ))
+                        {
+                            tracing::error!(stage = "queue_advance_failed", cause = crate::diagnostics::run_cause(&error),
+                                consequence = "owner_closing", session_id = %invocation.session_id,
+                                turn_id = %invocation.turn_id, run_id = %invocation.run_id,
+                                invocation_id = %invocation.invocation_id, activation = %self.revision.activation,
+                                "Agent queue advancement failed after invocation completion");
+                        }
                         runs.controls
                             .get_mut(&session)
                             .expect("original worker control")

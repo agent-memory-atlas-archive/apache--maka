@@ -276,7 +276,12 @@ impl Owner {
         let configuration = Arc::new(
             ConfigurationStore::for_root(root)
                 .await
-                .map_err(|_| "agent_configuration_unavailable")?,
+                .map_err(|error| {
+                    tracing::error!(stage = "configuration_store_open", cause = crate::diagnostics::config_cause(&error),
+                        activation = %context.activation().epoch(), instance = ?context.activation().instance(),
+                        "Agent configuration store failed to open");
+                    "agent_configuration_unavailable"
+                })?,
         );
         let recall = Arc::new(recall::Recall {
             store: persistence.store().clone(),
@@ -393,7 +398,12 @@ impl Owner {
                 configuration
                     .shutdown()
                     .await
-                    .map_err(|_| "agent_configuration_cleanup_unconfirmed")?;
+                    .map_err(|error| {
+                        tracing::error!(stage = "configuration_store_shutdown", cause = crate::diagnostics::config_cause(&error),
+                            activation = %context.activation().epoch(), instance = ?context.activation().instance(),
+                            "Agent configuration store cleanup failed");
+                        "agent_configuration_cleanup_unconfirmed"
+                    })?;
                 return Err(error);
             }
         };
@@ -1132,6 +1142,11 @@ impl Owner {
             let recap = owner.recap_storage.finish().await;
             let auxiliary = owner.auxiliary.resources.finish().await;
             let configuration = owner.configuration.shutdown().await;
+            if let Err(error) = &configuration {
+                tracing::error!(stage = "configuration_store_shutdown", cause = crate::diagnostics::config_cause(error),
+                    activation = %owner.revision.activation, instance = ?owner.data_source.namespace,
+                    "Agent configuration store cleanup failed");
+            }
             let runs = owner.runs.lock().await;
             if !runs.quarantined.is_empty() {
                 return Err("agent_cleanup_unconfirmed".into());

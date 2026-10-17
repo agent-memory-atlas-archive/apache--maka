@@ -406,14 +406,23 @@ async fn title_host_shutdown_awaits_socket_cleanup_and_restart_does_not_replay()
 #[tokio::test]
 async fn title_settlement_fault_fences_owner_and_preserves_original_usage_for_recovery() {
     tokio::time::timeout(Duration::from_secs(30), async {
+        const SQL_SECRET: &str = "SECRET_TITLE_SETTLEMENT_SQL_PAYLOAD";
+        let (mut capture, _log_guard) = log_capture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let f = fixture(&format!("http://{}/v1", listener.local_addr().unwrap())).await;
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let f = fixture(&base).await;
+        let activation = f.owner.revision.activation.clone();
         let session = automatic(&f).await;
-        f.send(&session).await.unwrap();
+        let sent = f.send(&session).await.unwrap();
         let ((_, mut main), (_, mut title)) = pair(&listener).await;
         let raw = rusqlite::Connection::open(f.root.join(maka_event_log::root::ROOT_DATABASE)).unwrap();
-        raw.execute_batch("CREATE TRIGGER hold_title_settlement BEFORE INSERT ON event_log WHEN NEW.kind='auxiliary_model_settled' BEGIN SELECT RAISE(ABORT, 'fixture title settlement failure'); END;").unwrap();
+        raw.execute_batch(&format!("CREATE TRIGGER hold_title_settlement BEFORE INSERT ON event_log WHEN NEW.kind='auxiliary_model_settled' BEGIN SELECT RAISE(ABORT, '{SQL_SECRET}'); END;")).unwrap();
         response(&mut main).await;
+        let completed = loop {
+            let boundary = f.store.invocation_boundary(&session, sent["invocationId"].as_str().unwrap()).await.unwrap().unwrap().0;
+            if matches!(boundary.state, maka_event_log::turns::InvocationState::Ended { .. }) { break boundary; }
+            tokio::task::yield_now().await;
+        };
         response_with_text(&mut title, "Uncommitted title").await;
         f.drained().await;
         assert!(f.owner.runs.lock().await.closing);
@@ -432,6 +441,29 @@ async fn title_settlement_fault_fences_owner_and_preserves_original_usage_for_re
         assert_eq!(auxiliary.usage.input_tokens, Some(1));
         assert_eq!(auxiliary.usage.output_tokens, Some(2));
         f.config.shutdown().await.unwrap();
+        assert!(matches!(completed.state, maka_event_log::turns::InvocationState::Ended {
+            outcome: maka_agent_facts::event::InvocationOutcome::Completed, ..
+        }));
+        assert!(matches!(&auxiliary.origin, Origin::Auxiliary {
+            source: AuxiliarySource::SessionTitle { invocation }
+        } if invocation == &completed.invocation));
+        let log = log_text(&mut capture);
+        let settlement = log.lines().find(|line| line.contains("stage=\"auxiliary_model_settlement_failed\""))
+            .expect("typed SQL settlement failure must be logged before it becomes a persistence string");
+        assert!(settlement.contains("ERROR"));
+        assert!(settlement.contains("cause=\"store_sqlx\""));
+        assert!(settlement.contains("sql_code=1811"));
+        assert!(settlement.contains("request_id=") && settlement.contains(&auxiliary.request_id));
+        let fatal = log.lines().find(|line| line.contains("stage=\"title_worker_persistence_failed\""))
+            .expect("title worker must log its actual owner-closing consequence");
+        assert!(fatal.contains("ERROR"));
+        assert!(fatal.contains("consequence=\"owner_closing\""));
+        for identity in [&completed.invocation.session_id, &completed.invocation.turn_id, &completed.invocation.run_id, &completed.invocation.invocation_id, &activation] {
+            assert!(fatal.contains(identity), "title fatal event must retain its triggering invocation/activation: {fatal}");
+        }
+        for secret in [SQL_SECRET, "private-fixture-key", "Uncommitted title", "Hello", base.as_str()] {
+            assert!(!log.contains(secret), "typed cause and custody events must exclude SQL messages, credentials, input, title and URLs");
+        }
     }).await.unwrap();
 }
 
@@ -568,7 +600,7 @@ async fn verify_visible_title_failure(case: VisibleTitleFailure) {
 #[tokio::test]
 async fn title_preparation_failure_is_public_without_a_physical_title_attempt() {
     tokio::time::timeout(Duration::from_secs(30),async {
-        let (mut capture, _log_guard) = model_log_capture();
+        let (mut capture, _log_guard) = log_capture();
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
         // Automatic dispatch is disabled; this test calls generation once from
         // the actual first opening's frozen source after its connection changes.
@@ -606,7 +638,7 @@ async fn title_preparation_failure_is_public_without_a_physical_title_attempt() 
         assert!(entries[0]["sequence"].as_u64().is_some_and(|sequence|sequence>0));
         assert!(entries[0]["eventId"].as_str().is_some_and(|id|!id.is_empty()));
         assert!(entries[0]["recordedAt"].as_f64().is_some());
-        let log = model_log_text(&mut capture);
+        let log = log_text(&mut capture);
         let cause = log.lines().find(|line| line.contains("stage=\"accepted_model_observation\"")
             && line.contains("cause=\"accepted_source_unavailable\""))
             .expect("title preparation must retain its unavailable accepted-source cause");

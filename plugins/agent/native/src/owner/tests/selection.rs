@@ -547,7 +547,7 @@ async fn model_search_continues_its_query_across_bounded_scan_windows_and_catalo
 #[tokio::test]
 async fn queued_model_route_change_settles_original_message_without_retargeting() {
     tokio::time::timeout(Duration::from_secs(30), async {
-        let (mut capture, _log_guard) = model_log_capture();
+        let (mut capture, _log_guard) = log_capture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let fixture = Fixture::new(&base, None).await;
@@ -579,7 +579,7 @@ async fn queued_model_route_change_settles_original_message_without_retargeting(
         assert_eq!(entry["detail"]["invocation"],serde_json::to_value(&failed.event.invocation).unwrap());
         assert_eq!(entry["detail"]["reason"],"message_preparation_failed");
         assert!(entry["detail"]["modelFailure"].is_null(),"a deterministic queued route conflict is not a provider failure");
-        let log = model_log_text(&mut capture);
+        let log = log_text(&mut capture);
         let cause = log.lines().find(|line| line.contains("stage=\"accepted_model_observation\"")
             && line.contains("cause=\"accepted_configuration_changed\""))
             .expect("accepted route rejection must retain the original configuration-change cause");
@@ -722,7 +722,7 @@ async fn unsupported_thinking_logs_original_provider_cause_without_admitting_exe
     use maka_agent_facts::execution::ThinkingLevel::Low;
     tokio::time::timeout(Duration::from_secs(30), async {
         const MESSAGE: &str = "submitted-message-must-not-enter-model-log";
-        let (mut capture, _log_guard) = model_log_capture();
+        let (mut capture, _log_guard) = log_capture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let fixture = Fixture::new(&base, None).await;
@@ -762,7 +762,7 @@ async fn unsupported_thinking_logs_original_provider_cause_without_admitting_exe
             Ok(_) => true,
             Err(error) => panic!("observe actual provider listener: {error}"),
         };
-        let log = model_log_text(&mut capture);
+        let log = log_text(&mut capture);
         assert_eq!(result.unwrap_err(), "agent_execution_unavailable");
         assert!(
             !facts.events.iter().any(|event| matches!(

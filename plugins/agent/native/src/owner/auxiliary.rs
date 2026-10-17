@@ -28,6 +28,7 @@ use maka_agent_facts::{
 use maka_capabilities::call::Resources;
 use maka_event_log::usage::{AuxiliarySource, Outcome};
 use maka_model::{ModelRequest, ModelStream, StepBuilder};
+use tracing::Instrument;
 
 pub(super) enum Error {
     Model(ModelError),
@@ -84,15 +85,36 @@ impl Auxiliary {
                 reference,
                 binding,
                 session_id,
-            } => log
-                .begin_auxiliary_operation_model(*reference, binding, session_id, Some(quote))
-                .await
-                .map_err(|error| match error {
-                    maka_event_log::StoreError::SessionNotFound
-                    | maka_event_log::StoreError::SessionRetired
-                    | maka_event_log::StoreError::SessionBusy => Error::Admission(failed(error)),
-                    other => Error::Tool(persistence(other)),
-                })?,
+            } => {
+                let span = tracing::error_span!("agent_auxiliary_operation", session_id = %session_id, operation_id = %reference.operation);
+                async {
+                    log.begin_auxiliary_operation_model(
+                        *reference,
+                        binding,
+                        session_id,
+                        Some(quote),
+                    )
+                    .await
+                    .map_err(|error| match error {
+                        maka_event_log::StoreError::SessionNotFound
+                        | maka_event_log::StoreError::SessionRetired
+                        | maka_event_log::StoreError::SessionBusy => {
+                            Error::Admission(failed(error))
+                        }
+                        other => {
+                            tracing::error!(
+                                stage = "auxiliary_model_admission_failed",
+                                cause = crate::diagnostics::store_cause(&other),
+                                sql_code = crate::diagnostics::store_sql_code(&other),
+                                "Auxiliary model admission failed"
+                            );
+                            Error::Tool(persistence(other))
+                        }
+                    })
+                }
+                .instrument(span)
+                .await?
+            }
             Admission::Source(source) => log
                 .begin_auxiliary_model(source, Some(quote))
                 .await
@@ -102,7 +124,15 @@ impl Auxiliary {
                     | maka_event_log::StoreError::SessionRetired
                     | maka_event_log::StoreError::SessionBusy
                     | maka_event_log::StoreError::PrefixTooLarge => Error::Admission(failed(error)),
-                    _ => Error::Tool(persistence(error)),
+                    _ => {
+                        tracing::error!(
+                            stage = "auxiliary_model_admission_failed",
+                            cause = crate::diagnostics::store_cause(&error),
+                            sql_code = crate::diagnostics::store_sql_code(&error),
+                            "Auxiliary model admission failed"
+                        );
+                        Error::Tool(persistence(error))
+                    }
                 })?,
         };
         let model_id = request.provider.model.clone();
@@ -151,7 +181,11 @@ impl Auxiliary {
         };
         log.settle_auxiliary_model(id, outcome)
             .await
-            .map_err(persistence)?;
+            .map_err(|error| {
+                tracing::error!(stage = "auxiliary_model_settlement_failed", cause = crate::diagnostics::store_cause(&error),
+                    sql_code = crate::diagnostics::store_sql_code(&error), request_id = %id, "Auxiliary model settlement failed");
+                persistence(error)
+            })?;
         result
     }
 }
@@ -174,7 +208,11 @@ async fn receive(
             {
                 log.observe_auxiliary_model(id, usage.clone())
                     .await
-                    .map_err(persistence)?;
+                    .map_err(|error| {
+                        tracing::error!(stage = "auxiliary_model_observation_failed", cause = crate::diagnostics::store_cause(&error),
+                            sql_code = crate::diagnostics::store_sql_code(&error), request_id = %id, "Auxiliary model usage observation failed");
+                        persistence(error)
+                    })?;
                 observed_usage = true;
             }
             bytes = bytes.saturating_add(
@@ -198,7 +236,11 @@ async fn receive(
     stream
         .cancel_and_wait()
         .await
-        .map_err(|error| ToolError::CleanupUnconfirmed(error.to_string()))?;
+        .map_err(|error| {
+            tracing::error!(stage = "auxiliary_model_cleanup_unconfirmed", cause = "cleanup_unconfirmed",
+                request_id = %id, "Auxiliary model stream cleanup is unconfirmed");
+            ToolError::CleanupUnconfirmed(error.to_string())
+        })?;
     result
 }
 pub(super) fn persistence(error: impl std::fmt::Display) -> ToolError {

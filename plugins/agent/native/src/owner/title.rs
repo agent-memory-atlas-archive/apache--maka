@@ -29,6 +29,7 @@ use maka_agent_facts::{
 use maka_agent_ports::session::title::Policy;
 use maka_event_log::usage::AuxiliarySource;
 use maka_model::{ModelRequest, prompt::Message};
+use tracing::Instrument;
 
 #[cfg(test)]
 pub(super) struct WriteGate {
@@ -77,29 +78,49 @@ impl Owner {
             return;
         };
         let owner = self.clone();
-        self.workers.spawn(async move {
-            ticket.start();
-            let result = std::panic::AssertUnwindSafe(owner.generate_title(invocation, model))
-                .catch_unwind()
-                .await
-                .unwrap_or_else(|_| {
+        let span = tracing::error_span!("agent_title_worker", session_id = %invocation.session_id,
+            turn_id = %invocation.turn_id, run_id = %invocation.run_id,
+            invocation_id = %invocation.invocation_id, activation = %self.revision.activation);
+        self.workers.spawn(
+            async move {
+                ticket.start();
+                let completion =
+                    std::panic::AssertUnwindSafe(owner.generate_title(invocation, model))
+                        .catch_unwind()
+                        .await;
+                let fatal = match &completion {
+                    Err(_) => Some(("title_worker_panicked", "worker_panicked")),
+                    Ok(Err(ToolError::Persistence(_))) => {
+                        Some(("title_worker_persistence_failed", "persistence_failed"))
+                    }
+                    Ok(Err(ToolError::CleanupUnconfirmed(_))) => {
+                        Some(("title_worker_cleanup_unconfirmed", "cleanup_unconfirmed"))
+                    }
+                    _ => None,
+                };
+                let result = completion.unwrap_or_else(|_| {
                     Err(ToolError::CleanupUnconfirmed(
                         "Auxiliary title worker disappeared".into(),
                     ))
                 });
-            let cleanup = match &result {
-                Err(ToolError::CleanupUnconfirmed(error)) => Err(error.clone()),
-                _ => Ok(()),
-            };
-            ticket.complete(cleanup);
-            if matches!(
-                result,
-                Err(ToolError::Persistence(_) | ToolError::CleanupUnconfirmed(_))
-            ) {
-                owner.runs.lock().await.closing = true;
-                owner.stop.cancel();
+                let cleanup = match &result {
+                    Err(ToolError::CleanupUnconfirmed(error)) => Err(error.clone()),
+                    _ => Ok(()),
+                };
+                ticket.complete(cleanup);
+                if let Some((stage, cause)) = fatal {
+                    tracing::error!(
+                        stage,
+                        cause,
+                        consequence = "owner_closing",
+                        "Agent title worker failed"
+                    );
+                    owner.runs.lock().await.closing = true;
+                    owner.stop.cancel();
+                }
             }
-        });
+            .instrument(span),
+        );
     }
     pub(super) async fn generate_title(
         &self,

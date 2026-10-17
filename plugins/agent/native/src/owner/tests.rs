@@ -444,8 +444,8 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
     (input, vec![provider, consumer, receipts, settings])
 }
 // The default dispatcher is thread-local: hold the guard through current-thread
-// fixture shutdown so actual model preparation tasks remain inside the capture.
-fn model_log_capture() -> (std::fs::File, tracing::subscriber::DefaultGuard) {
+// fixture shutdown so actual producer tasks remain inside the capture.
+fn log_capture() -> (std::fs::File, tracing::subscriber::DefaultGuard) {
     let file = tempfile::tempfile().unwrap();
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file.try_clone().unwrap())
@@ -456,7 +456,7 @@ fn model_log_capture() -> (std::fs::File, tracing::subscriber::DefaultGuard) {
     (file, tracing::subscriber::set_default(subscriber))
 }
 
-fn model_log_text(file: &mut std::fs::File) -> String {
+fn log_text(file: &mut std::fs::File) -> String {
     use std::io::{Read, Seek};
     file.rewind().unwrap();
     let mut text = String::new();
@@ -1253,11 +1253,23 @@ fn controlled_model(panic: bool) -> (ModelExecutor, Fault) {
 }
 
 async fn cleanup_case(panic: bool) {
+    let (mut capture, _log_guard) = log_capture();
     let (model, fault) = controlled_model(panic);
     let fixture = Fixture::new("http://127.0.0.1:1/v1", Some(model)).await;
     *fault.store.lock().unwrap() = Some(fixture.store.clone());
     let session = fixture.create("Physical lifetime").await;
     fixture.send(&session).await.unwrap();
+    let invocation = fixture
+        .owner
+        .runs
+        .lock()
+        .await
+        .controls
+        .get(&session)
+        .unwrap()
+        .invocation
+        .clone();
+    let activation = fixture.owner.revision.activation.clone();
     fault.entered.acquire().await.unwrap().forget();
     let selection = fixture.selection().await;
     let reference = if panic {
@@ -1321,6 +1333,12 @@ async fn cleanup_case(panic: bool) {
         fixture.owner.runs.lock().await.quarantined.len(),
         usize::from(panic)
     );
+    assert_eq!(
+        fixture.owner.runs.lock().await.closing,
+        !panic,
+        "completion uncertainty quarantines only the session; advancing after SQL shutdown closes the owner"
+    );
+    assert_eq!(fixture.owner.stop.is_cancelled(), !panic);
     let close = fixture.app.shutdown().await;
     assert_eq!(close.is_err(), panic);
     fixture.config.shutdown().await.unwrap();
@@ -1351,6 +1369,51 @@ async fn cleanup_case(panic: bool) {
         );
     } else {
         drop(RootOwner::open(&root, &namespaces).unwrap());
+    }
+    let log = log_text(&mut capture);
+    let (stage, cause, consequence) = if panic {
+        (
+            "queue_cleanup_unconfirmed",
+            "cleanup_unconfirmed",
+            "session_quarantined",
+        )
+    } else {
+        (
+            "queue_advance_failed",
+            "store_connection_closed",
+            "owner_closing",
+        )
+    };
+    let event = log
+        .lines()
+        .find(|line| line.contains(&format!("stage=\"{stage}\"")))
+        .expect("actual fatal queue custody outcome must be logged");
+    assert!(event.contains("ERROR"));
+    assert!(event.contains(&format!("cause=\"{cause}\"")));
+    assert!(event.contains(&format!("consequence=\"{consequence}\"")));
+    for identity in [
+        &invocation.session_id,
+        &invocation.turn_id,
+        &invocation.run_id,
+        &invocation.invocation_id,
+        &activation,
+    ] {
+        assert!(
+            event.contains(identity),
+            "fatal event must retain original invocation/activation: {event}"
+        );
+    }
+    for secret in [
+        "controlled original model worker panic",
+        "ordinary model failure",
+        "private-fixture-key",
+        "after failed cleanup",
+        "Hello",
+    ] {
+        assert!(
+            !log.contains(secret),
+            "fatal evidence must exclude panic/error payloads, credentials and submitted text"
+        );
     }
 }
 #[tokio::test]
