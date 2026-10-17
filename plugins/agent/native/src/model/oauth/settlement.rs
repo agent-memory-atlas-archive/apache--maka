@@ -52,7 +52,14 @@ impl State {
             .credential
             .current_generation()
             .await
-            .map_err(failure)?
+            .map_err(|error| {
+                diagnostics::configuration(
+                    "credential_generation_observation",
+                    &error,
+                    Some(&self.credential.target().connection_id),
+                );
+                failure(error)
+            })?
             .ok_or_else(|| failure("Provider credential was superseded"))?;
         if current.basis() != self.credential.basis() {
             return Err(failure("Provider credential was superseded"));
@@ -71,8 +78,23 @@ impl State {
         }
         let refresh = provider
             .prepare_refresh(connection, self.credential.credential().clone())
-            .map_err(failure)?;
-        if !self.credential.claim_refresh().await.map_err(failure)? {
+            .map_err(|error| {
+                diagnostics::provider(
+                    "credential_refresh_prepare",
+                    &error,
+                    &self.credential.target().connection_id,
+                    &self.credential.target().provider.name,
+                );
+                failure(error)
+            })?;
+        if !self.credential.claim_refresh().await.map_err(|error| {
+            diagnostics::configuration(
+                "credential_refresh_claim",
+                &error,
+                Some(&self.credential.target().connection_id),
+            );
+            failure(error)
+        })? {
             let message = "Provider refresh was already claimed; its outcome is unknown";
             self.outcome = Outcome::Failed(message.into());
             return Err(failure(message));
@@ -84,8 +106,23 @@ impl State {
             Ok(Ok(credential)) => credential,
             result => {
                 let error = match result {
-                    Ok(Err(error)) => error.to_string(),
-                    Err(_) => "Provider refresh outcome is unknown".into(),
+                    Ok(Err(error)) => {
+                        diagnostics::provider(
+                            "credential_refresh_exchange",
+                            &error,
+                            &self.credential.target().connection_id,
+                            &self.credential.target().provider.name,
+                        );
+                        error.to_string()
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            stage = "credential_refresh_exchange",
+                            cause = "credential_refresh_timeout",
+                            "Model preparation failed"
+                        );
+                        "Provider refresh outcome is unknown".into()
+                    }
                     Ok(Ok(_)) => unreachable!(),
                 };
                 self.outcome = Outcome::Failed(error.clone());
@@ -105,14 +142,28 @@ impl State {
             .credential
             .current_generation()
             .await
-            .map_err(failure)?
+            .map_err(|error| {
+                diagnostics::configuration(
+                    "credential_generation_observation",
+                    &error,
+                    Some(&self.credential.target().connection_id),
+                );
+                failure(error)
+            })?
             .ok_or_else(|| failure("Provider credential was superseded"))?;
         let next = self
             .credential
             .basis()
             .revision
             .checked_add(1)
-            .ok_or_else(|| failure("Provider credential revision exhausted"))?;
+            .ok_or_else(|| {
+                tracing::warn!(
+                    stage = "credential_refresh_commit",
+                    cause = "credential_revision_exhausted",
+                    "Model preparation failed"
+                );
+                failure("Provider credential revision exhausted")
+            })?;
         // The complete envelope matters: refresh_at is Host scheduling authority.
         if current.basis().revision == next && current.credential() == replacement {
             self.credential = current;
@@ -125,13 +176,27 @@ impl State {
         self.credential
             .commit_refresh(replacement.clone(), now()?)
             .await
-            .map_err(failure)?
+            .map_err(|error| {
+                diagnostics::configuration(
+                    "credential_refresh_commit",
+                    &error,
+                    Some(&self.credential.target().connection_id),
+                );
+                failure(error)
+            })?
             .ok_or_else(|| failure("Provider credential was superseded"))?;
         let current = self
             .credential
             .current_generation()
             .await
-            .map_err(failure)?
+            .map_err(|error| {
+                diagnostics::configuration(
+                    "credential_generation_observation",
+                    &error,
+                    Some(&self.credential.target().connection_id),
+                );
+                failure(error)
+            })?
             .ok_or_else(|| failure("Provider credential was superseded"))?;
         if current.basis().revision != next || current.credential() != replacement {
             return Err(failure("Provider credential was superseded"));
@@ -148,5 +213,12 @@ fn now() -> Result<u64, ModelError> {
         .ok()
         .and_then(|time| u64::try_from(time.as_millis()).ok())
         .filter(|time| *time <= 9_007_199_254_740_991)
-        .ok_or_else(|| failure("Invalid system time for credentials"))
+        .ok_or_else(|| {
+            tracing::warn!(
+                stage = "credential_clock",
+                cause = "credential_time_invalid",
+                "Model preparation failed"
+            );
+            failure("Invalid system time for credentials")
+        })
 }

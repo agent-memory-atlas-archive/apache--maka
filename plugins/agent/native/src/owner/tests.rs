@@ -443,6 +443,27 @@ fn input(settings: &Configuration) -> (Input, Vec<Package>) {
     }
     (input, vec![provider, consumer, receipts, settings])
 }
+// The default dispatcher is thread-local: hold the guard through current-thread
+// fixture shutdown so actual model preparation tasks remain inside the capture.
+fn model_log_capture() -> (std::fs::File, tracing::subscriber::DefaultGuard) {
+    let file = tempfile::tempfile().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(file.try_clone().unwrap())
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .without_time()
+        .finish();
+    (file, tracing::subscriber::set_default(subscriber))
+}
+
+fn model_log_text(file: &mut std::fs::File) -> String {
+    use std::io::{Read, Seek};
+    file.rewind().unwrap();
+    let mut text = String::new();
+    file.read_to_string(&mut text).unwrap();
+    text
+}
+
 struct Fixture {
     services: maka_host_runtime::application::NativeServices,
     _dir: tempfile::TempDir,

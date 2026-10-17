@@ -47,6 +47,8 @@ The default Maka composition enables `automaticTitles`. Conversations created wi
 
 Automatic-title preparation, model and invalid-output failures are durable session diagnostics. Empty or output-limited responses retain their actual physical usage while recording the logical title failure. Stopping the owner and policy skips do not report title failures; uncertain persistence or cleanup retains its original recovery priority.
 
+Model preparation and OAuth refresh failures emit Host warnings before their original cause is reduced to a public error. Warnings include a safe error category and existing connection/session identifiers when available; they exclude credentials, configuration, request content and arbitrary provider error text. Re-reading a failed refresh does not log the original failure again.
+
 Model context capacity, any independent input ceiling and the compaction threshold are captured with the accepted model selection and retained across queueing and restart. Without an explicit threshold, known input capacity sets the proactive threshold at 85%; output reserve remains a separate engine calculation.
 
 The default composition enables `recaps`. The Session recap command reads cached text; generating a new recap requires explicit confirmation of the selected model and possible charges. Each request reads at most 256 bounded history pages, keeps at most 32 KiB of history text, and limits output to 1,024 tokens and 30 seconds. Incognito mode and session access are checked even for cached reads. Refresh and original operation recovery never regenerate; an unknown request remains pending across restart. Auxiliary usage belongs to the original application operation, and shutdown waits for physical model cleanup.

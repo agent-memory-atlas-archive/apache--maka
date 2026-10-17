@@ -568,10 +568,13 @@ async fn verify_visible_title_failure(case: VisibleTitleFailure) {
 #[tokio::test]
 async fn title_preparation_failure_is_public_without_a_physical_title_attempt() {
     tokio::time::timeout(Duration::from_secs(30),async {
+        let (mut capture, _log_guard) = model_log_capture();
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
         // Automatic dispatch is disabled; this test calls generation once from
         // the actual first opening's frozen source after its connection changes.
-        let f=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let f=Fixture::new(&base,None).await;
+        let connection = f.selection().await.connection_id;
         let session=automatic(&f).await;
         let sent=f.send(&session).await.unwrap();
         let (mut socket,_)=listener.accept().await.unwrap();
@@ -603,5 +606,14 @@ async fn title_preparation_failure_is_public_without_a_physical_title_attempt() 
         assert!(entries[0]["sequence"].as_u64().is_some_and(|sequence|sequence>0));
         assert!(entries[0]["eventId"].as_str().is_some_and(|id|!id.is_empty()));
         assert!(entries[0]["recordedAt"].as_f64().is_some());
+        let log = model_log_text(&mut capture);
+        let cause = log.lines().find(|line| line.contains("stage=\"accepted_model_observation\"")
+            && line.contains("cause=\"accepted_source_unavailable\""))
+            .expect("title preparation must retain its unavailable accepted-source cause");
+        assert!(cause.contains("session_id=") && cause.contains(&session));
+        assert!(cause.contains("connection_id=") && cause.contains(&connection));
+        for secret in ["private-fixture-key", base.as_str(), "Hello"] {
+            assert!(!log.contains(secret), "title preparation warning must omit credentials, URL and original input");
+        }
     }).await.unwrap();
 }

@@ -69,9 +69,11 @@ serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 uuid.workspace = true
 
 [dev-dependencies]
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 maka-computer-native.workspace = true
 maka-external-agent.workspace = true
 maka-packages.workspace = true

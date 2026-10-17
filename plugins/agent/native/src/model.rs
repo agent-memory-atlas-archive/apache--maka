@@ -17,6 +17,7 @@
  * under the License.
  */
 
+mod diagnostics;
 pub(crate) mod oauth;
 
 use futures_util::future::BoxFuture;
@@ -39,6 +40,7 @@ use maka_model::{ProviderAuth, ProviderConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+use tracing::Instrument;
 
 /// Only parameters actually supplied to execution. Catalog labels, tests and
 /// other models are observations, not a mutable authority over an accepted run.
@@ -106,47 +108,59 @@ impl Source {
         session: String,
         mut revision: SourceRevision,
     ) -> Result<(Self, PreparedModel), RunError> {
-        let material = configuration
-            .observe_selected_model(selection.clone())
-            .await
-            .map_err(|_| unavailable())?
-            .ok_or_else(unavailable)?;
-        let row = &material.connection;
-        let definition =
-            Arc::new(maka_providers::definition(&row.provider).map_err(|_| unavailable())?);
-        let model = resolve(&definition, row, &selection.model_id, thinking_level).await?;
-        revision.name = row.provider.name.clone();
-        let source = Self {
-            configuration,
-            credentials,
-            accepted: AcceptedModel {
-                context: request_context(row, &model.info)?,
-                editing_tools: Some(editing_tools(row, &selection.model_id, &model.base_url)),
-                tool_mode: ToolMode::for_model(
-                    &selection.model_id,
-                    &model.base_url,
-                    row.model_overrides
-                        .as_ref()
-                        .and_then(|models| models.get(&selection.model_id))
-                        .and_then(|overrides| overrides.code_mode),
-                ),
-                binding: ModelBinding {
-                    connection_id: row.connection_id.clone(),
-                    connection_slug: row.slug.clone(),
-                    model: selection.model_id,
+        let span = tracing::warn_span!("agent_model_preparation", session_id = %session,
+            connection_id = %selection.connection_id, activation = %revision.activation);
+        async move {
+            let material = configuration
+                .observe_selected_model(selection.clone())
+                .await
+                .map_err(|error| {
+                    diagnostics::configuration("selected_model_observation", &error, Some(&selection.connection_id));
+                    unavailable()
+                })?
+                .ok_or_else(unavailable)?;
+            let row = &material.connection;
+            let definition =
+                Arc::new(maka_providers::definition(&row.provider).map_err(|_| {
+                    tracing::warn!(stage = "provider_definition", cause = "provider_definition_unavailable",
+                        provider = %row.provider.name, "Model preparation failed");
+                    unavailable()
+                })?);
+            let model = resolve(&definition, row, &selection.model_id, thinking_level).await?;
+            revision.name = row.provider.name.clone();
+            let source = Self {
+                configuration,
+                credentials,
+                accepted: AcceptedModel {
+                    context: request_context(row, &model.info)?,
+                    editing_tools: Some(editing_tools(row, &selection.model_id, &model.base_url)),
+                    tool_mode: ToolMode::for_model(
+                        &selection.model_id,
+                        &model.base_url,
+                        row.model_overrides
+                            .as_ref()
+                            .and_then(|models| models.get(&selection.model_id))
+                            .and_then(|overrides| overrides.code_mode),
+                    ),
+                    binding: ModelBinding {
+                        connection_id: row.connection_id.clone(),
+                        connection_slug: row.slug.clone(),
+                        model: selection.model_id,
+                    },
+                    thinking_level,
+                    provider: row.provider.clone(),
+                    provider_configuration: row.configuration.clone(),
+                    basis: ExecutionBasis::new(&model, row),
                 },
-                thinking_level,
-                provider: row.provider.clone(),
-                provider_configuration: row.configuration.clone(),
-                basis: ExecutionBasis::new(&model, row),
-            },
-            definition,
-            session,
-            revision,
-        };
-        let prepared = source.prepare(material, model).await?;
-        Ok((source, prepared))
+                definition,
+                session,
+                revision,
+            };
+            let prepared = source.prepare(material, model).await?;
+            Ok((source, prepared))
+        }.instrument(span).await
     }
+
     pub fn restore(
         configuration: Arc<ConfigurationStore>,
         credentials: Credentials,
@@ -154,8 +168,15 @@ impl Source {
         session: String,
         mut revision: SourceRevision,
     ) -> Result<Self, RunError> {
+        let _span = tracing::warn_span!("agent_model_preparation", session_id = %session,
+            connection_id = %accepted.binding.connection_id, activation = %revision.activation)
+        .entered();
         let definition =
-            Arc::new(maka_providers::definition(&accepted.provider).map_err(|_| unavailable())?);
+            Arc::new(maka_providers::definition(&accepted.provider).map_err(|_| {
+                tracing::warn!(stage = "restore_provider_definition", cause = "provider_definition_unavailable",
+                    provider = %accepted.provider.name, "Model preparation failed");
+                unavailable()
+            })?);
         revision.name = accepted.provider.name.clone();
         Ok(Self {
             configuration,
@@ -173,6 +194,11 @@ impl Source {
     ) -> Result<PreparedModel, RunError> {
         let capabilities = model.info.capabilities.unwrap_or_default();
         if capabilities.chat == Some(false) {
+            tracing::warn!(
+                stage = "model_capabilities",
+                cause = "chat_unsupported",
+                "Model preparation failed"
+            );
             return Err(unavailable());
         }
         let row = &material.connection;
@@ -180,7 +206,14 @@ impl Source {
             &material.network.proxy,
             material.network.password.as_deref(),
         )
-        .map_err(|_| unavailable())?;
+        .map_err(|error| {
+            diagnostics::network(
+                "network_policy",
+                &error,
+                &self.accepted.binding.connection_id,
+            );
+            unavailable()
+        })?;
         let credential = match material.credential {
             Some(snapshot) if snapshot.credential().refresh_at.is_some() => Some(
                 self.credentials
@@ -191,11 +224,16 @@ impl Source {
                         self.accepted.provider.clone(),
                         self.definition.clone(),
                         maka_agent_ports::provider::Context {
-                            transport: self
-                                .credentials
-                                .executor
-                                .transport(&network)
-                                .map_err(|_| unavailable())?,
+                            transport: self.credentials.executor.transport(&network).map_err(
+                                |error| {
+                                    diagnostics::model(
+                                        "credential_transport",
+                                        &error,
+                                        &self.accepted.binding.connection_id,
+                                    );
+                                    unavailable()
+                                },
+                            )?,
                             cancellation: tokio_util::sync::CancellationToken::new(),
                             interaction: None,
                         },
@@ -212,7 +250,15 @@ impl Source {
             .definition
             .authorize(connection(row), credential, self.session.clone())
             .await
-            .map_err(|_| RunError::InvalidInput("agent_authentication_unavailable".into()))?;
+            .map_err(|error| {
+                diagnostics::provider(
+                    "provider_authorize",
+                    &error,
+                    &row.connection_id,
+                    &row.provider.name,
+                );
+                RunError::InvalidInput("agent_authentication_unavailable".into())
+            })?;
         let auth = match credentials {
             maka_agent_ports::model::Credentials::ApiKey(key) => ProviderAuth::ApiKey(key),
             maka_agent_ports::model::Credentials::RequestHeaders(headers) => {
@@ -249,6 +295,7 @@ fn request_context(
 ) -> Result<ModelRequestContext, RunError> {
     if matches!((model.context_window, model.input_limit), (Some(capacity), Some(input)) if input > capacity)
     {
+        tracing::warn!(stage = "request_context", cause = "input_limit_exceeds_context", connection_id = %row.connection_id, "Model preparation failed");
         return Err(unavailable());
     }
     let input = match (model.context_window, model.input_limit) {
@@ -266,21 +313,54 @@ fn request_context(
             .and_then(|profile| profile.compaction_threshold)
             .or_else(|| input.map(|limit| ((u128::from(limit) * 85 / 100) as u64).max(1))),
     };
-    context.validate().map_err(|_| unavailable())?;
+    context.validate().map_err(|_| {
+        tracing::warn!(stage = "request_context", cause = "request_context_invalid", connection_id = %row.connection_id, "Model preparation failed");
+        unavailable()
+    })?;
     Ok(context)
 }
 impl Source {
+    fn preparation_span(&self) -> tracing::Span {
+        tracing::warn_span!("agent_model_preparation", session_id = %self.session,
+            connection_id = %self.accepted.binding.connection_id, activation = %self.revision.activation,
+            provider = %self.accepted.provider.name)
+    }
     async fn observe(&self) -> Result<(ConnectionObservation, Model), RunError> {
         let material = self
             .configuration
             .observe_model(self.accepted.binding.clone())
             .await
-            .map_err(|_| unavailable())?
-            .ok_or_else(unavailable)?;
+            .map_err(|error| {
+                diagnostics::configuration(
+                    "accepted_model_observation",
+                    &error,
+                    Some(&self.accepted.binding.connection_id),
+                );
+                unavailable()
+            })?
+            .ok_or_else(|| {
+                tracing::warn!(
+                    stage = "accepted_model_observation",
+                    cause = "accepted_source_unavailable",
+                    "Model preparation failed"
+                );
+                unavailable()
+            })?;
         let row = &material.connection;
-        if row.provider != self.accepted.provider
-            || row.configuration != self.accepted.provider_configuration
-        {
+        if row.provider != self.accepted.provider {
+            tracing::warn!(
+                stage = "accepted_model_observation",
+                cause = "accepted_provider_changed",
+                "Model preparation failed"
+            );
+            return Err(unavailable());
+        }
+        if row.configuration != self.accepted.provider_configuration {
+            tracing::warn!(
+                stage = "accepted_model_observation",
+                cause = "accepted_configuration_changed",
+                "Model preparation failed"
+            );
             return Err(unavailable());
         }
         let model = resolve(
@@ -291,37 +371,49 @@ impl Source {
         )
         .await?;
         if ExecutionBasis::new(&model, row) != self.accepted.basis {
+            tracing::warn!(
+                stage = "accepted_model_observation",
+                cause = "accepted_execution_basis_changed",
+                "Model preparation failed"
+            );
             return Err(unavailable());
         }
         Ok((material, model))
     }
     /// The original accepted route, with the least declared reasoning for a short auxiliary task.
     pub(crate) async fn capture_auxiliary(&self) -> Result<PreparedModel, RunError> {
-        let (material, model) = self.observe().await?;
-        let least = ThinkingLevel::ALL
-            .into_iter()
-            .find(|level| model.thinking_levels.contains(level));
-        let model = match least {
-            Some(level) => {
-                resolve(
-                    &self.definition,
-                    &material.connection,
-                    &self.accepted.binding.model,
-                    Some(level),
-                )
-                .await?
-            }
-            None => model,
-        };
-        self.prepare(material, model).await
+        async {
+            let (material, model) = self.observe().await?;
+            let least = ThinkingLevel::ALL
+                .into_iter()
+                .find(|level| model.thinking_levels.contains(level));
+            let model = match least {
+                Some(level) => {
+                    resolve(
+                        &self.definition,
+                        &material.connection,
+                        &self.accepted.binding.model,
+                        Some(level),
+                    )
+                    .await?
+                }
+                None => model,
+            };
+            self.prepare(material, model).await
+        }
+        .instrument(self.preparation_span())
+        .await
     }
 }
 impl ModelSource for Source {
     fn capture(&self) -> BoxFuture<'_, Result<PreparedModel, RunError>> {
-        Box::pin(async move {
-            let (material, model) = self.observe().await?;
-            self.prepare(material, model).await
-        })
+        Box::pin(
+            async move {
+                let (material, model) = self.observe().await?;
+                self.prepare(material, model).await
+            }
+            .instrument(self.preparation_span()),
+        )
     }
 }
 
@@ -334,10 +426,21 @@ pub(crate) async fn candidate_editing_tools(
     let material = configuration
         .observe_selected_model(selection.clone())
         .await
-        .map_err(|_| unavailable())?
+        .map_err(|error| {
+            diagnostics::configuration(
+                "candidate_model_observation",
+                &error,
+                Some(&selection.connection_id),
+            );
+            unavailable()
+        })?
         .ok_or_else(unavailable)?;
     let row = &material.connection;
-    let definition = maka_providers::definition(&row.provider).map_err(|_| unavailable())?;
+    let definition = maka_providers::definition(&row.provider).map_err(|_| {
+        tracing::warn!(stage = "provider_definition", cause = "provider_definition_unavailable", connection_id = %row.connection_id,
+            provider = %row.provider.name, "Model preparation failed");
+        unavailable()
+    })?;
     let model = resolve(&definition, row, &selection.model_id, thinking_level).await?;
     Ok(editing_tools(row, &selection.model_id, &model.base_url))
 }
@@ -379,7 +482,15 @@ async fn resolve(
             thinking_level,
         })
         .await
-        .map_err(|_| unavailable())
+        .map_err(|error| {
+            diagnostics::provider(
+                "provider_prepare",
+                &error,
+                &row.connection_id,
+                &row.provider.name,
+            );
+            unavailable()
+        })
 }
 fn connection(row: &maka_agent_facts::configuration::ConnectionCatalogEntry) -> Connection {
     Connection {
@@ -400,17 +511,29 @@ impl maka_agent_engine::pricing::Pricing for Prices {
         provider: &'a str,
         model: &'a str,
     ) -> BoxFuture<'a, Result<maka_agent_facts::pricing::Quote, RunError>> {
-        Box::pin(async move {
-            self.0
-                .quote_model(provider.into(), model.into())
-                .await
-                .map_err(|error| match error {
-                    maka_config::ConfigError::CommitUnknown => {
-                        maka_agent_facts::event::CommitError::OutcomeUnknown(error.to_string())
-                            .into()
-                    }
-                    _ => RunError::Internal("model pricing unavailable".into()),
-                })
-        })
+        Box::pin(
+            async move {
+                self.0
+                    .quote_model(provider.into(), model.into())
+                    .await
+                    .map_err(|error| {
+                        diagnostics::configuration("model_pricing", &error, None);
+                        match error {
+                            maka_config::ConfigError::CommitUnknown => {
+                                maka_agent_facts::event::CommitError::OutcomeUnknown(
+                                    error.to_string(),
+                                )
+                                .into()
+                            }
+                            _ => RunError::Internal("model pricing unavailable".into()),
+                        }
+                    })
+            }
+            .instrument(tracing::warn_span!(
+                "agent_model_pricing",
+                provider,
+                model_id = model
+            )),
+        )
     }
 }

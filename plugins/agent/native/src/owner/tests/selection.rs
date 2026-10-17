@@ -547,9 +547,11 @@ async fn model_search_continues_its_query_across_bounded_scan_windows_and_catalo
 #[tokio::test]
 async fn queued_model_route_change_settles_original_message_without_retargeting() {
     tokio::time::timeout(Duration::from_secs(30), async {
+        let (mut capture, _log_guard) = model_log_capture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let fixture = Fixture::new(&base, None).await;
+        let connection = fixture.selection().await.connection_id;
         let session = fixture.create("Queued original model").await;
         fixture.send(&session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -577,6 +579,15 @@ async fn queued_model_route_change_settles_original_message_without_retargeting(
         assert_eq!(entry["detail"]["invocation"],serde_json::to_value(&failed.event.invocation).unwrap());
         assert_eq!(entry["detail"]["reason"],"message_preparation_failed");
         assert!(entry["detail"]["modelFailure"].is_null(),"a deterministic queued route conflict is not a provider failure");
+        let log = model_log_text(&mut capture);
+        let cause = log.lines().find(|line| line.contains("stage=\"accepted_model_observation\"")
+            && line.contains("cause=\"accepted_configuration_changed\""))
+            .expect("accepted route rejection must retain the original configuration-change cause");
+        assert!(cause.contains("session_id=") && cause.contains(&session));
+        assert!(cause.contains("connection_id=") && cause.contains(&connection));
+        for secret in ["private-fixture-key", base.as_str(), "http://127.0.0.1:1/v1", "Hello"] {
+            assert!(!log.contains(secret), "accepted route warning must not dump either configuration or the queued message");
+        }
     }).await.unwrap();
 }
 
@@ -704,6 +715,92 @@ async fn restored_thinking_preserves_explicit_choice_and_refuses_changed_default
     assert!(sources[1].0.capture().await.is_err());
     fixture.app.shutdown().await.unwrap();
     fixture.config.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn unsupported_thinking_logs_original_provider_cause_without_admitting_execution() {
+    use maka_agent_facts::execution::ThinkingLevel::Low;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        const MESSAGE: &str = "submitted-message-must-not-enter-model-log";
+        let (mut capture, _log_guard) = model_log_capture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let fixture = Fixture::new(&base, None).await;
+        thinking(&fixture, vec![Low], Low).await;
+        let session = fixture.create("Provider preparation failure").await;
+        let selection = fixture.selection().await;
+        let connection = selection.connection_id.clone();
+        let result = fixture
+            .mutation(
+                2,
+                "send",
+                json!({
+                    "sessionId": session,
+                    "message": MESSAGE,
+                    "model": selection,
+                    "thinkingLevel": "high"
+                }),
+                Uuid::new_v4(),
+            )
+            .await;
+        fixture.drained().await;
+        let facts = fixture
+            .store
+            .scoped_prefix(
+                maka_agent_facts::event::LogScope::Session {
+                    id: session.clone(),
+                },
+                256,
+                1024 * 1024,
+            )
+            .await
+            .unwrap();
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+        let dispatched = match listener.into_std().unwrap().accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+            Ok(_) => true,
+            Err(error) => panic!("observe actual provider listener: {error}"),
+        };
+        let log = model_log_text(&mut capture);
+        assert_eq!(result.unwrap_err(), "agent_execution_unavailable");
+        assert!(
+            !facts.events.iter().any(|event| matches!(
+                event.event.fact,
+                maka_agent_facts::event::Fact::InvocationOpened { .. }
+            )),
+            "preparation rejection must not admit an invocation"
+        );
+        assert!(
+            !dispatched,
+            "unsupported thinking must fail before provider HTTP dispatch"
+        );
+        let cause = log
+            .lines()
+            .find(|line| {
+                line.contains("stage=\"provider_prepare\"")
+                    && line.contains("cause=\"provider_invalid\"")
+            })
+            .expect(
+                "actual typed provider rejection must be logged before its public cause is erased",
+            );
+        assert!(
+            cause.contains("session_id=") && cause.contains(&session),
+            "warning must identify the existing session: {cause}"
+        );
+        assert!(
+            cause.contains("connection_id=") && cause.contains(&connection),
+            "warning must identify the existing connection: {cause}"
+        );
+        for secret in ["private-fixture-key", base.as_str(), MESSAGE] {
+            assert!(
+                !log.contains(secret),
+                "model cause log must omit credentials, URLs and submitted input"
+            );
+        }
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

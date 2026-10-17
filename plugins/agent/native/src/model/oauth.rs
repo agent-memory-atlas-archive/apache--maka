@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use super::diagnostics;
 use maka_agent_ports::provider::Connection;
 use maka_agent_ports::provider::Context;
 use maka_agent_ports::provider::Identity;
@@ -28,6 +29,7 @@ use std::{
 };
 use tokio::sync::{Mutex as AsyncMutex, watch};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
+use tracing::Instrument;
 
 struct RefreshProvider {
     identity: Identity,
@@ -173,7 +175,14 @@ impl Credential {
             .snapshot
             .current_generation()
             .await
-            .map_err(failure)?
+            .map_err(|error| {
+                diagnostics::configuration(
+                    "credential_generation_observation",
+                    &error,
+                    Some(&self.snapshot.target().connection_id),
+                );
+                failure(error)
+            })?
             .ok_or_else(|| failure("Provider credential was superseded"))?;
         if current.basis() != resolved.basis()
             || current.credential() != resolved.credential()
@@ -208,25 +217,39 @@ impl Generation {
                 let flight = self.flight.clone();
                 // A cancelled request waiter cannot cancel an accepted exchange.
                 context.cancellation = shutdown.child_token();
-                self.workers.spawn(async move {
-                    let mut state = state.lock().await;
-                    let result = if superseded.is_cancelled() {
-                        Err(failure("Provider credential was superseded"))
-                    } else {
-                        state
-                            .resolve(provider, connection, context, &shutdown, &superseded)
-                            .await
-                    };
-                    sender.send_replace(Some(result));
-                    *flight.lock().unwrap() = None;
-                });
+                let span = tracing::warn_span!("agent_credential_refresh", connection_id = %connection.id,
+                    provider = %provider.identity().name);
+                self.workers.spawn(
+                    async move {
+                        let mut state = state.lock().await;
+                        let result = if superseded.is_cancelled() {
+                            Err(failure("Provider credential was superseded"))
+                        } else {
+                            state
+                                .resolve(provider, connection, context, &shutdown, &superseded)
+                                .await
+                        };
+                        sender.send_replace(Some(result));
+                        *flight.lock().unwrap() = None;
+                    }
+                    .instrument(span),
+                );
                 receiver
             }
         };
         let result = receiver
             .wait_for(Option::is_some)
             .await
-            .map_err(|_| failure("Credential owner stopped before settlement"))?
+            .map_err(|_| {
+                if !self.shutdown.is_cancelled() && !self.superseded.is_cancelled() {
+                    tracing::warn!(
+                        stage = "credential_refresh_wait",
+                        cause = "credential_owner_stopped",
+                        "Model preparation failed"
+                    );
+                }
+                failure("Credential owner stopped before settlement")
+            })?
             .as_ref()
             .expect("settled result")
             .clone();
@@ -302,6 +325,9 @@ mod tests {
                 let bytes = response.body.next().await.unwrap().unwrap();
                 assert!(response.body.next().await.unwrap().is_none());
                 response.body.close().await.unwrap();
+                if response.head.status != 200 {
+                    return Err(Error::Http(response.head.status));
+                }
                 Ok(serde_json::from_slice(&bytes).unwrap())
             })
         }
@@ -320,7 +346,7 @@ mod tests {
         request: oneshot::Sender<Vec<u8>>,
         reply: oneshot::Receiver<Envelope>,
     }
-    struct Remote(Mutex<Option<Exchange>>);
+    struct Remote(Mutex<Option<Exchange>>, u16);
     impl Transport for Remote {
         fn identity(&self) -> u64 {
             self as *const Self as usize as u64
@@ -340,7 +366,7 @@ mod tests {
                 let replacement = exchange.reply.await.unwrap();
                 Ok(http::Response {
                     head: http::Head {
-                        status: 200,
+                        status: self.1,
                         url: request.url,
                         headers: vec![],
                     },
@@ -362,14 +388,26 @@ mod tests {
         oneshot::Receiver<Vec<u8>>,
         oneshot::Sender<Envelope>,
     ) {
+        exchange_with_status(200)
+    }
+    fn exchange_with_status(
+        status: u16,
+    ) -> (
+        Context,
+        oneshot::Receiver<Vec<u8>>,
+        oneshot::Sender<Envelope>,
+    ) {
         let (request, received) = oneshot::channel();
         let (reply, replacement) = oneshot::channel();
         (
             Context {
-                transport: Arc::new(Remote(Mutex::new(Some(Exchange {
-                    request,
-                    reply: replacement,
-                })))),
+                transport: Arc::new(Remote(
+                    Mutex::new(Some(Exchange {
+                        request,
+                        reply: replacement,
+                    })),
+                    status,
+                )),
                 cancellation: CancellationToken::new(),
                 interaction: None,
             },
@@ -546,10 +584,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_http_failure_logs_original_safe_cause_once_without_reusing_claim() {
+        const SECRET: &str = "SECRET_REFRESH_ERROR_BODY_MUST_NOT_BE_LOGGED";
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let capture = tempfile::NamedTempFile::new().unwrap();
+            let subscriber = tracing_subscriber::fmt()
+                .with_ansi(false)
+                .without_time()
+                .with_writer(capture.reopen().unwrap())
+                .finish();
+            let _subscriber = tracing::subscriber::set_default(subscriber);
+            let fixture = Fixture::new().await;
+            let workers = TaskTracker::new();
+            let authority = Authority::new(workers.clone(), CancellationToken::new());
+            let binding = authority.bind(fixture.snapshot.clone()).unwrap();
+            let (context, admitted, reply) = exchange_with_status(403);
+            let mut resolving = Box::pin(fixture.resolve(&binding, context.clone()));
+            assert!(poll!(resolving.as_mut()).is_pending());
+            assert_eq!(admitted.await.unwrap(), b"old");
+            assert!(reply.send(envelope(SECRET, None)).is_ok());
+            let first = resolving.await.err().unwrap();
+            let replay = fixture.resolve(&binding, context).await.err().unwrap();
+            let current = fixture.snapshot.current_generation().await.unwrap().unwrap();
+            let claimed_again = fixture.snapshot.claim_refresh().await.unwrap();
+            workers.close();
+            workers.wait().await;
+            fixture.store.shutdown().await.unwrap();
+            let log = std::fs::read_to_string(capture.path()).unwrap();
+
+            for error in [first, replay] {
+                assert!(matches!(error, ModelError::Adapter(message) if message == "provider HTTP request failed with status 403"));
+            }
+            assert_eq!(current.basis(), fixture.snapshot.basis());
+            assert!(current.credential() == fixture.snapshot.credential());
+            assert!(!claimed_again, "the failed exchange's original claim must remain spent");
+            let originals = log.lines().filter(|line| line.contains("credential_refresh_exchange")).collect::<Vec<_>>();
+            assert_eq!(originals.len(), 1, "exactly one original typed failure must survive Adapter conversion: {log}");
+            let original = originals[0];
+            assert!(original.contains("WARN"), "{original}");
+            assert!(original.contains("cause=\"provider_http\""), "{original}");
+            assert!(original.contains("status=403"), "{original}");
+            assert!(original.contains(&fixture.snapshot.target().connection_id), "{original}");
+            assert!(!log.contains(SECRET));
+            assert!(!log.contains("provider.invalid"));
+        }).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn failed_and_unknown_sql_commits_retry_only_the_retained_envelope_and_logout_revokes_it()
     {
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
             for unknown in [false, true] {
+                let capture = tempfile::NamedTempFile::new().unwrap();
+                let subscriber = tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .without_time()
+                    .with_writer(capture.reopen().unwrap())
+                    .finish();
+                let _subscriber = tracing::subscriber::set_default(subscriber);
                 let fixture = Fixture::new().await;
                 let mut sql = fixture.sql().await;
                 if unknown {
@@ -582,6 +674,14 @@ mod tests {
                 use sqlx::Connection;
                 sql.close().await.unwrap();
                 fixture.store.shutdown().await.unwrap();
+                let log = std::fs::read_to_string(capture.path()).unwrap();
+                let failures = log.lines().filter(|line| line.contains("credential_refresh_commit")).collect::<Vec<_>>();
+                assert_eq!(failures.len(), 1, "original SQL failure must survive Adapter conversion: {log}");
+                let cause = if unknown { "cause=\"config_commit_unknown\"" } else { "cause=\"config_sqlx\"" };
+                assert!(failures[0].contains(cause), "{log}");
+                assert!(failures[0].contains(&fixture.snapshot.target().connection_id), "{log}");
+                assert!(!log.contains("injected rotation failure"));
+                assert!(!log.contains("rotated"));
             }
         }).await.unwrap();
     }

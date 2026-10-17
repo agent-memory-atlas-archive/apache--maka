@@ -1,6 +1,6 @@
 {
   "inputs": {
-    "Cargo.lock": "8758f79e84baa5c681b2d57c14974d3bc8a8d285a641ae1b9b81cb27ea023e09",
+    "Cargo.lock": "5c8de3b9e95f32bfc6c62b9cb79ac109cd2a2283cd0fc9365b607ca10c343a94",
     "Cargo.toml": "9a2a29f608172df146deb8fea723605a6c66c3ca7af4871fffc6cc2509f3cefb",
     "package-lock.json": "a5af15aca21fabe0e1bdd48784167df4dc81cee17777d54861dcbd641168a4eb",
     "package.json": "38baf3beeb5876849ca16e31868d59bfaee769f260c7555b4a8a1847b92e28a1",
@@ -133,7 +133,7 @@
     "plugins/agent/insights/Cargo.toml": "e11b391c1304bb27d552322e9f31b9e1858340f81f49ebbb3d484b02c9238def",
     "plugins/agent/model/Cargo.toml": "0fbd5b92911a7d3af54f10069d16b1b1b4b2d453b79aeb6ea63e66fd78d6ad85",
     "plugins/agent/model/tests/fixtures/provider-errors.mjs": "295a7dec85006792450b8675d21b5628dfba215ef6f51ccd44ad427159a4f4bf",
-    "plugins/agent/native/Cargo.toml": "49cff06df21f0dddf7339de700d8e7f88fad3cda24022389854bce316a1e1d39",
+    "plugins/agent/native/Cargo.toml": "f732629932213eeb1dc0ec20db8a125d3e37ddf363651e850d7e1444e9961f5e",
     "plugins/agent/navigation/desktop.ts": "7d4633828f8bf64aeac60f078be8328407c6be83b1de8b7926c3796ee32fad15",
     "plugins/agent/navigation/package.ts": "eac5fb178bf93bc3d40cb1e9e184707cf3095b026da8c28c5682e636d0242bed",
     "plugins/agent/navigation/tui.ts": "fbfefb89c7265f5e0e740ca81d05b300fd3d98eb26474e6ae6114245972ad75d",
