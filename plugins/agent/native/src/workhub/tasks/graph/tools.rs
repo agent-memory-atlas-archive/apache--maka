@@ -437,13 +437,14 @@ impl Hub {
         schedule.apply(&candidate).map_err(error)?;
         let authority = self.agent.0.graph_target(&context.invocation).await?;
         let mut mutations = vec![];
+        let mut summaries = vec![];
         for (work, routing) in update.add_work.iter().zip(routes) {
             let route_value = serde_json::to_value(&routing).map_err(error)?;
             let route = self
                 .graph_route(routing, &work.instruction, &epoch, &observed)
                 .await?;
             let id = graph_task_id(&epoch.graph_id, &work.work_id);
-            let assignment = self
+            let (assignment, title) = self
                 .prepare_assignment(
                     &context,
                     &id,
@@ -457,6 +458,7 @@ impl Hub {
                 )
                 .await?
                 .ok_or("graph_input_too_large")?;
+            summaries.push((id.clone(), assignment.worker.clone(), title));
             mutations.push(Mutation {
                 key: self.task_key(&id)?,
                 expected_revision: None,
@@ -466,15 +468,18 @@ impl Hub {
         if stop.is_cancelled() {
             return Err("graph_cancelled".into());
         }
+        let accepted_at = maka_agent_authority::now();
+        if !summaries.is_empty() {
+            mutations.extend(self.task_catalog().acceptance_mutations(
+                &context,
+                summaries,
+                accepted_at,
+            )?);
+        }
         graphs.written();
         let committed = graphs
             .repository()?
-            .commit_update_with(
-                update,
-                control.schedule_revision,
-                candidate.committed_at,
-                mutations,
-            )
+            .commit_update_with(update, control.schedule_revision, accepted_at, mutations)
             .await
             .map_err(error)?;
         serde_json::to_value(committed).map_err(error)

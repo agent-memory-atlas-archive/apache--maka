@@ -783,6 +783,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         let (mut socket,_)=listener.accept().await.unwrap();
         let initial=request(&mut socket).await;
         assert!(initial["tools"].to_string().contains("workhub_tasks"));
+        let acceptance_lower_bound = maka_agent_authority::now();
         task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Process this assigned work","model":fixture.selection().await})).await;
         let mut worker_calls=0;
         let mut task_watch = None;
@@ -821,8 +822,10 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         idle(&fixture,"worker",&worker).await;
         let task_id=first_task(&fixture).await;
         assert_eq!(routed_task_id.as_deref(), Some(task_id.as_str()));
-        assert_eq!(query_import(&fixture,hub::EXPORT,"tasks",json!({})).await["entries"][0]["title"],"Hello");
+        let listed_before_restart = query_import(&fixture,hub::EXPORT,"tasks",json!({})).await;
+        assert_eq!(listed_before_restart["entries"][0]["title"],"Hello");
         let task=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
+        let acceptance_upper_bound = maka_agent_authority::now();
         assert_eq!(task["status"]["kind"],"started");
         assert_eq!(task["status"]["progress"]["execution"]["state"],"completed");
         assert_eq!(task["status"]["progress"]["answer"]["text"],"Elegant response");
@@ -854,6 +857,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         }]).await.unwrap();
         activate_workers(&mut fixture,false,true,true).await;
         let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
+        let listed_after_restart = query_import(&fixture,hub::EXPORT,"tasks",json!({})).await;
         assert_eq!(restored["status"]["invocationId"],task["status"]["invocationId"]);
         assert_eq!(restored["operation"],task["operation"]);
         // A new activation reads the original source without becoming the old executor.
@@ -908,6 +912,14 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
             history_request["position"] = json!({"kind":"after","cursor":page["after"]});
         }
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+        assert_eq!(task["title"],"Hello","task detail must carry the original request title independently of list state");
+        let accepted_at = task["acceptedAt"].as_u64().expect("task detail must expose its Host acceptance time");
+        assert!((acceptance_lower_bound..=acceptance_upper_bound).contains(&accepted_at),"acceptance time {accepted_at} must fall within the actual route admission interval {acceptance_lower_bound}..={acceptance_upper_bound}");
+        for entry in [&listed_before_restart["entries"][0], &listed_after_restart["entries"][0], &restored] {
+            assert_eq!(entry["taskId"],task_id);
+            assert_eq!(entry["title"],"Hello");
+            assert_eq!(entry["acceptedAt"],accepted_at,"task metadata must match list/detail and remain frozen across restart");
+        }
         let expected_origin = json!({"kind":"workhub_task","taskId":task_id});
         assert_eq!(frozen_admission["source"]["origin"], expected_origin, "actual task notification must freeze structured origin before admission");
         assert_eq!(replayed["notification"]["admission"], frozen_admission, "outbox replay must retain the original notification identity and origin");

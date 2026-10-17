@@ -39,6 +39,8 @@ pub fn configuration_schema() -> serde_json::Value {
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "WorkHubTasksRead")]
 pub struct TasksRead {
+    /// Opaque continuation for newest accepted tasks first, with stable identity ties.
+    /// This is live keyset pagination, not a frozen snapshot; pass it unchanged.
     pub after: Option<String>,
 }
 #[derive(Serialize, JsonSchema)]
@@ -47,6 +49,7 @@ pub struct TasksRead {
 pub struct Tasks {
     #[schemars(length(max = 16))]
     pub entries: Vec<TaskEntry>,
+    /// Opaque live continuation in accepted-time descending order. Null ends the page sequence.
     pub after: Option<String>,
 }
 #[derive(Serialize, JsonSchema)]
@@ -57,6 +60,9 @@ pub struct TaskEntry {
     pub worker: String,
     #[schemars(length(max = 256))]
     pub title: String,
+    /// Frozen task acceptance time in Unix milliseconds.
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub accepted_at: u64,
 }
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -75,6 +81,11 @@ pub struct Task {
     pub dependencies: Vec<String>,
     pub task_id: String,
     pub worker: String,
+    #[schemars(length(max = 256))]
+    pub title: String,
+    /// Frozen task acceptance time in Unix milliseconds.
+    #[schemars(range(max = 9_007_199_254_740_991u64))]
+    pub accepted_at: u64,
     pub operation: uuid::Uuid,
     pub status: TaskStatus,
 }

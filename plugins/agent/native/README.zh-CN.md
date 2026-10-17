@@ -55,4 +55,6 @@ WorkHub 协调会话可以选择 Graph 或 Swarm。Graph 决策与原 WorkHub �
 
 WorkHub 任务和 Graph 通知在历史中保留其记录的来源，并使用独立的消息标签。
 
+WorkHub 任务按受理时间从新到旧排列。任务详情包含记录的标题和受理时间，状态变化和重启不会改变它们。分页游标保留实时列表中的位置；刷新首页可查看较新的任务。
+
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

@@ -151,6 +151,7 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
         fixture.send(session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
         request(&mut socket).await;
+        let acceptance_lower_bound = maka_agent_authority::now();
         graph_tool(&mut socket, "update_agent_graph", json!({"operation":"add_work","work":[{"target":{"kind":"worker","worker":"worker","title":"Graph child","workspace":directory,"tools":[],"model":fixture.selection().await},"instruction":"Produce the original graph result."}]})).await;
         let mut worker_calls = 0;
         let mut finished = false;
@@ -184,11 +185,15 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
         assert_eq!(view["status"], "completed", "{view}");
         assert_eq!(view["finish"]["resultIds"][0], view["work"][0]["resultId"]);
         let task = query_import(&fixture, hub::EXPORT, "task", json!({"taskId":view["work"][0]["taskId"]})).await;
+        let acceptance_upper_bound = maka_agent_authority::now();
+        let listed = query_import(&fixture,hub::EXPORT,"tasks",json!({})).await;
         let result_id = view["work"][0]["resultId"].clone();
         activate_workers(&mut fixture, false, true, true).await;
         let restored = graph(&fixture, session).await;
         assert_eq!(restored["work"][0]["resultId"], result_id);
-        assert_eq!(query_import(&fixture, hub::EXPORT, "task", json!({"taskId":view["work"][0]["taskId"]})).await["operation"], task["operation"]);
+        let restored_task = query_import(&fixture, hub::EXPORT, "task", json!({"taskId":view["work"][0]["taskId"]})).await;
+        let restored_list = query_import(&fixture,hub::EXPORT,"tasks",json!({})).await;
+        assert_eq!(restored_task["operation"], task["operation"]);
         assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err());
         let namespace = maka_capabilities::storage::Namespace::new(hub::IMPLEMENTATION,maka_plugin_core::scope::Scope::Profile).unwrap();
         let records = fixture.store.plugin_data_scan(&namespace,maka_capabilities::storage::Scan {prefix:String::new(),after:None}).await.unwrap();
@@ -215,6 +220,14 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
             history_request["position"] = json!({"kind":"after","cursor":page["after"]});
         }
         fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
+        assert_eq!(task["title"],"Graph child","detail must retain the actual typed graph target title");
+        let accepted_at = task["acceptedAt"].as_u64().expect("graph task must expose its Host acceptance time");
+        assert!((acceptance_lower_bound..=acceptance_upper_bound).contains(&accepted_at));
+        for entry in [&listed["entries"][0],&restored_list["entries"][0],&restored_task] {
+            assert_eq!(entry["taskId"],view["work"][0]["taskId"],"metadata must belong to this accepted graph work");
+            assert_eq!(entry["title"],"Graph child");
+            assert_eq!(entry["acceptedAt"],accepted_at,"graph batch acceptance metadata must survive result completion and restart");
+        }
         let expected = json!({"kind":"workhub_graph","graphId":epoch["epoch"]["graphId"]});
         assert_ne!(epoch["epoch"]["graphId"],view["work"][0]["taskId"]);
         assert_eq!(admission["source"]["origin"],expected,"aggregate graph wake belongs to the graph, not its outbox task");

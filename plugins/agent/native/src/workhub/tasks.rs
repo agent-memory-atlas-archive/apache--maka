@@ -17,6 +17,7 @@
  * under the License.
  */
 
+mod catalog;
 mod controls;
 mod dependencies;
 pub(crate) mod graph;
@@ -401,58 +402,15 @@ impl Hub {
         after: Option<String>,
         session: Option<&str>,
     ) -> Result<Value, String> {
-        let prefix = format!("{}tasks/", self.agent.0.prefix);
-        let page = self
-            .agent
-            .0
-            .store
-            .plugin_data_scan(
-                &namespace(),
-                maka_capabilities::storage::Scan {
-                    prefix: prefix.clone(),
-                    after: after.as_deref().map(|id| self.task_key(id)).transpose()?,
-                },
-            )
-            .await
-            .map_err(|_| "workhub_store_unavailable")?;
-        let more = page.entries.len() > 16 || page.next_after.is_some();
-        let mut entries = Vec::new();
-        let mut last = None;
-        for entry in page.entries.into_iter().take(16) {
-            let id = entry
-                .key
-                .strip_prefix(&prefix)
-                .ok_or("workhub_task_invalid")?
-                .to_owned();
-            self.task_key(&id)?;
-            last = Some(id.clone());
-            if let Data::Present(value) = entry.record.data {
-                let assignment: Assignment =
-                    serde_json::from_value(value).map_err(|_| "workhub_task_invalid")?;
-                if session.is_some_and(|id| assignment.source.session_id != id) {
-                    continue;
-                }
-                let title = match &assignment.target {
-                    Target::New { title, .. } => title.as_str(),
-                    Target::Existing { .. } if assignment.graph.is_some() => {
-                        assignment.input["message"]
-                            .as_str()
-                            .ok_or("workhub_task_invalid")?
-                    }
-                    Target::Existing { .. } => assignment.input["message"]
-                        .as_str()
-                        .ok_or("workhub_task_invalid")?
-                        .strip_prefix("Original user request:\n")
-                        .ok_or("workhub_task_invalid")?
-                        .split("\n\nCoordinator instructions:")
-                        .next()
-                        .unwrap_or_default(),
-                };
-                entries.push(serde_json::json!({"taskId":id,"worker":assignment.worker,"title":excerpt(title,128)}));
-            }
-        }
-        Ok(serde_json::json!({"entries":entries,"after":if more {last} else {None}}))
+        self.task_catalog().list(after, session).await
     }
+    fn task_catalog(&self) -> catalog::Catalog<'_> {
+        catalog::Catalog {
+            store: &self.agent.0.store,
+            prefix: &self.agent.0.prefix,
+        }
+    }
+
     async fn assignment(&self, id: &str) -> Result<Assignment, String> {
         let record = self
             .agent
@@ -478,6 +436,7 @@ impl Hub {
         }
         Ok(record)
     }
+
     async fn tasks_input(
         &self,
         input: Input,
@@ -682,7 +641,7 @@ impl Hub {
                     .map_err(|_| "workhub_store_unavailable")?
                     .is_none()
                 {
-                    let Some(assignment) =
+                    let Some((assignment, title)) =
                         self.prepare_assignment(&context, &id, route, None).await?
                     else {
                         return Ok(
@@ -692,21 +651,24 @@ impl Hub {
                     if cancellation.is_cancelled() {
                         return Err("workhub_cancelled".into());
                     }
+                    let mut mutations = self.task_catalog().acceptance_mutations(
+                        &context,
+                        vec![(id.clone(), assignment.worker.clone(), title)],
+                        maka_agent_authority::now(),
+                    )?;
+                    mutations.push(Mutation {
+                        key: self.task_key(&id)?,
+                        expected_revision: None,
+                        data: Data::Present(
+                            serde_json::to_value(assignment)
+                                .map_err(|_| "workhub_encoding_failed")?,
+                        ),
+                    });
                     match self
                         .agent
                         .0
                         .store
-                        .plugin_data_batch(
-                            &namespace(),
-                            vec![Mutation {
-                                key: self.task_key(&id)?,
-                                expected_revision: None,
-                                data: Data::Present(
-                                    serde_json::to_value(assignment)
-                                        .map_err(|_| "workhub_encoding_failed")?,
-                                ),
-                            }],
-                        )
+                        .plugin_data_batch(&namespace(), mutations)
                         .await
                     {
                         Ok(_) | Err(maka_event_log::StoreError::RevisionConflict { .. }) => {}
@@ -730,7 +692,7 @@ impl Hub {
         id: &str,
         route: Route,
         graph: Option<graph::TaskSource>,
-    ) -> Result<Option<Assignment>, String> {
+    ) -> Result<Option<(Assignment, String)>, String> {
         let Route {
             dependencies,
             worker,
@@ -791,27 +753,38 @@ impl Hub {
         } else {
             &content.text
         };
+        let title = excerpt(
+            match &target {
+                Target::New { title, .. } => title,
+                Target::Existing { .. } if graph.is_some() => &note,
+                Target::Existing { .. } => original,
+            },
+            128,
+        );
         let message = if graph.is_some() {
             format!("Task:\n{note}")
         } else {
             format!("Original user request:\n{original}\n\nCoordinator instructions:\n{note}")
         };
         input["message"] = serde_json::json!(message);
-        Ok(Some(Assignment {
-            graph,
-            dependencies,
-            return_route: self.agent.0.return_route(&context.invocation).await?,
-            notification: None,
-            source: context.invocation.clone(),
-            tool_operation: context.operation_id.clone(),
-            worker,
-            binding: binding.execution_basis().into(),
-            operation: child_id(id),
-            delivery,
-            input,
-            target,
-            attachments,
-        }))
+        Ok(Some((
+            Assignment {
+                graph,
+                dependencies,
+                return_route: self.agent.0.return_route(&context.invocation).await?,
+                notification: None,
+                source: context.invocation.clone(),
+                tool_operation: context.operation_id.clone(),
+                worker,
+                binding: binding.execution_basis().into(),
+                operation: child_id(id),
+                delivery,
+                input,
+                target,
+                attachments,
+            },
+            title,
+        )))
     }
     async fn wait_task(
         &self,
@@ -1009,6 +982,7 @@ impl Hub {
             return Err("workhub_closed".into());
         }
         let assignment = self.assignment(id).await?;
+        let metadata = self.task_catalog().metadata(id, &assignment).await?;
         // The graph gate orders stop/finish against new physical dispatch. Reads
         // still recover the original operation after the current epoch closes.
         let _graph_gate = if advance && assignment.graph.is_some() {
@@ -1035,21 +1009,21 @@ impl Hub {
         {
             // No original dispatch was admitted. Preparations have already joined
             // before releasing the graph gate; a retired epoch cannot send later.
-            return encode_task(id, &assignment, TaskStatus::Cancelled);
+            return encode_task(id, &assignment, &metadata, TaskStatus::Cancelled);
         }
         let dependency_input = match self
             .dependency_input(id, &assignment, advance, cancellation.clone())
             .await?
         {
             Ok(input) => input,
-            Err(status) => return encode_task(id, &assignment, status),
+            Err(status) => return encode_task(id, &assignment, &metadata, status),
         };
         if advance && !assignment.dependencies.is_empty() {
             let source = self.agent.0.session(&assignment.source.session_id).await?;
             if source.archived
                 || source.configuration.workspace != assignment.return_route.workspace
             {
-                return encode_task(id, &assignment, TaskStatus::Unavailable);
+                return encode_task(id, &assignment, &metadata, TaskStatus::Unavailable);
             }
         }
         let same_binding = self
@@ -1068,7 +1042,7 @@ impl Hub {
         self.observe_request(&request, async {
             let delivery = match self.prepare_delivery(id, &assignment, &request, advance).await? {
                 Ok(delivery) => delivery,
-                Err(status) => return encode_task(id, &assignment, status),
+                Err(status) => return encode_task(id, &assignment, &metadata, status),
             };
             let mut input = assignment.input.clone();
             if let Some(message) = dependency_input { input["message"] = serde_json::json!(message); }
@@ -1079,7 +1053,7 @@ impl Hub {
                 operation: assignment.operation, method: assignment.delivery.method(), input: &input, attachment: None,
             }, advance).await? {
                 DispatchObservation::Pending => None,
-                DispatchObservation::Unavailable => return encode_task(id, &assignment, TaskStatus::Unavailable),
+                DispatchObservation::Unavailable => return encode_task(id, &assignment, &metadata, TaskStatus::Unavailable),
                 DispatchObservation::Reply(reply) => Some(*reply),
             };
             let status = match reply {
@@ -1141,13 +1115,20 @@ impl Hub {
                 }
                 Some(_) => TaskStatus::Uncertain,
             };
-            encode_task(id, &assignment, status)
+            encode_task(id, &assignment, &metadata, status)
         }).await
     }
 }
-fn encode_task(id: &str, assignment: &Assignment, status: TaskStatus) -> Result<Value, String> {
+fn encode_task(
+    id: &str,
+    assignment: &Assignment,
+    metadata: &catalog::Metadata,
+    status: TaskStatus,
+) -> Result<Value, String> {
     serde_json::to_value(Task {
         task_id: id.into(),
+        title: metadata.title.clone(),
+        accepted_at: metadata.accepted_at,
         dependencies: assignment.dependencies.clone(),
         worker: assignment.worker.clone(),
         operation: assignment.operation,

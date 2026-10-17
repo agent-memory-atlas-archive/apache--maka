@@ -28618,6 +28618,17 @@ export const contracts = {
               worker: {
                 type: 'string',
               },
+              title: {
+                type: 'string',
+                maxLength: 256,
+              },
+              acceptedAt: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                description: 'Frozen task acceptance time in Unix milliseconds.',
+                maximum: 9007199254740991,
+              },
               operation: {
                 type: 'string',
                 format: 'uuid',
@@ -28626,7 +28637,7 @@ export const contracts = {
                 $ref: '#/$defs/WorkHubTaskStatus',
               },
             },
-            required: ['taskId', 'worker', 'operation', 'status'],
+            required: ['taskId', 'worker', 'title', 'acceptedAt', 'operation', 'status'],
             title: 'WorkHubTask',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
@@ -29073,6 +29084,8 @@ export const contracts = {
             properties: {
               after: {
                 type: ['string', 'null'],
+                description:
+                  'Opaque continuation for newest accepted tasks first, with stable identity ties.\nThis is live keyset pagination, not a frozen snapshot; pass it unchanged.',
               },
             },
             title: 'WorkHubTasksRead',
@@ -29091,6 +29104,8 @@ export const contracts = {
               },
               after: {
                 type: ['string', 'null'],
+                description:
+                  'Opaque live continuation in accepted-time descending order. Null ends the page sequence.',
               },
             },
             required: ['entries'],
@@ -29111,8 +29126,15 @@ export const contracts = {
                     type: 'string',
                     maxLength: 256,
                   },
+                  acceptedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    description: 'Frozen task acceptance time in Unix milliseconds.',
+                    maximum: 9007199254740991,
+                  },
                 },
-                required: ['taskId', 'worker', 'title'],
+                required: ['taskId', 'worker', 'title', 'acceptedAt'],
               },
             },
           },
@@ -29495,6 +29517,17 @@ export const contracts = {
               worker: {
                 type: 'string',
               },
+              title: {
+                type: 'string',
+                maxLength: 256,
+              },
+              acceptedAt: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                description: 'Frozen task acceptance time in Unix milliseconds.',
+                maximum: 9007199254740991,
+              },
               operation: {
                 type: 'string',
                 format: 'uuid',
@@ -29503,7 +29536,7 @@ export const contracts = {
                 $ref: '#/$defs/WorkHubTaskStatus',
               },
             },
-            required: ['taskId', 'worker', 'operation', 'status'],
+            required: ['taskId', 'worker', 'title', 'acceptedAt', 'operation', 'status'],
             title: 'WorkHubTask',
             $schema: 'https://json-schema.org/draft/2020-12/schema',
             $defs: {
@@ -29950,6 +29983,8 @@ export const contracts = {
             properties: {
               after: {
                 type: ['string', 'null'],
+                description:
+                  'Opaque continuation for newest accepted tasks first, with stable identity ties.\nThis is live keyset pagination, not a frozen snapshot; pass it unchanged.',
               },
             },
             title: 'WorkHubTasksRead',
@@ -29968,6 +30003,8 @@ export const contracts = {
               },
               after: {
                 type: ['string', 'null'],
+                description:
+                  'Opaque live continuation in accepted-time descending order. Null ends the page sequence.',
               },
             },
             required: ['entries'],
@@ -29988,8 +30025,15 @@ export const contracts = {
                     type: 'string',
                     maxLength: 256,
                   },
+                  acceptedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    description: 'Frozen task acceptance time in Unix milliseconds.',
+                    maximum: 9007199254740991,
+                  },
                 },
-                required: ['taskId', 'worker', 'title'],
+                required: ['taskId', 'worker', 'title', 'acceptedAt'],
               },
             },
           },

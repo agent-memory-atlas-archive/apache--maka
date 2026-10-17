@@ -907,6 +907,8 @@ mod tests {
                     dependencies: vec![],
                     task_id: "original-task".into(),
                     worker: "worker".into(),
+                    title: "Original task".into(),
+                    accepted_at: 1,
                     operation: Uuid::new_v4(),
                     status: TaskStatus::Preparing {
                         stage: PreparationStage::Create,

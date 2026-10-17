@@ -225,6 +225,9 @@ function status(task: WorkHubTask | null, text: Copy): string {
     }
   }
 }
+function acceptanceTime(at: number, text: Copy): string {
+  return `${text.workhubAccepted}: ${new Date(at).toISOString()}`;
+}
 function target(task: WorkHubTask | null, worker: string): string | null {
   if (!task || task.worker !== worker) return null;
   return task.status.kind === 'started' || task.status.kind === 'queued'
@@ -262,12 +265,18 @@ export function workhubRoot<N extends Node>(
       ? [
           ui.text(
             'task-title',
-            compactLabel(selected.entry.title, 128) || text.workhubUntitled,
+            compactLabel((selected.task ?? selected.entry).title, 128) || text.workhubUntitled,
             18,
             theme.text,
             600,
           ),
           ui.text('task-worker', compactLabel(selected.entry.worker, 64), 13, theme.muted),
+          ui.text(
+            'task-accepted',
+            acceptanceTime((selected.task ?? selected.entry).acceptedAt, text),
+            13,
+            theme.muted,
+          ),
           ui.text(
             'task-status',
             selected.task
@@ -312,6 +321,12 @@ export function workhubRoot<N extends Node>(
                 state.pending?.request.kind === 'tasks',
                 false,
                 { width: fill, justify: 'start' },
+              ),
+              ui.text(
+                `task-accepted-${state.pageKey}-${at}`,
+                acceptanceTime(entry.acceptedAt, text),
+                13,
+                theme.muted,
               ),
               ui.text(
                 `task-summary-${state.pageKey}-${at}`,

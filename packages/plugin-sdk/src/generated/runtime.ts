@@ -7717,6 +7717,11 @@ export interface WorkHubTask {
       ];
   taskId: string;
   worker: string;
+  title: string;
+  /**
+   * Frozen task acceptance time in Unix milliseconds.
+   */
+  acceptedAt: number;
   operation: string;
   status: WorkHubTaskStatus;
 }
@@ -7913,6 +7918,10 @@ export interface WorkHubControlEntry {
   controlId: string;
 }
 export interface WorkHubTasksRead {
+  /**
+   * Opaque continuation for newest accepted tasks first, with stable identity ties.
+   * This is live keyset pagination, not a frozen snapshot; pass it unchanged.
+   */
   after?: string | null;
 }
 export interface WorkHubTasks {
@@ -8069,12 +8078,19 @@ export interface WorkHubTasks {
         WorkHubTaskEntry,
         WorkHubTaskEntry,
       ];
+  /**
+   * Opaque live continuation in accepted-time descending order. Null ends the page sequence.
+   */
   after?: string | null;
 }
 export interface WorkHubTaskEntry {
   taskId: string;
   worker: string;
   title: string;
+  /**
+   * Frozen task acceptance time in Unix milliseconds.
+   */
+  acceptedAt: number;
 }
 export interface AgentWorkRead {
   sessionId: string;

@@ -1509,3 +1509,94 @@ test('structured WorkHub history reaches localized captions and pending queue la
     );
   }
 });
+
+test('WorkHub browses with opaque cursors and uses task detail metadata instead of list placeholders', async () => {
+  for (const [target, locale, accepted] of [
+    ['tui', 'en', 'Accepted'],
+    ['desktop', 'zh-CN', '受理时间'],
+  ]) {
+    const hub = await import(`../dist/packages/workhub-root/${target}.js`);
+    hub.activate({ locale, worker: 'worker' });
+    const component = hub.component;
+    let out = component.mount({}, values);
+    const event = (input) => {
+      out = component.event(out.frame.state, input, {}, values);
+    };
+    const raw = (key) => event({ kind: 'raw', key, event: { kind: 'activate' } });
+    const reply = (method, value) => {
+      const action = out.actions.find((action) => action.method === method);
+      assert.ok(action, `Expected ${method} request`);
+      event({ kind: 'action', key: action.key, event: { status: 'succeeded', value } });
+    };
+    const find = (key) => nodes(out.frame.view).find((node) => node.key === key);
+    const scroll = (direction, readingRevision) =>
+      event({
+        kind: 'component',
+        child: 'workhub-reading',
+        name: 'observed',
+        event: {
+          readingRevision,
+          viewport: { readingRevision, atStart: direction === 'up', atEnd: direction === 'down' },
+          scroll: { readingRevision, direction },
+          pendingCommand: null,
+        },
+      });
+    reply('page', []);
+    reply('coordinator', { kind: 'missing' });
+    raw('workhub-route-tasks');
+    const taskId = 'wt_' + 'a'.repeat(64);
+    const token = 'opaque:+/==?keep%2Fme';
+    reply('tasks', {
+      entries: [{ taskId, worker: 'worker', title: 'List placeholder', acceptedAt: 1000 }],
+      after: token,
+    });
+    assert.equal(find('task-accepted-1-0').text, `${accepted}: 1970-01-01T00:00:01.000Z`);
+    raw(nodes(out.frame.view).find((node) => node.label === 'List placeholder').key);
+    assert.equal(find('task-title').text, 'List placeholder');
+    const watch = out.subscriptions.find((subscription) => subscription.method === 'watchTask');
+    const detail = {
+      taskId,
+      worker: 'worker',
+      title: 'Canonical detail title',
+      acceptedAt: 1500,
+      operation: '00000000-0000-0000-0000-000000000001',
+      status: { kind: 'pending' },
+    };
+    event({ kind: 'action', key: watch.key, event: { status: 'updated', value: detail } });
+    assert.equal(find('task-title').text, 'Canonical detail title');
+    assert.equal(find('task-accepted').text, `${accepted}: 1970-01-01T00:00:01.500Z`);
+    raw('task-check');
+    assert.deepEqual(out.actions.find((action) => action.method === 'task').input, {
+      taskId,
+      cursor: null,
+    });
+    reply('task', { ...detail, title: 'Detail loaded by ID', acceptedAt: 2000 });
+    assert.equal(find('task-title').text, 'Detail loaded by ID');
+    assert.equal(find('task-accepted').text, `${accepted}: 1970-01-01T00:00:02.000Z`);
+    raw('task-back');
+    scroll('down', 1);
+    assert.deepEqual(out.actions.find((action) => action.method === 'tasks').input, {
+      after: token,
+    });
+    reply('tasks', {
+      entries: [
+        {
+          taskId: 'wt_' + 'c'.repeat(64),
+          worker: 'worker',
+          title: 'Second page',
+          acceptedAt: 250,
+        },
+      ],
+      after: null,
+    });
+    assert.equal(
+      out.subscriptions.find((subscription) => subscription.method === 'watchTasks').input.after,
+      token,
+    );
+    assert.equal(find('task-open-2-0').label, 'Second page');
+    scroll('up', 2);
+    assert.deepEqual(out.actions.find((action) => action.method === 'tasks').input, {
+      after: null,
+    });
+  }
+});

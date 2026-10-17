@@ -55,4 +55,6 @@ WorkHub coordinator conversations can select Graph or Swarm. Graph decisions and
 
 WorkHub task and graph notifications retain their recorded source in history and have distinct message labels.
 
+WorkHub tasks list newest accepted work first. Each task detail includes its recorded title and acceptance time, which remain fixed across status changes and restarts. Pagination cursors preserve a position in the live list; refresh the first page to see newer work.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

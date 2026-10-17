@@ -931,6 +931,7 @@ export const msg_workhubEmpty: Message = [
   '尚无委派任务。',
   '尚無委派任務。',
 ];
+export const msg_workhubAccepted: Message = ['Accepted', '受理时间', '受理時間'];
 export const msg_workhubUntitled: Message = ['Untitled task', '未命名任务', '未命名任務'];
 
 export const msg_workhubFirst: Message = ['First tasks', '首批任务', '首批任務'];
