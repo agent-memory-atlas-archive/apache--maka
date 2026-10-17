@@ -31,7 +31,16 @@
 
 启动时自动发现并连接本机 Host；不存在则自动启动。TUI 与 Desktop 可以共享同一个 Host。默认退出 UI 时，若没有其他客户端连接，Host 也会退出。TUI 中可用 Ctrl+Alt+Q 仅关闭界面，让已接受的后台任务继续运行，重连后观察结果。
 
-## 产品恢复与 URL 安装
+## 产品更新、恢复与 URL 安装
+
+更新独立 Host 已选的内置插件时，先停止该 Host，再指定它的 State Root：
+
+```sh
+maka application update-defaults --root /path/to/host
+maka application update-defaults --root /path/to/host --apply
+```
+
+先检查预览中的具体包版本。执行更新会将组合中显式选择、且 ID 与当前可执行文件所带插件匹配的包替换为发行版本，包括使用相同 ID 的本地修改包。其他包、组合设置、权限和业务数据保留，不自动添加新的默认组件；组合校验失败时拒绝更新。中断后再次执行 `--apply` 完成同一次更新，再启动 Host。此命令更新应用包；`host upgrade` 更新原生可执行文件。
 
 恢复前先关闭产品 UI；恢复通过管理服务更新独立 Host。直接安装插件包时，所选 Root 必须处于未运行状态。两个命令默认使用 `~/.maka/application`；可用 `--root DIRECTORY` 选择其他安装。
 

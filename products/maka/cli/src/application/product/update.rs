@@ -44,7 +44,7 @@ pub(super) struct Baseline {
 
 #[derive(Args)]
 pub(crate) struct Update {
-    /// UI State Root (default: ~/.maka/application). Close its UI first.
+    /// Saved product State Root (default: ~/.maka/application). Close its Host or UI first.
     #[arg(long)]
     root: Option<PathBuf>,
     /// Apply the previewed merge only when there are no conflicts.
@@ -52,23 +52,44 @@ pub(crate) struct Update {
     apply: bool,
 }
 #[derive(Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Scope {
+    #[default]
+    Defaults,
+    SelectedPackages,
+    Initialization,
+}
+#[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Outcome {
-    customized: bool,
-    changed: bool,
-    applied: bool,
-    changes: Vec<String>,
-    conflicts: Vec<String>,
+pub(super) struct Outcome {
+    pub(super) scope: Scope,
+    pub(super) customized: bool,
+    pub(super) changed: bool,
+    pub(super) applied: bool,
+    pub(super) changes: Vec<String>,
+    pub(super) conflicts: Vec<String>,
 }
 impl Update {
     pub(crate) async fn run(self) -> Result<(), HostError> {
         let store = launch::open(super::root_path(self.root)?, false, None).await?;
         let result = async {
-            let mut outcome = synchronize(&store, true, self.apply).await?;
-            if self.apply && outcome.changed && outcome.conflicts.is_empty() {
-                launch::prepare(&store, None, Product::Agent).await?;
-                outcome.applied = true;
-            }
+            let record = store
+                .application_launch()
+                .await?
+                .ok_or("product selection missing")?;
+            let outcome = if record.configuration.get("kind").is_some() {
+                let selection: maka_host_runtime::application::host::Configuration =
+                    serde_json::from_value(record.configuration.clone())?;
+                selection.validate()?;
+                super::headless::update::synchronize(&store, self.apply).await?
+            } else {
+                let mut outcome = synchronize(&store, true, self.apply).await?;
+                if self.apply && outcome.changed && outcome.conflicts.is_empty() {
+                    launch::prepare(&store, None, Product::Agent).await?;
+                    outcome.applied = true;
+                }
+                outcome
+            };
             println!("{}", serde_json::to_string(&outcome)?);
             if self.apply && !outcome.conflicts.is_empty() {
                 return Err("default update has conflicts; no update was written".into());
@@ -104,8 +125,9 @@ async fn synchronize_version(
     if record.pending.is_some() {
         return Err("finish the prepared product operation before checking for updates".into());
     }
-    let original = store.application_product().await?
-        .ok_or("product storage predates automatic updates; remove this development root and initialize it again")?;
+    let original = store.application_product().await?.ok_or(
+        "saved UI product has no default-update baseline; update its composition explicitly",
+    )?;
     if !custom && original.get("version").and_then(Value::as_str) == Some(version.as_str()) {
         return Ok(Outcome::default());
     }

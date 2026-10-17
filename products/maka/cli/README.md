@@ -31,7 +31,16 @@ The first installation asks for workspace trust inside the TUI, before starting 
 
 Startup discovers the local Host and connects to it, or starts one automatically. TUI and Desktop can share that Host. By default, quitting a UI also stops the Host when no other client remains. Use Ctrl+Alt+Q in the TUI to close only the UI and keep accepted background tasks running; reconnect to observe their results.
 
-## Product recovery and URL installation
+## Product updates, recovery and URL installation
+
+To update a standalone Host's selected bundled plugins, stop that Host and use its State Root:
+
+```sh
+maka application update-defaults --root /path/to/host
+maka application update-defaults --root /path/to/host --apply
+```
+
+Review the exact package revisions in the preview. Apply replaces explicitly selected packages whose IDs match this executable's bundle, including locally modified packages with those IDs. Other packages, composition settings, permissions and business data stay intact; new default components are not added. Invalid combinations are rejected before updating. After an interruption, rerun `--apply` to finish the same update, then start the Host. This updates application packages; `host upgrade` updates the native executable.
 
 Close the product UI before recovery; restoration updates the independent Host through its management service. Direct package installation requires the selected Root to be inactive. Both commands default to `~/.maka/application`; select another installation with `--root DIRECTORY`.
 

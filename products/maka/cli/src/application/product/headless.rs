@@ -17,6 +17,7 @@
  * under the License.
  */
 //! A public Host opens the same persisted product source across process restarts.
+pub(super) mod update;
 use super::{HostError, Input, Product, author, installation, launch, packages};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use maka_event_log::{
@@ -56,6 +57,7 @@ use maka_host_runtime::application::host::Configuration as Selection;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Preparation {
+    expected_revision: u64,
     input: Input,
     packages: Vec<BTreeMap<String, String>>,
 }
@@ -84,6 +86,7 @@ pub(super) async fn save_product(
         }
         None => {
             let preparation = Preparation {
+                expected_revision: 0,
                 input: prepared.input().clone(),
                 packages: prepared
                     .packages()
@@ -198,7 +201,20 @@ async fn prepare(
     if let Some(pending) = record.pending {
         let preparation: Preparation = serde_json::from_slice(&pending)?;
         let packages = launch::decode_packages(preparation.packages)?;
-        launch::ensure(store, record.deployment, &preparation.input, &[], &packages).await?;
+        update::validate_target(&preparation.input, &packages)?;
+        if preparation.expected_revision == 0 {
+            launch::ensure(store, record.deployment, &preparation.input, &[], &packages).await?;
+        } else {
+            super::restore::ensure(
+                store,
+                record.deployment,
+                preparation.expected_revision,
+                &preparation.input,
+                &[],
+                &packages,
+            )
+            .await?;
+        }
         store.complete_application_launch(record.deployment).await?;
     }
     if let Roots::Configured(roots) = roots {
@@ -244,6 +260,7 @@ async fn begin(
         native: connection.native,
     };
     let preparation = Preparation {
+        expected_revision: 0,
         input: prepared.input().clone(),
         packages: prepared
             .packages()
@@ -386,6 +403,7 @@ mod tests {
         }))
         .unwrap();
         let pending = Preparation {
+            expected_revision: 0,
             input: source.clone(),
             packages: vec![],
         };
