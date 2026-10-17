@@ -1019,6 +1019,8 @@ async fn returned_mutation_and_failed_cleanup_are_separate_persistent_facts() {
     .unwrap();
 }
 
+const SETTLEMENT_SECRET: &str = "SECRET_OPERATION_SETTLEMENT_SQL_PAYLOAD";
+
 struct UncertainSettlement {
     store: Arc<EventLog>,
     database: std::path::PathBuf,
@@ -1042,7 +1044,7 @@ impl Handler for UncertainSettlement {
             );
             calls.fetch_add(1, Ordering::SeqCst);
             let connection = rusqlite::Connection::open(database).unwrap();
-            connection.execute_batch("CREATE TRIGGER reject_operation_settlement BEFORE UPDATE OF outcome_json ON application_operations BEGIN SELECT RAISE(ABORT,'test settlement unavailable'); END;").unwrap();
+            connection.execute_batch(&format!("CREATE TRIGGER reject_operation_settlement BEFORE UPDATE OF outcome_json ON application_operations BEGIN SELECT RAISE(ABORT,'{SETTLEMENT_SECRET}'); END;")).unwrap();
             Ok(input)
         })
     }
@@ -1050,6 +1052,7 @@ impl Handler for UncertainSettlement {
 #[tokio::test]
 async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_failure() {
     tokio::time::timeout(Duration::from_secs(20), async {
+        let (mut capture, _log_guard) = log_capture();
         let (dir, _ns, store) = store().await;
         let issuer = Issuer::default();
         let calls = Arc::new(AtomicUsize::new(0));
@@ -1088,6 +1091,7 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
         .await
         .unwrap();
         let reference = accepted.reference.clone();
+        let execution_id = accepted.id;
         let completion = accepted.completion().await;
         assert_eq!(completion.reply.reference, reference);
         assert!(
@@ -1134,6 +1138,32 @@ async fn uncertain_durable_settlement_does_not_replay_effect_or_invent_cleanup_f
         connection
             .execute_batch("DROP TRIGGER reject_operation_settlement;")
             .unwrap();
+        let log = log_text(&mut capture);
+        let event = log
+            .lines()
+            .find(|line| line.contains("stage=\"operation_settlement\""))
+            .expect(
+                "actual receipt settlement SQL failure must be logged before its cause is erased",
+            );
+        assert!(event.contains("ERROR"));
+        assert!(event.contains("state_domain=") && event.contains(&reference.source.state_domain));
+        assert!(event.contains("cause=\"store_sqlx\""));
+        assert!(event.contains("sql_code=1811"));
+        for identity in [
+            format!("operation_id={}", reference.operation),
+            format!("execution_id={execution_id}"),
+            format!("deployment_id={}", reference.source.deployment),
+            format!("source_revision={}", reference.source.revision),
+        ] {
+            assert!(
+                event.contains(&identity),
+                "settlement evidence must identify the original accepted operation/source: {event}"
+            );
+        }
+        assert!(
+            !log.contains(SETTLEMENT_SECRET),
+            "raw SQL error payload must not enter the Host log"
+        );
     })
     .await
     .unwrap();

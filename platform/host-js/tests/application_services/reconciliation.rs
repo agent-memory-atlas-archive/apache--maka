@@ -396,6 +396,8 @@ async fn live_installed_replacement_waits_for_original_call_resources_and_native
 #[tokio::test]
 async fn failed_live_initializer_preserves_healthy_instances_and_later_revision_can_converge() {
     tokio::time::timeout(Duration::from_secs(20), async {
+        const INITIALIZER_SECRET: &str = "SECRET_REAL_JS_INITIALIZER_EXCEPTION";
+        let (mut capture, _log_guard) = log_capture();
         let (_dir, _namespaces, store) = store().await;
         let provider = native_package();
         let consumer = consumer();
@@ -459,7 +461,9 @@ async fn failed_live_initializer_preserves_healthy_instances_and_later_revision_
                 },
                 MethodMode::Query,
             ),
-            Some("export function activate(){ throw Error('initializer rejected'); }".into()),
+            Some(format!(
+                "export function activate(){{ throw Error('{INITIALIZER_SECRET}'); }}"
+            )),
         );
         let failed_source = store
             .commit_application(
@@ -472,12 +476,12 @@ async fn failed_live_initializer_preserves_healthy_instances_and_later_revision_
             .await
             .unwrap();
         app.adopt_committed(failed_source.clone()).await.unwrap();
-        assert!(
-            app.ready()
-                .await
-                .unwrap_err()
-                .contains("initializer rejected")
-        );
+        assert!(app.ready().await.unwrap_err().contains(INITIALIZER_SECRET));
+        let failed_activation = client
+            .activation(&id(1))
+            .ok()
+            .map(|activation| activation.epoch());
+        let failed_identity = failed_source.clone();
         assert!(!client.snapshot().closing);
         assert_eq!(client.snapshot().desired, Some(failed_source));
         assert_eq!(client.snapshot().effective, Some(original));
@@ -540,6 +544,39 @@ async fn failed_live_initializer_preserves_healthy_instances_and_later_revision_
         app.shutdown().await.unwrap();
         drop((app, client));
         close(store).await;
+        let log = log_text(&mut capture);
+        let event = log
+            .lines()
+            .find(|line| {
+                line.contains("stage=\"initialize\"")
+                    && line.contains("cause=\"initializer_failed\"")
+            })
+            .expect("actual JavaScript initializer failure must retain a safe Host cause");
+        assert!(event.contains("WARN"));
+        assert!(event.contains("state_domain=") && event.contains(&failed_identity.state_domain));
+        for identity in [
+            format!("instance_id={:?}", id(1)),
+            format!("deployment_id={}", failed_identity.deployment),
+            format!("source_revision={}", failed_identity.revision),
+        ] {
+            assert!(
+                event.contains(&identity),
+                "initializer evidence must identify the actual failed target/source: {event}"
+            );
+        }
+        let logged_activation = event
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("activation_id="))
+            .and_then(|epoch| Uuid::parse_str(epoch).ok())
+            .expect("begun initializer must retain its activation epoch");
+        assert!(!logged_activation.is_nil());
+        if let Some(activation) = failed_activation {
+            assert_eq!(logged_activation, activation);
+        }
+        assert!(
+            !log.contains(INITIALIZER_SECRET),
+            "JavaScript exception payload must not enter the Host log"
+        );
     })
     .await
     .unwrap();

@@ -29,4 +29,6 @@
 
 内置 `maka.host.logs` provider 从同一个 Root 所有者派生日志源。其 `HostLogs` 导出（`maka.host.Logs`）提供有界原始字节 `read` 查询和可取消的 `watch` 订阅。组合必须绑定并显式授权这些方法；注册本身不授予访问权，请求也不能选择其他 Root 或文件。页和游标字段见生成的 SDK 契约。
 
+Host runtime 为初始化、配置采用、操作持久化和实际清理失败记录安全分类及原始归属 ID，不复制任意插件异常、SQL 消息或请求内容。日志不改变就绪状态、操作回执或清理归属；不确定的变更仍须查询原回执。
+
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

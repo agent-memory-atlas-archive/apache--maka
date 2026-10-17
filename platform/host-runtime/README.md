@@ -29,4 +29,6 @@ Persistence comes from the owned EventLog. Stable plugin data belongs to the Roo
 
 The built-in `maka.host.logs` provider derives its fixed log source from that same Root owner. Its `HostLogs` export (`maka.host.Logs`) offers bounded raw-byte `read` queries and cancellable `watch` subscriptions. Compositions must bind and explicitly grant these methods; registration grants no access, and requests cannot select another Root or file. See the generated SDK contract for page and cursor fields.
 
+Host runtime logs technical initialization, source adoption, operation persistence and physical cleanup failures with safe categories and original ownership IDs. Arbitrary plugin exceptions, SQL messages and request payloads are omitted. Logs do not change readiness, operation receipts or cleanup custody; resolve uncertain mutations through their original receipts.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

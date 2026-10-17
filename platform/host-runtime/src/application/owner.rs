@@ -18,6 +18,7 @@
  */
 
 use super::*;
+mod diagnostics;
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
 use maka_event_log::applications::operations::{Dispatch as OperationDispatch, OperationRequest};
 use maka_plugin_core::{
@@ -35,11 +36,11 @@ fn next_change(
     'static,
     (
         maka_event_log::applications::DeploymentChanges,
-        Result<DeploymentRef>,
+        std::result::Result<DeploymentRef, maka_event_log::StoreError>,
     ),
 > {
     Box::pin(async move {
-        let source = cursor.next().await.map_err(|error| error.to_string());
+        let source = cursor.next().await;
         (cursor, source)
     })
 }
@@ -219,6 +220,15 @@ impl Owner {
         {
             Ok(changes) => changes.map(next_change),
             Err(error) => {
+                let source = self
+                    .persisted
+                    .as_ref()
+                    .map(|(source, _)| source.reference());
+                tracing::error!(target: "maka_host_runtime::application", stage = "source_watch_setup",
+                    cause = diagnostics::cause(&error), sql_code = diagnostics::sql_code(&error), os_code = diagnostics::os_code(&error),
+                    state_domain = source.map(|source| source.state_domain.as_str()),
+                    deployment_id = source.map(|source| tracing::field::display(source.deployment)), source_revision = source.map(|source| source.revision),
+                    "Host runtime failure");
                 self.startup_error = Some(error.to_string());
                 self.stop();
                 None
@@ -280,8 +290,13 @@ impl Owner {
                             self.observe_source(source);
                         }
                         Err(error) => {
+                            let source = self.persisted.as_ref().map(|(source, _)| source.reference());
+                            tracing::warn!(target: "maka_host_runtime::application", stage = "source_watch",
+                                cause = diagnostics::cause(&error), sql_code = diagnostics::sql_code(&error), os_code = diagnostics::os_code(&error),
+                                state_domain = source.map(|source| source.state_domain.as_str()),
+                                deployment_id = source.map(|source| tracing::field::display(source.deployment)), "Host runtime failure");
                             changes = None;
-                            self.startup_error = Some(error);
+                            self.startup_error = Some(error.to_string());
                         }
                     }
                 },
@@ -323,7 +338,12 @@ impl Owner {
         match self.check_adoption_source(&source) {
             Ok(true) => self.load_adoption(source, None),
             Ok(false) => {}
-            Err(error) => self.startup_error = Some(error),
+            Err(error) => {
+                tracing::warn!(target: "maka_host_runtime::application", stage = "source_observation", cause = "source_rejected",
+                    state_domain = %source.state_domain, deployment_id = %source.deployment, source_revision = source.revision,
+                    "Host runtime failure");
+                self.startup_error = Some(error);
+            }
         }
     }
     fn load_adoption(&mut self, source: DeploymentRef, reply: Option<oneshot::Sender<Result<()>>>) {
@@ -338,8 +358,19 @@ impl Owner {
             let loaded = store
                 .load_application_at(&source)
                 .await
-                .map_err(|e| e.to_string())
-                .and_then(|loaded| loaded.ok_or("committed deployment not found".into()))
+                .map_err(|error| {
+                    tracing::warn!(target: "maka_host_runtime::application", stage = "source_load", cause = diagnostics::cause(&error),
+                        sql_code = diagnostics::sql_code(&error), os_code = diagnostics::os_code(&error),
+                        state_domain = %source.state_domain, deployment_id = %source.deployment, source_revision = source.revision,
+                        "Host runtime failure");
+                    error.to_string()
+                })
+                .and_then(|loaded| loaded.ok_or_else(|| {
+                    tracing::warn!(target: "maka_host_runtime::application", stage = "source_load", cause = "source_missing",
+                        state_domain = %source.state_domain, deployment_id = %source.deployment, source_revision = source.revision,
+                        "Host runtime failure");
+                    "committed deployment not found".into()
+                }))
                 .map(Box::new);
             Done::Loaded { loaded, reply }
         }));
@@ -444,7 +475,26 @@ impl Owner {
         }
         Ok(true)
     }
+    fn activation_diagnostic_span(&self, activation: &Activation) -> tracing::Span {
+        let source = self
+            .origins
+            .get(activation.instance())
+            .map(|source| source.reference());
+        tracing::error_span!(target: "maka_host_runtime::application", "host_activation",
+            instance_id = ?activation.instance(), activation_id = %activation.epoch(),
+            state_domain = source.map(|source| source.state_domain.as_str()),
+            deployment_id = source.map(|source| tracing::field::display(source.deployment)), source_revision = source.map(|source| source.revision))
+    }
     fn fail_initialization(&mut self, id: InstanceId, error: String) {
+        {
+            let span = self
+                .activations
+                .get(&id)
+                .map(|activation| self.activation_diagnostic_span(activation));
+            let _entered = span.as_ref().map(tracing::Span::enter);
+            tracing::warn!(target: "maka_host_runtime::application", stage = "initialize", cause = "initializer_failed",
+                instance_id = ?id, "Host runtime failure");
+        }
         let path = self
             .runtime
             .desired()
@@ -1311,7 +1361,15 @@ impl Owner {
                             let mut receipt = None;
                             let dispatched = if let Some(request) = request {
                                 let store = store.as_ref().expect("persisted mutation");
-                                match store.dispatch_prepared_operation(request).await.map_err(|e| e.to_string()) {
+                                match store.dispatch_prepared_operation(request).await.map_err(|error| {
+                                    let original = reference.as_ref().expect("original operation reference");
+                                    tracing::error!(target: "maka_host_runtime::application", stage = "operation_dispatch", cause = diagnostics::cause(&error),
+                                        sql_code = diagnostics::sql_code(&error), os_code = diagnostics::os_code(&error),
+                                        operation_id = %original.operation, execution_id = %execution.id(),
+                                        state_domain = %original.source.state_domain, deployment_id = %original.source.deployment, source_revision = original.source.revision,
+                                        "Host runtime failure");
+                                    error.to_string()
+                                }) {
                                     Ok(OperationDispatch::New(new)) => { claim = Some(new); Ok(()) },
                                     Ok(OperationDispatch::Existing(observation)) => { historical = Some(Box::new(observation)); Ok(()) },
                                     Err(error) => {
@@ -1346,7 +1404,15 @@ impl Owner {
                                     Ok(()) => OperationCleanup::Confirmed,
                                     Err(error) => OperationCleanup::Failed { diagnostic: diagnostic(error) },
                                 };
-                                receipt=Some(store.as_ref().expect("original operation store").finish_operation(&claim, outcome, settled_cleanup).await.map_err(|error|format!("operation settlement outcome unknown; read original receipt: {error}")));
+                                receipt=Some(store.as_ref().expect("original operation store").finish_operation(&claim, outcome, settled_cleanup).await.map_err(|error| {
+                                    let original = claim.reference();
+                                    tracing::error!(target: "maka_host_runtime::application", stage = "operation_settlement", cause = diagnostics::cause(&error),
+                                        sql_code = diagnostics::sql_code(&error), os_code = diagnostics::os_code(&error),
+                                        operation_id = %original.operation, execution_id = %execution.id(),
+                                        state_domain = %original.source.state_domain, deployment_id = %original.source.deployment, source_revision = original.source.revision,
+                                        "Host runtime failure");
+                                    format!("operation settlement outcome unknown; read original receipt: {error}")
+                                }));
                             }
                             if is_mutation && historical.is_none() && receipt.is_none() {
                                 receipt=Some(Err("operation receipt unavailable; read original reference".into()));
@@ -1466,8 +1532,20 @@ impl Owner {
     fn complete(&mut self, done: Done) {
         match done {
             Done::Loaded { loaded, reply } => {
-                self.loading_adoption = None;
-                let result = loaded.and_then(|loaded| self.adopt(*loaded));
+                let source = self.loading_adoption.take();
+                let result = match loaded {
+                    Ok(loaded) => {
+                        let result = self.adopt(*loaded);
+                        if result.is_err() && !self.closing {
+                            tracing::warn!(target: "maka_host_runtime::application", stage = "source_adoption", cause = "adoption_failed",
+                                state_domain = source.as_ref().map(|source| source.state_domain.as_str()),
+                                deployment_id = source.as_ref().map(|source| tracing::field::display(source.deployment)), source_revision = source.as_ref().map(|source| source.revision),
+                                "Host runtime failure");
+                        }
+                        result
+                    }
+                    Err(error) => Err(error),
+                };
                 if let Err(error) = &result {
                     self.startup_error = Some(error.clone());
                 }
@@ -1512,6 +1590,11 @@ impl Owner {
                     .runtime
                     .status(&activation)
                     .is_ok_and(|s| s.phase == Phase::Retiring);
+                if close.is_none() {
+                    self.activation_diagnostic_span(&activation).in_scope(|| {
+                        tracing::error!(target: "maka_host_runtime::application", stage = "initialization_cleanup", cause = "cleanup_unconfirmed", "Host runtime failure");
+                    });
+                }
                 let owned = self
                     .owned
                     .get_mut(activation.instance())
@@ -1569,6 +1652,12 @@ impl Owner {
                 }
                 let _ = self.check_vm(execution.provider());
                 let failed = cleanup.is_err();
+                if failed {
+                    self.activation_diagnostic_span(execution.provider()).in_scope(|| {
+                        tracing::error!(target: "maka_host_runtime::application", stage = "execution_cleanup", cause = "cleanup_unconfirmed",
+                            execution_id = %execution.id(), consumer_instance_id = ?consumer.instance(), "Host runtime failure");
+                    });
+                }
                 let cleanup_error = cleanup.as_ref().err().cloned();
                 self.runtime
                     .settle(&execution, cleanup.clone())
@@ -1639,6 +1728,9 @@ impl Owner {
                 let owned = &self.owned[activation.instance()];
                 let success = result.is_ok();
                 if let Err(error) = &result {
+                    self.activation_diagnostic_span(&activation).in_scope(|| {
+                        tracing::error!(target: "maka_host_runtime::application", stage = "activation_cleanup", cause = "cleanup_unconfirmed", "Host runtime failure");
+                    });
                     self.cleanup_error.get_or_insert(error.clone());
                 }
                 self.runtime

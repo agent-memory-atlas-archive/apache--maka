@@ -75,6 +75,25 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+// Hold the thread-local dispatcher through actual current-thread fixture shutdown.
+fn log_capture() -> (std::fs::File, tracing::subscriber::DefaultGuard) {
+    let file = tempfile::tempfile().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(file.try_clone().unwrap())
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .without_time()
+        .finish();
+    (file, tracing::subscriber::set_default(subscriber))
+}
+fn log_text(file: &mut std::fs::File) -> String {
+    use std::io::{Read, Seek};
+    file.rewind().unwrap();
+    let mut text = String::new();
+    file.read_to_string(&mut text).unwrap();
+    text
+}
+
 fn contract(mode: MethodMode) -> Contract {
     Contract {
         name: "example.Echo".into(),

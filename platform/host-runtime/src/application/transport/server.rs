@@ -165,6 +165,12 @@ impl Server {
                 _ => Err("Application connection cleanup unconfirmed: worker or physical cleanup panicked".into()),
             };
             if let Err(reason) = &cleanup {
+                let request_id = scope.as_ref().and_then(|scope| match &scope.identity {
+                    maka_capabilities::call::Identity::Remote { request_id } => Some(tracing::field::display(request_id)),
+                    _ => None,
+                });
+                tracing::error!(target: "maka_host_runtime::application", stage = "transport_cleanup", cause = "cleanup_unconfirmed",
+                    request_id, "Host runtime failure");
                 server.failed.lock().unwrap().push(Failed {
                     _scope: scope,
                     reason: reason.clone(),
