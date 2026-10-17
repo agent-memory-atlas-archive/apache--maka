@@ -259,6 +259,11 @@ export type RuntimeProtocol =
   | AgentProjectChange
   | AgentProjectResult
   | AgentCreated
+  | AgentFork
+  | AgentForkResult
+  | AgentForkReceipt
+  | AgentForkReceiptResult
+  | AgentSessionBranch
   | AgentDirectories
   | AgentDirectoryPage
   | AgentMetadata
@@ -1932,6 +1937,8 @@ export type AgentRejection =
   | 'busy'
   | 'workspace_unavailable'
   | 'session_unavailable'
+  | 'history_unavailable'
+  | 'managed_session'
   | 'closed';
 export type WorkHubTaskStatus =
   | {
@@ -4078,6 +4085,20 @@ export type AgentCreated =
   | {
       session: AgentSession;
       kind: 'created';
+    }
+  | {
+      reason: AgentRejection;
+      kind: 'rejected';
+    };
+export type AgentForkResult =
+  | {
+      session: AgentSession;
+      kind: 'forked';
+    }
+  | {
+      expected: number;
+      actual: number;
+      kind: 'revision_conflict';
     }
   | {
       reason: AgentRejection;
@@ -7782,6 +7803,7 @@ export interface AgentDirectorySelection {
   directoryIdentity: string;
 }
 export interface AgentSession {
+  branch: AgentSessionBranch | null;
   backend?: AgentBackendPreference | null;
   collaborationMode?: CollaborationMode & string;
   tools?: string[] | null;
@@ -7797,6 +7819,13 @@ export interface AgentSession {
   archived: boolean;
   hasUnread: boolean;
   activity: AgentSessionActivity;
+}
+/**
+ * Frozen conversation ancestry for presentation, not authority over the source.
+ */
+export interface AgentSessionBranch {
+  sessionId: string;
+  turnId: string | null;
 }
 /**
  * Stable business-data origin, independent of package or activation revisions.
@@ -9662,6 +9691,32 @@ export interface AgentProjectLocation {
   path: string;
   name: string;
   project: AgentProject | null;
+}
+export interface AgentFork {
+  sessionId: string;
+  expectedRevision: number;
+  /**
+   * Include history through a complete logical Turn, or all current history when null.
+   */
+  turnId: string | null;
+  title: string;
+  /**
+   * @maxItems 32
+   */
+  labels: string[];
+}
+export interface AgentForkReceipt {
+  /**
+   * The complete original fork operation reference, including its fingerprint.
+   */
+  reference: RecoveryRef;
+}
+export interface AgentForkReceiptResult {
+  /**
+   * A currently readable published fork. Null neither proves no effect nor
+   * authorizes replacing or redispatching the original operation.
+   */
+  session: AgentSession | null;
 }
 export interface AgentDirectory {
   name: string;

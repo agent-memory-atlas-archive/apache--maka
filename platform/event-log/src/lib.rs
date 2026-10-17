@@ -108,6 +108,16 @@ pub enum StoreError {
     PermissionRevoked,
     #[error("session has an unsealed invocation")]
     SessionBusy,
+    #[error("invalid event transition: source Turn does not exist")]
+    HistoryTurnMissing,
+    #[error("invalid event transition: history cut splits a logical Turn")]
+    HistoryTurnSplit,
+    #[error("invalid event transition: Session contains unsealed or unresolved prior execution")]
+    HistoryUnsettled,
+    #[error("invalid event transition: Session contains an unresolved prior provider tool effect")]
+    HistoryProviderEffectUnresolved,
+    #[error("invalid event transition: managed Session history requires its owner's lifecycle")]
+    ManagedSession,
     #[error("catalog revision changed from {expected} to {actual}")]
     RevisionConflict { expected: String, actual: String },
     #[error("invalid event transition: {0}")]

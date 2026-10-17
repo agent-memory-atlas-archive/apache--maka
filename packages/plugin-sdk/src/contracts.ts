@@ -7657,6 +7657,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -7725,6 +7735,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -7738,6 +7749,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -8700,6 +8730,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -8768,6 +8808,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -8781,6 +8822,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -9008,6 +9068,8 @@ export const contracts = {
                   'busy',
                   'workspace_unavailable',
                   'session_unavailable',
+                  'history_unavailable',
+                  'managed_session',
                   'closed',
                 ],
               },
@@ -9706,6 +9768,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -9774,6 +9846,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -9787,6 +9860,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -10014,6 +10106,8 @@ export const contracts = {
                   'busy',
                   'workspace_unavailable',
                   'session_unavailable',
+                  'history_unavailable',
+                  'managed_session',
                   'closed',
                 ],
               },
@@ -11389,6 +11483,927 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['executors', 'setup'],
+          },
+          resources: {},
+        },
+        fork: {
+          mode: 'mutation',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentFork',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              expectedRevision: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 1,
+                maximum: 9007199254740991,
+              },
+              turnId: {
+                description:
+                  'Include history through a complete logical Turn, or all current history when null.',
+                type: ['string', 'null'],
+                minLength: 1,
+                maxLength: 128,
+              },
+              title: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              labels: {
+                type: 'array',
+                items: {
+                  type: 'string',
+                },
+                maxItems: 32,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'expectedRevision', 'turnId', 'title', 'labels'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentForkResult',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  session: {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'forked',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'session'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  expected: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  actual: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'revision_conflict',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'expected', 'actual'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentRejection',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'rejected',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  collaborationMode: {
+                    $ref: '#/$defs/CollaborationMode',
+                    default: 'agent',
+                  },
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'branch',
+                  'dataSource',
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+              CollaborationMode: {
+                type: 'string',
+                enum: ['agent', 'plan'],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+              AgentRejection: {
+                type: 'string',
+                enum: [
+                  'title_invalid',
+                  'labels_invalid',
+                  'tools_unavailable',
+                  'busy',
+                  'workspace_unavailable',
+                  'session_unavailable',
+                  'history_unavailable',
+                  'managed_session',
+                  'closed',
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
+        forkReceipt: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentForkReceipt',
+            type: 'object',
+            properties: {
+              reference: {
+                description:
+                  'The complete original fork operation reference, including its fingerprint.',
+                $ref: '#/$defs/RecoveryRef',
+              },
+            },
+            additionalProperties: false,
+            required: ['reference'],
+            $defs: {
+              RecoveryRef: {
+                type: 'object',
+                properties: {
+                  source: {
+                    $ref: '#/$defs/DeploymentRef',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                  export: {
+                    type: 'string',
+                  },
+                  method: {
+                    type: 'string',
+                  },
+                  operation: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  fingerprint: {
+                    type: 'string',
+                  },
+                  contract: {
+                    $ref: '#/$defs/RecoveryContract',
+                  },
+                  recovery: {
+                    $ref: '#/$defs/RecoveryProtocol',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'source',
+                  'namespace',
+                  'export',
+                  'method',
+                  'operation',
+                  'fingerprint',
+                  'contract',
+                  'recovery',
+                ],
+              },
+              DeploymentRef: {
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'revision'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              RecoveryContract: {
+                description:
+                  'Contract identity for a journal lookup. The original request retains the\ncomplete contract; a receipt carries only its digest.',
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  version: {
+                    type: 'integer',
+                    format: 'uint32',
+                    minimum: 0,
+                  },
+                  transport: {
+                    $ref: '#/$defs/Transport',
+                  },
+                  digest: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: ['name', 'version', 'transport', 'digest'],
+              },
+              Transport: {
+                type: 'string',
+                enum: ['local', 'remote'],
+              },
+              RecoveryProtocol: {
+                type: 'string',
+                enum: ['journal_v1'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentForkReceiptResult',
+            type: 'object',
+            properties: {
+              session: {
+                description:
+                  'A currently readable published fork. Null neither proves no effect nor\nauthorizes replacing or redispatching the original operation.',
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentSession',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['session'],
+            $defs: {
+              AgentSession: {
+                type: 'object',
+                properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  backend: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentBackendPreference',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  collaborationMode: {
+                    $ref: '#/$defs/CollaborationMode',
+                    default: 'agent',
+                  },
+                  tools: {
+                    type: ['array', 'null'],
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  dataSource: {
+                    $ref: '#/$defs/AgentDataSource',
+                  },
+                  permissions: {
+                    $ref: '#/$defs/AgentWorkspacePermissions',
+                  },
+                  boundaryRevision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                  labels: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                    },
+                  },
+                  workspace: {
+                    $ref: '#/$defs/AgentWorkspace',
+                  },
+                  revision: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  updatedAt: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  archived: {
+                    type: 'boolean',
+                  },
+                  hasUnread: {
+                    type: 'boolean',
+                  },
+                  activity: {
+                    $ref: '#/$defs/AgentSessionActivity',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'branch',
+                  'dataSource',
+                  'permissions',
+                  'boundaryRevision',
+                  'id',
+                  'title',
+                  'labels',
+                  'workspace',
+                  'revision',
+                  'updatedAt',
+                  'archived',
+                  'hasUnread',
+                  'activity',
+                ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
+              },
+              AgentBackendPreference: {
+                description:
+                  "The next turn's choice, independent of an already admitted execution.\nModel revisions are resolved afresh; preferences never grant execution authority.",
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      connectionId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                      },
+                      modelId: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 512,
+                      },
+                      thinkingLevel: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ThinkingLevel',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'connectionId', 'modelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      selection: {
+                        $ref: '#/$defs/AgentExecutorSelection',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'executor',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'selection'],
+                  },
+                ],
+              },
+              ThinkingLevel: {
+                type: 'string',
+                enum: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+              },
+              AgentExecutorSelection: {
+                type: 'object',
+                properties: {
+                  executor: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  settings: {
+                    $ref: '#/$defs/ExecutorSettings',
+                  },
+                },
+                additionalProperties: false,
+                required: ['executor', 'settings'],
+              },
+              ExecutorSettings: {
+                description:
+                  'Executor-owned model selection, independent of Host model connections.',
+                type: 'object',
+                properties: {
+                  model: {
+                    type: ['string', 'null'],
+                  },
+                  thinkingLevel: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/ThinkingLevel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                },
+                additionalProperties: false,
+              },
+              CollaborationMode: {
+                type: 'string',
+                enum: ['agent', 'plan'],
+              },
+              AgentDataSource: {
+                description:
+                  'Stable business-data origin, independent of package or activation revisions.',
+                type: 'object',
+                properties: {
+                  stateDomain: {
+                    type: 'string',
+                  },
+                  deployment: {
+                    type: 'string',
+                    format: 'uuid',
+                  },
+                  namespace: {
+                    $ref: '#/$defs/InstanceId',
+                  },
+                },
+                additionalProperties: false,
+                required: ['stateDomain', 'deployment', 'namespace'],
+              },
+              InstanceId: {
+                description:
+                  'Hierarchical, stable source keys. Display aliases never become data identities.',
+                type: 'array',
+                items: {
+                  type: 'string',
+                  format: 'uuid',
+                },
+              },
+              AgentWorkspacePermissions: {
+                type: 'object',
+                properties: {
+                  access: {
+                    $ref: '#/$defs/AgentWorkspaceAccess',
+                  },
+                  requestPermissions: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['access', 'requestPermissions'],
+              },
+              AgentWorkspaceAccess: {
+                description:
+                  'Session sandbox policy. Full access explicitly disables filesystem and process isolation.',
+                type: 'string',
+                enum: ['read_only', 'workspace_write', 'danger_full_access'],
+              },
+              AgentWorkspace: {
+                type: 'object',
+                properties: {
+                  worktree: {
+                    description:
+                      'Native owner allocation; never accepted from a caller as workspace authority.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/Binding',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  projectId: {
+                    description: "Optional membership in this Agent's canonical Project catalog.",
+                    type: ['string', 'null'],
+                    format: 'uuid',
+                  },
+                  path: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 4096,
+                  },
+                  directoryIdentity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  identity: {
+                    type: 'string',
+                    pattern: '^workspace:v1:[A-Fa-f0-9-]{36}$',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'directoryIdentity', 'identity'],
+              },
+              Binding: {
+                description: 'Immutable allocation intent, not the current child branch or HEAD.',
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  common_dir: {
+                    type: 'string',
+                  },
+                  source: {
+                    type: 'string',
+                  },
+                  source_identity: {
+                    type: 'string',
+                    pattern: '^sha256:[a-f0-9]{64}$',
+                  },
+                  base_commit: {
+                    type: 'string',
+                  },
+                  directory: {
+                    type: 'string',
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'common_dir',
+                  'source',
+                  'source_identity',
+                  'base_commit',
+                  'directory',
+                ],
+              },
+              AgentSessionActivity: {
+                type: 'string',
+                enum: ['idle', 'working', 'waiting'],
+              },
+            },
           },
           resources: {},
         },
@@ -13242,6 +14257,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -13310,6 +14335,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -13323,6 +14349,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -14211,6 +15256,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -14279,6 +15334,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -14292,6 +15348,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -15517,6 +16592,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -15585,6 +16670,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -15598,6 +16684,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -16011,6 +17116,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -16079,6 +17194,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -16092,6 +17208,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -16319,6 +17454,8 @@ export const contracts = {
                   'busy',
                   'workspace_unavailable',
                   'session_unavailable',
+                  'history_unavailable',
+                  'managed_session',
                   'closed',
                 ],
               },
@@ -16481,6 +17618,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -16549,6 +17696,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -16562,6 +17710,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -16789,6 +17956,8 @@ export const contracts = {
                   'busy',
                   'workspace_unavailable',
                   'session_unavailable',
+                  'history_unavailable',
+                  'managed_session',
                   'closed',
                 ],
               },
@@ -16871,6 +18040,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -16939,6 +18118,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -16952,6 +18132,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -19021,6 +20220,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -19089,6 +20298,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -19102,6 +20312,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -22651,6 +23880,16 @@ export const contracts = {
               AgentSession: {
                 type: 'object',
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -22719,6 +23958,7 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -22732,6 +23972,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
+                type: 'object',
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                additionalProperties: false,
+                required: ['sessionId', 'turnId'],
               },
               AgentBackendPreference: {
                 description:
@@ -22959,6 +24218,8 @@ export const contracts = {
                   'busy',
                   'workspace_unavailable',
                   'session_unavailable',
+                  'history_unavailable',
+                  'managed_session',
                   'closed',
                 ],
               },
@@ -27679,6 +28940,16 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -27746,6 +29017,7 @@ export const contracts = {
                   },
                 },
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -27759,6 +29031,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                required: ['sessionId', 'turnId'],
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
               },
               AgentBackendPreference: {
                 oneOf: [
@@ -27986,6 +29277,8 @@ export const contracts = {
                   'busy',
                   'workspace_unavailable',
                   'session_unavailable',
+                  'history_unavailable',
+                  'managed_session',
                   'closed',
                 ],
               },
@@ -29134,6 +30427,16 @@ export const contracts = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
+                  branch: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/AgentSessionBranch',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   backend: {
                     anyOf: [
                       {
@@ -29201,6 +30504,7 @@ export const contracts = {
                   },
                 },
                 required: [
+                  'branch',
                   'dataSource',
                   'permissions',
                   'boundaryRevision',
@@ -29214,6 +30518,25 @@ export const contracts = {
                   'hasUnread',
                   'activity',
                 ],
+              },
+              AgentSessionBranch: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                  turnId: {
+                    type: ['string', 'null'],
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
+                required: ['sessionId', 'turnId'],
+                description:
+                  'Frozen conversation ancestry for presentation, not authority over the source.',
               },
               AgentBackendPreference: {
                 oneOf: [
@@ -29441,6 +30764,8 @@ export const contracts = {
                   'busy',
                   'workspace_unavailable',
                   'session_unavailable',
+                  'history_unavailable',
+                  'managed_session',
                   'closed',
                 ],
               },

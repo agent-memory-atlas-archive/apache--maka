@@ -152,9 +152,7 @@ pub(crate) async fn resolve_cut(
             .bind(observed)
             .fetch_one(&mut *connection)
             .await?;
-            let (first, last) = first
-                .zip(last)
-                .ok_or_else(|| invalid("source Turn does not exist"))?;
+            let (first, last) = first.zip(last).ok_or(StoreError::HistoryTurnMissing)?;
             match cut {
                 HistoryCut::BeforeTurn(_) => first - 1,
                 HistoryCut::ThroughTurn(_) => last,
@@ -174,7 +172,7 @@ pub(crate) async fn resolve_cut(
     .fetch_one(&mut *connection)
     .await?;
     if crossing {
-        return Err(invalid("history cut splits a logical Turn"));
+        return Err(StoreError::HistoryTurnSplit);
     }
     Selection::session(session)
         .high_water(connection, sequence_number(limit)?)

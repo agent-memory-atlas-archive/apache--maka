@@ -30,6 +30,7 @@ mod compaction;
 mod context;
 mod execution;
 mod files;
+mod fork;
 mod goal;
 mod graph;
 mod imports;

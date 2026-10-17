@@ -350,7 +350,11 @@ impl Owner {
             Err(
                 RunError::InvalidInput(_)
                 | RunError::ReconciliationRequired(_)
-                | RunError::Store(maka_event_log::StoreError::InvalidTransition(_)),
+                | RunError::Store(
+                    maka_event_log::StoreError::InvalidTransition(_)
+                    | maka_event_log::StoreError::HistoryUnsettled
+                    | maka_event_log::StoreError::HistoryProviderEffectUnresolved,
+                ),
             ) => {
                 return Ok(parked(Reason::SafetyCheckFailed));
             }

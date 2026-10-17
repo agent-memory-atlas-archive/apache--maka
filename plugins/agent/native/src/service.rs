@@ -270,6 +270,15 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.create(input, operation, context.scope()).await?)
                 }
+                "fork" => {
+                    let operation = context.operation().ok_or("agent_mutation_required")?;
+                    encode(
+                        owner
+                            .fork(decode(input)?, operation, context.scope())
+                            .await?,
+                    )
+                }
+                "forkReceipt" => encode(owner.fork_receipt(decode(input)?, context.scope()).await?),
                 "context" => encode(owner.context(decode(input)?, context.scope()).await?),
                 "gitStatus" => {
                     let result = encode(owner.git_status(decode(input)?, context.scope()).await?)?;
@@ -926,7 +935,16 @@ pub(crate) fn summary_for(
     } else {
         SessionActivity::Idle
     };
+    let branch = session
+        .lineage
+        .as_deref()
+        .and_then(|lineage| lineage.branch())
+        .map(|origin| SessionBranch {
+            session_id: origin.parent_session_id.clone(),
+            turn_id: origin.turn_id.clone(),
+        });
     Session {
+        branch,
         backend: session.configuration.backend,
         collaboration_mode: session.configuration.collaboration_mode,
         tools: session.configuration.tools,

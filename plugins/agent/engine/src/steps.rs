@@ -371,6 +371,14 @@ pub(super) async fn run(
                 maka_event_log::StoreError::InvalidTransition(reason) => {
                     RunError::ReconciliationRequired(reason)
                 }
+                maka_event_log::StoreError::HistoryUnsettled => RunError::ReconciliationRequired(
+                    "Session contains unsealed or unresolved prior execution".into(),
+                ),
+                maka_event_log::StoreError::HistoryProviderEffectUnresolved => {
+                    RunError::ReconciliationRequired(
+                        "Session contains an unresolved prior provider tool effect".into(),
+                    )
+                }
                 error => RunError::Store(error),
             })?;
     }

@@ -45,6 +45,9 @@ mod skills;
 #[path = "tests/attachments.rs"]
 mod attachments;
 
+#[path = "tests/fork.rs"]
+mod fork;
+
 #[path = "tests/files.rs"]
 mod files;
 

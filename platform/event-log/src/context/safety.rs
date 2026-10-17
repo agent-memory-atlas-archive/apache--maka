@@ -121,9 +121,7 @@ async fn require_safe_through_policy(
                   AND json_extract(result.value, '$.name') = json_extract(p.value, '$.call.name'))))))",
     )).bind(session).bind(current).bind(through as i64).bind(allow_sealed_unknown).fetch_one(&mut *connection).await?;
     if unsafe_history {
-        return Err(invalid(
-            "Session contains unsealed or unresolved prior execution",
-        ));
+        return Err(StoreError::HistoryUnsettled);
     }
     // An interrupted model step closes the request, not an observed remote
     // effect. Only that step's durably observed matching result settles it.
@@ -146,9 +144,7 @@ async fn require_safe_through_policy(
              AND json_extract(result.event_json, '$.fact.event.data.name') = json_extract(call.event_json, '$.fact.event.data.name')))",
     ).bind(session).bind(current).bind(through as i64).fetch_one(&mut *connection).await?;
     if unknown_provider_effect {
-        return Err(invalid(
-            "Session contains an unresolved prior provider tool effect",
-        ));
+        return Err(StoreError::HistoryProviderEffectUnresolved);
     }
     let broken_payload: bool = sqlx::query_scalar(
         "WITH runtime_events AS NOT MATERIALIZED (SELECT * FROM main.runtime_events WHERE sequence <= ?2)

@@ -80,6 +80,16 @@ pub async fn run(
         Err(StoreError::InvalidTransition(reason)) => {
             return Err(RunError::ReconciliationRequired(reason));
         }
+        Err(StoreError::HistoryUnsettled) => {
+            return Err(RunError::ReconciliationRequired(
+                "Session contains unsealed or unresolved prior execution".into(),
+            ));
+        }
+        Err(StoreError::HistoryProviderEffectUnresolved) => {
+            return Err(RunError::ReconciliationRequired(
+                "Session contains an unresolved prior provider tool effect".into(),
+            ));
+        }
         Err(error) => return Err(error.into()),
     };
     let claim = match (prepared_claim, &input.work) {

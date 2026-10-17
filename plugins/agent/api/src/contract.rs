@@ -33,6 +33,9 @@ pub use context::*;
 #[path = "contract_files.rs"]
 mod files;
 pub use files::*;
+#[path = "contract_fork.rs"]
+mod fork;
+pub use fork::*;
 #[path = "contract_git.rs"]
 mod git;
 pub use git::*;
@@ -543,6 +546,8 @@ pub enum Rejection {
     Busy,
     WorkspaceUnavailable,
     SessionUnavailable,
+    HistoryUnavailable,
+    ManagedSession,
     Closed,
 }
 #[derive(Serialize, JsonSchema, Deserialize)]
@@ -686,6 +691,8 @@ pub struct DataSource {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentSession")]
 pub struct Session {
+    #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<SessionBranch>")]
+    pub branch: Option<SessionBranch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<BackendPreference>,
     #[serde(default)]
@@ -1495,6 +1502,14 @@ pub fn contract() -> Contract {
                 (
                     "create".into(),
                     method::<Create, Created>(MethodMode::Mutation),
+                ),
+                (
+                    "fork".into(),
+                    method::<Fork, ForkResult>(MethodMode::Mutation),
+                ),
+                (
+                    "forkReceipt".into(),
+                    method::<ForkReceipt, ForkReceiptResult>(MethodMode::Query),
                 ),
                 (
                     "listFiles".into(),

@@ -302,8 +302,7 @@ async fn continuation_claim_replays_only_its_lineage_and_retries_with_frozen_inp
         }
         let unsafe_preview = worker.check_continuation(&continuation("unsafe-preview"), &CancellationToken::new()).await;
         assert!(matches!(&unsafe_preview,
-            Err(RunError::Store(maka_event_log::StoreError::InvalidTransition(reason)))
-                if reason.ends_with("Session contains unsealed or unresolved prior execution")),
+            Err(RunError::Store(maka_event_log::StoreError::HistoryUnsettled))),
             "a safe historical cut cannot hide a later unresolved Session effect: {unsafe_preview:?}");
     }).await.expect("continuation must settle");
 }

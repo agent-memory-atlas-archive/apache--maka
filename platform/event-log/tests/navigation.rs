@@ -122,8 +122,9 @@ async fn interleaved_turns_keep_full_extents_and_do_not_create_false_page_bounda
         HistoryCut::ThroughTurn("child".into()),
     ] {
         assert!(matches!(
-            log.capture_session_history("session", revision, cut, 100, 65536).await,
-            Err(StoreError::InvalidTransition(reason)) if reason == "history cut splits a logical Turn"
+            log.capture_session_history("session", revision, cut, 100, 65536)
+                .await,
+            Err(StoreError::HistoryTurnSplit)
         ));
     }
     let HistoryCapture::Captured(history) = log

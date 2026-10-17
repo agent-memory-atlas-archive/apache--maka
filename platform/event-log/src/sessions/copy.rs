@@ -175,7 +175,7 @@ impl EventLog {
             if manager.is_some_and(|(package, scope)| origin.as_ref().is_none_or(|origin|
                 origin.creator.package() != package || String::from(origin.creator.scope().clone()) != scope
             )) {
-                return Err(super::invalid("managed Session history requires its owner's lifecycle"));
+                return Err(StoreError::ManagedSession);
             }
             let observed: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(sequence),0) FROM event_log")
                 .fetch_one(&mut *tx).await?;

@@ -576,3 +576,230 @@ async fn independent_public_agent_client_reads_context_without_own_model_request
     .await
     .unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_public_agent_client_forks_an_empty_session_without_changing_its_source() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut fixture = Fixture::open().await;
+        let original = support::query(
+            &fixture.native,
+            "agent",
+            "observe",
+            json!({
+                "sessionId":fixture.session,
+            }),
+        )
+        .await;
+        let result: Result<(Value, maka_plugin_core::operation::RecoveryRef, Value), String> = async {
+            let mut call = fixture
+                .native
+                .call(
+                    "agent",
+                    "fork".into(),
+                    json!({
+                        "sessionId":fixture.session,
+                        "expectedRevision":original["session"]["revision"],
+                        "turnId":null,"title":"Forked conversation","labels":[],
+                    }),
+                    Default::default(),
+                )
+                .await?;
+            let result = async {
+                call.start().await?;
+                let Reply::Prepared { reference } = call.receive().await? else {
+                    return Err("fork mutation was not prepared".into());
+                };
+                assert_eq!(reference.method, "fork");
+                let Reply::Mutation { reply, cleanup } = call.confirm().await? else {
+                    return Err("fork mutation returned no receipt".into());
+                };
+                cleanup?;
+                assert_eq!(reply.reference, *reference);
+                let recorded_reply = serde_json::to_value(&reply).unwrap();
+                let maka_plugin_core::operation::Receipt::Recorded {
+                    outcome: maka_plugin_core::operation::OperationOutcome::Returned { value },
+                    cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
+                } = reply.receipt
+                else {
+                    return Err("fork mutation has no confirmed recorded result".into());
+                };
+                Ok((value, *reference, recorded_reply))
+            }
+            .await;
+            call.close().await?;
+            assert!(call.cleanup_confirmed());
+            result
+        }
+        .await;
+        let source_after = support::query(
+            &fixture.native,
+            "agent",
+            "observe",
+            json!({
+                "sessionId":fixture.session,
+            }),
+        )
+        .await;
+        let child = if let Ok((value, reference, recorded_reply)) = &result {
+            let child = support::query(&fixture.native, "agent", "observe", json!({
+                "sessionId":value["session"]["id"],
+            })).await;
+            assert_eq!(value["session"]["branch"], json!({"sessionId":fixture.session,"turnId":null}));
+            assert_eq!(support::query(&fixture.native,"agent","forkReceipt",json!({"reference":reference})).await,
+                json!({"session":value["session"]}));
+            assert_eq!(support::query(&fixture.native,"receipts","read",json!(reference)).await, *recorded_reply);
+            let mut changed = reference.clone();
+            changed.fingerprint = format!("sha256-{}", "0".repeat(64));
+            changed.validate().unwrap();
+            assert_ne!(changed.fingerprint, reference.fingerprint);
+            assert_eq!(support::query(&fixture.native,"agent","forkReceipt",json!({"reference":changed})).await,
+                json!({"session":null}));
+            let mut foreign = reference.clone();
+            foreign.namespace.0 = vec![uuid::Uuid::new_v4()];
+            let mut denied = fixture.native.call("agent","forkReceipt".into(),json!({"reference":foreign}),Default::default()).await.unwrap();
+            denied.start().await.unwrap();
+            let Reply::Finished { result, cleanup } = denied.receive().await.unwrap() else { panic!("foreign forkReceipt did not settle"); };
+            assert_eq!(result.unwrap_err(),"agent_fork_reference_unavailable");
+            cleanup.unwrap();
+            assert!(denied.cleanup_confirmed());
+            let mut unselected = fixture.native.call("settings","forkReceipt".into(),json!({"reference":reference}),Default::default()).await.unwrap();
+            assert_eq!(unselected.start().await.unwrap_err(),"Application method is not granted");
+            unselected.close().await.unwrap();
+            assert!(unselected.cleanup_confirmed());
+            let changed_source = support::mutate(&fixture.native,"agent","metadata",json!({
+                "sessionId":fixture.session,"expectedRevision":original["session"]["revision"],
+                "title":"Source renamed after fork","labels":[],
+            })).await;
+            assert_eq!(changed_source["kind"],"committed");
+            let removed = support::mutate(&fixture.native,"agent","changeSession",json!({
+                "sessionId":fixture.session,"expectedRevision":changed_source["session"]["revision"],"action":"remove",
+            })).await;
+            assert_eq!(removed["kind"],"removed");
+            assert_eq!(support::query(&fixture.native,"agent","forkReceipt",json!({"reference":reference})).await,
+                json!({"session":value["session"]}));
+            fixture.native.close().await.unwrap();
+            fixture.client.close().await.unwrap();
+            let mut reconnected = Client::connect(&fixture.endpoint,Some(fixture.epoch)).await.unwrap();
+            assert_eq!(support::query(&reconnected,"receipts","read",json!(reference)).await,*recorded_reply);
+            assert_eq!(support::query(&reconnected,"agent","forkReceipt",json!({"reference":reference})).await,
+                json!({"session":value["session"]}));
+            let current = support::query(&reconnected,"agent","list",json!({"filter":"all","position":{"kind":"start"}})).await;
+            assert_eq!(current["sessions"].as_array().unwrap().iter().map(|s|s["id"].clone()).collect::<Vec<_>>(), vec![value["session"]["id"].clone()]);
+            let removed = support::mutate(&reconnected,"agent","changeSession",json!({
+                "sessionId":value["session"]["id"],"expectedRevision":value["session"]["revision"],"action":"remove",
+            })).await;
+            assert_eq!(removed["kind"],"removed");
+            assert_eq!(support::query(&reconnected,"agent","forkReceipt",json!({"reference":reference})).await,
+                json!({"session":null}));
+            assert_eq!(support::query(&reconnected,"receipts","read",json!(reference)).await,*recorded_reply);
+            reconnected.close().await.unwrap();
+            Some(child)
+        } else {
+            None
+        };
+        fixture.native.close().await.unwrap();
+        fixture.client.close().await.unwrap();
+        let mut final_client = Client::connect(&fixture.endpoint, Some(fixture.epoch)).await.unwrap();
+        final_client.quit().await.unwrap();
+        fixture.server.await.unwrap().unwrap();
+        assert_eq!(source_after["session"], original["session"]);
+        assert_eq!(source_after["through"], original["through"]);
+        assert!(
+            fixture.model_requests.try_recv().is_err(),
+            "fork must not request a model"
+        );
+        let (forked, _, _) = result.expect("the public Agent fork mutation must be available");
+        assert_eq!(forked["kind"], "forked");
+        assert_ne!(forked["session"]["id"], original["session"]["id"]);
+        assert_eq!(forked["session"]["title"], "Forked conversation");
+        assert_eq!(forked["session"]["labels"], json!([]));
+        assert_eq!(child.unwrap()["session"], forked["session"]);
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_public_agent_client_finds_published_fork_after_uncertain_host_settlement_and_reopen()
+ {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        use sqlx::Connection;
+        let mut fixture = Fixture::open().await;
+        let original = support::query(&fixture.native,"agent","observe",json!({"sessionId":fixture.session})).await;
+        let mut call = fixture.native.call("agent","fork".into(),json!({
+            "sessionId":fixture.session,"expectedRevision":original["session"]["revision"],
+            "turnId":null,"title":"Published before settlement","labels":[],
+        }),Default::default()).await.unwrap();
+        call.start().await.unwrap();
+        let Reply::Prepared { reference } = call.receive().await.unwrap() else { panic!("fork not prepared"); };
+        let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&fixture.database);
+        let mut connection = sqlx::SqliteConnection::connect_with(&options).await.unwrap();
+        // The real copy transaction may commit; only this original operation's
+        // later Host settlement UPDATE is rejected, matching the existing Host
+        // uncertain_durable_settlement fixture. No receipt/outcome is fabricated.
+        // Only the typed UUID is interpolated; SQLite trigger definitions cannot bind it.
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER reject_fork_settlement BEFORE UPDATE OF outcome_json ON application_operations WHEN OLD.operation='{}' BEGIN SELECT RAISE(ABORT,'fork settlement fixture'); END;",reference.operation)))
+            .execute(&mut connection).await.unwrap();
+        let Reply::Mutation { reply, cleanup } = call.confirm().await.unwrap() else { panic!("fork returned no receipt"); };
+        cleanup.unwrap();
+        assert_eq!(reply.reference,*reference);
+        let maka_plugin_core::operation::Receipt::Unavailable { diagnostic } = reply.receipt else { panic!("failed settlement must not claim a recorded fork result"); };
+        assert!(diagnostic.contains("settlement outcome unknown"),"{diagnostic}");
+        call.close().await.unwrap();
+        assert!(call.cleanup_confirmed());
+        sqlx::query("DROP TRIGGER reject_fork_settlement").execute(&mut connection).await.unwrap();
+        connection.close().await.unwrap();
+        let unresolved = json!({"reference":reference,"receipt":{
+            "kind":"recorded","outcome":{"kind":"unresolved"},"cleanup":{"kind":"unconfirmed"},
+        }});
+        assert_eq!(support::query(&fixture.native,"receipts","read",json!(reference)).await,unresolved);
+        let published = support::query(&fixture.native,"agent","forkReceipt",json!({"reference":reference})).await;
+        let target = &published["session"];
+        assert_eq!(target["title"],"Published before settlement");
+        assert_eq!(target["branch"],json!({"sessionId":fixture.session,"turnId":null}));
+        assert_ne!(target["id"],original["session"]["id"]);
+        let removed = support::mutate(&fixture.native,"agent","changeSession",json!({
+            "sessionId":fixture.session,"expectedRevision":original["session"]["revision"],"action":"remove",
+        })).await;
+        assert_eq!(removed["kind"],"removed");
+        fixture.native.close().await.unwrap();
+        fixture.client.quit().await.unwrap();
+        fixture.server.await.unwrap().unwrap();
+
+        // Reopen the original Root, not another fixture or an adopted snapshot.
+        let namespaces = maka_event_log::root::RootNamespaces {
+            ownership:fixture._root.path().join("owners"),
+            control:fixture._root.path().join("control"),
+        };
+        let owner = maka_event_log::root::RootOwner::open(fixture.database.parent().unwrap(),&namespaces).unwrap();
+        let host = crate::application::open_host(owner,Default::default(),crate::application::Roots::Configured(Some(vec![
+            maka_host_runtime::DirectoryRootSpec {label:"Test".into(),path:fixture.workspace.to_str().unwrap().into()},
+        ]))).await.unwrap();
+        let epoch = host.epoch();
+        assert_ne!(epoch,fixture.epoch);
+        #[cfg(unix)]
+        let endpoint = fixture._root.path().join("reopened.sock");
+        #[cfg(windows)]
+        let endpoint = std::path::PathBuf::from(format!(r"\\.\pipe\maka-fork-reopen-{}",uuid::Uuid::new_v4()));
+        let listener = maka_host_runtime::ipc::LocalListener::bind(&endpoint).unwrap();
+        let stop = tokio_util::sync::CancellationToken::new();
+        let _cleanup = stop.clone().drop_guard();
+        let server = tokio::spawn(async move {host.serve_local(listener,stop).await});
+        let mut client = Client::connect(&endpoint,Some(epoch)).await.unwrap();
+        assert_eq!(support::query(&client,"receipts","read",json!(reference)).await,unresolved);
+        assert_eq!(support::query(&client,"agent","forkReceipt",json!({"reference":reference})).await,published);
+        let current = support::query(&client,"agent","list",json!({"filter":"all","position":{"kind":"start"}})).await;
+        assert_eq!(current["sessions"].as_array().unwrap().iter().map(|s|s["id"].clone()).collect::<Vec<_>>(),vec![target["id"].clone()]);
+        assert_eq!(support::query(&client,"agent","forkReceipt",json!({"reference":reference})).await,published);
+        assert_eq!(support::query(&client,"receipts","read",json!(reference)).await,unresolved);
+        let removed = support::mutate(&client,"agent","changeSession",json!({
+            "sessionId":target["id"],"expectedRevision":target["revision"],"action":"remove",
+        })).await;
+        assert_eq!(removed["kind"],"removed");
+        assert_eq!(support::query(&client,"agent","forkReceipt",json!({"reference":reference})).await,json!({"session":null}));
+        assert_eq!(support::query(&client,"receipts","read",json!(reference)).await,unresolved);
+        assert!(fixture.model_requests.try_recv().is_err(),"fork receipt recovery must not start a model");
+        client.quit().await.unwrap();
+        server.await.unwrap().unwrap();
+    }).await.unwrap();
+}

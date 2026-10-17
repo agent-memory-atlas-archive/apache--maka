@@ -52,6 +52,11 @@ pub(crate) fn store_cause(error: &StoreError) -> &'static str {
         StoreError::StartupCleanupFailed { .. } => "store_startup_cleanup_failed",
         StoreError::UnsupportedDatabase => "store_unsupported_database",
         StoreError::Initialization => "store_initialization",
+        StoreError::HistoryTurnMissing => "store_history_turn_missing",
+        StoreError::HistoryTurnSplit => "store_history_turn_split",
+        StoreError::HistoryUnsettled => "store_history_unsettled",
+        StoreError::HistoryProviderEffectUnresolved => "store_history_provider_effect_unresolved",
+        StoreError::ManagedSession => "store_session_managed",
         _ => "store_error",
     }
 }
