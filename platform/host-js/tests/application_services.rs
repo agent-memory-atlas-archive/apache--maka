@@ -21,6 +21,8 @@
 mod caller;
 #[path = "application_services/execution_basis.rs"]
 mod execution_basis;
+#[path = "application_services/host_logs.rs"]
+mod host_logs;
 #[path = "application_services/management.rs"]
 mod management;
 #[path = "application_services/native_context.rs"]

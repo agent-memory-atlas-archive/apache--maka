@@ -21,6 +21,7 @@ pub mod application;
 mod directories;
 pub mod http;
 pub mod ipc;
+pub mod logs;
 pub mod recovery;
 pub mod sandbox;
 pub mod shell;

@@ -180,7 +180,9 @@ export function headerView<N extends Node>(
                         ui.button(
                           key!,
                           icon!,
-                          key !== 'palette-open' && !state.selected,
+                          key !== 'palette-open' &&
+                            !state.selected &&
+                            !(key === 'diagnostics-open' && state.hostLogsEnabled),
                           false,
                           { background: 0 },
                           undefined,

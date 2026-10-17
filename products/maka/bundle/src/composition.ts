@@ -79,6 +79,7 @@ export const packageNames = [
   'deployment',
   'deployment-settings',
   'host-deployment-manager',
+  'host-logs',
   'deployment-manager',
   'deployment-gateway',
   'image-viewer',
@@ -210,6 +211,7 @@ function settingsComposition(
       | 'workspace-jev'
       | 'skills'
       | 'skill-outcomes'
+      | 'host-logs'
       | 'host-deployment-manager',
     exportName: string,
   ): BindingTarget => ({
@@ -234,6 +236,7 @@ function settingsComposition(
     environment: { location: 'host' },
     instances: {
       'host-deployment-manager': node('host-deployment-manager'),
+      ...(gateway === 'gateway' ? { 'host-logs': node('host-logs') } : {}),
       'host-deployment-gateway': node(
         'deployment-gateway',
         {},
@@ -260,6 +263,7 @@ function settingsComposition(
         gateway,
         {},
         {
+          ...(gateway === 'gateway' ? { hostLogs: [local('host-logs', 'HostLogs')] } : {}),
           settings: [local('settings', 'Settings')],
           authentication: [local('settings-authentication', 'Authentication')],
           setup: [local('settings-setup', 'Setup')],
@@ -930,6 +934,7 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
       {
         locale: configuration.locale,
         terminals: !!configuration.processes,
+        hostLogs: true,
         skills: !!configuration.skills,
         scheduledTasks: !!configuration.agent.scheduledTasks,
         web: !!configuration.web,
@@ -938,6 +943,7 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
       },
       {
         agent: [remote('agent', 'agent')],
+        hostLogs: [remote('host-logs', 'HostLogs')],
         reading: [local('reading-area', 'ReadingArea')],
         file: [local('file', 'FilePicker')],
         receipts: [remote('receipts', 'Receipts')],
@@ -1236,12 +1242,17 @@ function agentComposition(configuration: CompositionConfiguration): ApplicationS
     ...(configuration.presentation === 'tui' ? { diff: node('diff') } : {}),
   });
   ui.launch = local('agent-screen', 'AgentScreen');
+  remoteExports.push({
+    capability: { deployment: 'local', instance: [keys['host-logs']], export: 'HostLogs' },
+    declaration: { contract: contracts.hostLogs, availability: 'required' },
+  });
   remoteExports.unshift({
     capability: { deployment: 'local', instance: [keys.agent], export: 'agent' },
     declaration: { contract: contracts.agent, availability: 'required' },
   });
   Object.assign(connections.hosts.find((host) => host.name === 'local')!.endpoints, {
     agent: expose('gateway', 'agent', Object.keys(contracts.agent.interface.methods), true),
+    hostLogs: expose('gateway', 'hostLogs', ['read', 'watch'], false),
   });
   if (configuration.processes) {
     remoteExports.push({

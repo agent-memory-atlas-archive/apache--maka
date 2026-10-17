@@ -143,6 +143,8 @@ async fn connect_inner(
                             return Err("State Root changed before launch".into());
                         }
                         let canonical = owner.canonical_path().to_owned();
+                        let capture =
+                            maka_host_runtime::logs::Source::from_owner(&owner)?.open_capture()?;
                         drop(owner);
                         child = Some(
                             detached::spawn(
@@ -160,6 +162,7 @@ async fn connect_inner(
                                     "--initial-connection-timeout-ms",
                                     "30000",
                                 ],
+                                Some(capture),
                             )
                             .await?,
                         );

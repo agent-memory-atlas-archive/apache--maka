@@ -226,6 +226,8 @@ pub(super) async fn connect_or_launch(
                             super::service::start(deployment.clone(), lease.clone(), owner).await?;
                             service_started = true;
                         } else {
+                            let capture = maka_host_runtime::logs::Source::from_owner(&owner)?
+                                .open_capture()?;
                             drop(owner);
                             child = Some(
                                 detached::spawn(
@@ -246,6 +248,7 @@ pub(super) async fn connect_or_launch(
                                         "--initial-connection-timeout-ms",
                                         "30000",
                                     ],
+                                    Some(capture),
                                 )
                                 .await?,
                             );
@@ -327,9 +330,10 @@ mod tests {
     async fn failed_candidate_drains_or_reports_unconfirmed_without_killing_its_authority() {
         // No descendants: each child is either an EOF-driven reader or exec'd sleep.
         for (command, graceful) in [("read line; exit 0", true), ("exec sleep 60", false)] {
-            let mut child = detached::spawn(std::path::Path::new("/bin/sh"), &["-c", command])
-                .await
-                .unwrap();
+            let mut child =
+                detached::spawn(std::path::Path::new("/bin/sh"), &["-c", command], None)
+                    .await
+                    .unwrap();
             let result = tokio::time::timeout(
                 Duration::from_secs(3),
                 stop_failed_candidate(&mut child, Duration::from_millis(250)),

@@ -3089,3 +3089,27 @@ export const msg_toggleSidebar: Message = ['Toggle sidebar', '切换侧栏', '�
 export const msg_showSidebar: Message = ['Show sidebar', '显示侧栏', '顯示側欄'];
 export const msg_hideSidebar: Message = ['Hide sidebar', '收起侧栏', '收起側欄'];
 export const msg_connecting: Message = ['Connecting…', '正在连接…', '正在連線…'];
+
+export const msg_diagnosticsConversation: Message = ['Conversation', '对话', '對話'];
+export const msg_hostLogsLabel: Message = ['Host logs', 'Host 日志', 'Host 日誌'];
+export const msg_hostLogsMissing: Message = [
+  'Host log capture file is currently missing.',
+  '当前没有 Host 日志捕获文件。',
+  '目前沒有 Host 日誌擷取檔案。',
+];
+export const msg_hostLogsOmitted: Message = [
+  'Earlier log bytes omitted.',
+  '已省略较早的日志。',
+  '已省略較早的日誌。',
+];
+export const msg_hostLogsReplaced: Message = [
+  'Log file replaced; showing the new file.',
+  '日志文件已替换，正在显示新文件。',
+  '日誌檔案已替換，正在顯示新檔案。',
+];
+export const msg_hostLogsTruncated: Message = [
+  'Log file truncated; showing the current tail.',
+  '日志文件已截断，正在显示当前末尾。',
+  '日誌檔案已截斷，正在顯示目前末尾。',
+];
+export const msg_hostLogsFollow: Message = ['Follow', '跟随', '跟隨'];

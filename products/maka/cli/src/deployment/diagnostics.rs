@@ -19,7 +19,9 @@
 
 //! Failure-only, read-only queries isolated from the Host's execution lifetime.
 
-use super::{Deployment, HostError, logs, service};
+use super::{Deployment, HostError, service};
+use base64::Engine;
+use maka_host_runtime::logs::HostLogPage;
 use maka_process::{Command, pipe};
 use serde::Deserialize;
 use std::{io, time::Duration};
@@ -79,7 +81,7 @@ async fn query(
         &deployment.root_id,
     ]);
     // Only status/logs: terminating this worker cannot cancel accepted Host work.
-    // Its process group/Job also owns launchctl, systemctl or journalctl children.
+    // Its process group/Job also owns launchctl or systemctl children.
     let bytes = read_only_worker(command, deadline).await?;
     match query {
         Query::Status => {
@@ -93,8 +95,11 @@ async fn query(
             Ok(serde_json::to_string(&supervisor)?)
         }
         Query::Logs => match serde_json::from_slice(&bytes)? {
-            logs::Output::NotCaptured => Ok("No service log captured".into()),
-            logs::Output::Tail { text, .. } => Ok(text),
+            HostLogPage::Missing => Ok("No Host log captured".into()),
+            HostLogPage::Data { bytes, .. } => {
+                let raw = base64::engine::general_purpose::STANDARD.decode(bytes)?;
+                Ok(String::from_utf8_lossy(&raw).into_owned())
+            }
         },
     }
 }

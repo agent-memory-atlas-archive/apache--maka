@@ -42,6 +42,7 @@ export function agentScreen<N extends Node>(
   web = false,
   jev = false,
   graphs = false,
+  hostLogs = false,
 ): Component<State, AgentScreenProps, N> {
   const target = presentation.target;
   const configuredLocale = locale;
@@ -106,6 +107,7 @@ export function agentScreen<N extends Node>(
         dialog: null,
         sessionChange: null,
         diagnostics: newDiagnostics(),
+        hostLogsEnabled: hostLogs,
         inspector: null,
         image: null,
         window: null,

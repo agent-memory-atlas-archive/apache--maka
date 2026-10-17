@@ -33,6 +33,8 @@ pub fn catalog() -> Value {
     use composition::PresentationTarget;
     let mut g = SchemaGenerator::default();
     let roots = vec![
+        root::<maka_host_runtime::logs::HostLogRequest>(&mut g),
+        root::<maka_host_runtime::logs::HostLogPage>(&mut g),
         root::<maka_ui_authoring::contract::Command>(&mut g),
         root::<maka_ui_authoring::contract::Claim>(&mut g),
         root::<maka_ui_authoring::contract::State>(&mut g),
@@ -417,6 +419,8 @@ pub fn catalog() -> Value {
         "workspaceWeb": maka_web_api::contract(),
         "workspaceJev": maka_workspace_api::jev::contract(),
     });
+    contracts["hostLogs"] = serde_json::to_value(maka_host_runtime::application::logs::contract())
+        .expect("Host logs contract");
     contracts["workspaceComputer"] =
         serde_json::to_value(maka_workspace_api::computer::contract()).expect("Computer contract");
     contracts["settingsSetup"] =
@@ -466,6 +470,8 @@ pub fn catalog() -> Value {
         "settings": maka_settings_native::native(),
         "settingsAuthentication": maka_settings_native::native_authentication(),
     });
+    native["hostLogs"] = serde_json::to_value(maka_host_runtime::application::logs::native())
+        .expect("Host logs native");
     native["settingsSetup"] =
         serde_json::to_value(maka_settings_native::native_setup()).expect("setup native");
     json!({

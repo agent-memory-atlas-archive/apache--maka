@@ -31,6 +31,7 @@ import type {
   Emission,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { appearanceEvent, effectiveLocale } from '../../shared/appearance-editor.js';
+import { hostLogUpdate } from './host-logs.js';
 import { diagnosticChange } from './diagnostics.js';
 import { observeBookmark, retryBookmark } from '../../shared/bookmark.js';
 import type { AgentScreenProps, Theme } from '../../shared/contracts.js';
@@ -202,7 +203,15 @@ export function handleEvent<N extends Node>(
     return frame(presentation, configuredLocale, state, values, actions);
   if (input.kind === 'action') {
     const outcome = input.event as ActionOutcome;
-    if (state.diagnostics.watch?.key === input.key) {
+    if (state.diagnostics.host.watch?.key === input.key) {
+      if (outcome.status === 'updated')
+        hostLogUpdate(
+          state,
+          outcome.value as import('../../../packages/plugin-sdk/src/index.js').HostLogPage,
+        );
+      else if (outcome.status === 'failed' || outcome.status === 'not_accepted')
+        hostLogUpdate(state, null);
+    } else if (state.diagnostics.watch?.key === input.key) {
       if (outcome.status === 'updated')
         diagnosticChange(
           state,

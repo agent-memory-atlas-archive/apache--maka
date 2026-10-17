@@ -30,6 +30,7 @@ export function activate(configuration: {
   web?: boolean;
   jev?: boolean;
   graphs?: boolean;
+  hostLogs?: boolean;
 }) {
   component = agentScreen(
     presentations.tui,
@@ -41,6 +42,7 @@ export function activate(configuration: {
     configuration.web === true,
     configuration.jev === true,
     configuration.graphs === true,
+    configuration.hostLogs === true,
   );
   return {
     AgentScreen: { kind: 'component', contract: agentScreenContract, component: ['component'] },

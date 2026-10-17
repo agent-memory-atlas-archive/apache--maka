@@ -33,6 +33,7 @@ export default {
         ...native(sdk.nativeImplementations.gateway),
         imports: {
           agent: one(sdk.contracts.agent),
+          hostLogs: { contract: sdk.contracts.hostLogs, cardinality: { kind: 'optional' } },
           coordinator: { contract: sdk.contracts.agent, cardinality: { kind: 'optional' } },
           workhub: {
             contract: sdk.contracts.workhubCoordinator,

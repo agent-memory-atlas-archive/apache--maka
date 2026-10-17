@@ -27,4 +27,6 @@ A committed source is desired configuration. It becomes effective only after its
 
 Persistence comes from the owned EventLog. Stable plugin data belongs to the Root, deployment and instance; an activation epoch identifies execution, not a new data owner.
 
+The built-in `maka.host.logs` provider derives its fixed log source from that same Root owner. Its `HostLogs` export (`maka.host.Logs`) offers bounded raw-byte `read` queries and cancellable `watch` subscriptions. Compositions must bind and explicitly grant these methods; registration grants no access, and requests cannot select another Root or file. See the generated SDK contract for page and cursor fields.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

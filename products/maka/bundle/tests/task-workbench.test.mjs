@@ -23,6 +23,7 @@ import Ajv from 'ajv/dist/2020.js';
 const appearance = await import('../dist/packages/appearance/tui.js');
 const theme = appearance.activate({ scheme: 'dark' }).Appearance.value;
 const module = await import('../dist/packages/agent-screen/tui.js');
+const desktopScreen = await import('../dist/packages/agent-screen/desktop.js');
 module.activate({ locale: 'en' });
 const values = { appearance: [theme] };
 const dataSource = {
@@ -73,9 +74,10 @@ function nodes(node) {
       ]
     : [];
 }
-function client(locale = 'en') {
-  module.activate({ locale });
-  let out = module.component.mount({}, values);
+function client(locale = 'en', options = {}) {
+  const screen = options.target === 'desktop' ? desktopScreen : module;
+  screen.activate({ locale, ...options.configuration });
+  let out = screen.component.mount({}, values);
   const c = {
     get out() {
       return out;
@@ -84,7 +86,7 @@ function client(locale = 'en') {
       return out.frame.state;
     },
     event(input) {
-      out = module.component.event(c.state, input, {}, values);
+      out = screen.component.event(c.state, input, {}, values);
       return c;
     },
     raw(key) {
@@ -116,10 +118,11 @@ function client(locale = 'en') {
       return c.state.visits.find((visit) => visit.id === c.state.selected?.id).key;
     },
   };
-  c.child('recovery-checkpoint', 'changed', {
-    sequence: 0,
-    state: { kind: 'ready', revision: null, value: null },
-  });
+  if (options.target !== 'desktop')
+    c.child('recovery-checkpoint', 'changed', {
+      sequence: 0,
+      state: { kind: 'ready', revision: null, value: null },
+    });
   c.reply(c.action('page'), []);
   c.event({
     kind: 'action',
@@ -127,7 +130,12 @@ function client(locale = 'en') {
     event: {
       status: 'updated',
       value: {
-        sessions: [session('Task A'), session('Task B'), session('Task C'), session('Task D')],
+        sessions: options.sessions ?? [
+          session('Task A'),
+          session('Task B'),
+          session('Task C'),
+          session('Task D'),
+        ],
         before: null,
         after: null,
       },
@@ -1787,4 +1795,235 @@ test('Diagnostics reads common failures and refreshes late background results wi
     c.find(c.reader()).props.messages.map((message) => message.text),
     ['Another conversation'],
   );
+});
+
+test('Host logs open Diagnostics without a selected conversation through their own capability', () => {
+  const c = client('en', { configuration: { hostLogs: true }, sessions: [] });
+  assert.equal(c.state.selected, null);
+  c.raw('palette-open');
+  const command = c
+    .find('command-palette')
+    .props.commands.find((entry) => entry.id === 'diagnostics-open');
+  assert.ok(
+    command && !command.disabled,
+    'Diagnostics must remain available for Host logs without a selected conversation',
+  );
+  c.child('command-palette', 'invoked', { id: 'diagnostics-open' });
+  const read = c.action('read');
+  assert.ok(read, 'Opening Host diagnostics must query the fixed Host log source');
+  assert.equal(read.binding, 'hostLogs');
+  assert.deepEqual(read.input, { position: { kind: 'tail' } });
+  assert.equal(c.action('diagnostics'), undefined);
+  assert.equal(c.action('observe'), undefined);
+  assert.equal(c.action('history'), undefined);
+  c.reply(read, {
+    kind: 'data',
+    cursor: 'opaque-host-cursor:+/==',
+    bytes: 'SG9zdCBzdGFydGVkCg==',
+    reset: null,
+    truncated: false,
+    hasMore: false,
+  });
+  assert.equal(c.find('host-log-text').props.source, 'Host started\n');
+});
+
+function openDiagnostics(c) {
+  c.raw('palette-open');
+  c.child('command-palette', 'invoked', { id: 'diagnostics-open' });
+  return c;
+}
+function hostPage(cursor, bytes, extra = {}) {
+  return { kind: 'data', cursor, bytes, reset: null, truncated: false, hasMore: false, ...extra };
+}
+function hostUpdate(c, watch, value) {
+  c.event({ kind: 'action', key: watch.key, event: { status: 'updated', value } });
+}
+test('Host logs render literal split UTF-8 in both presentations and stop their independent follow', () => {
+  for (const target of ['tui', 'desktop']) {
+    const c = openDiagnostics(
+      client('en', {
+        target,
+        configuration: { hostLogs: true },
+        sessions: [],
+      }),
+    );
+    // The first byte of 中 is deliberately separated from the remaining bytes.
+    c.reply(c.action('read'), hostPage('opaque:+/=first', '5A=='));
+    assert.equal(c.find('host-log-text').props.source, '');
+    c.raw('host-log-follow');
+    const watch = c.out.subscriptions.find((entry) => entry.binding === 'hostLogs');
+    assert.ok(watch);
+    assert.equal(watch.method, 'watch');
+    assert.deepEqual(watch.input, { position: { kind: 'after', cursor: 'opaque:+/=first' } });
+    hostUpdate(c, watch, hostPage('opaque:+/=second', 'uK0='));
+    assert.equal(c.find('host-log-text').props.source, '中');
+    const raw = '\x1b[31m<command>🙂\n';
+    hostUpdate(c, watch, hostPage('opaque:+/=third', Buffer.from(raw).toString('base64')));
+    assert.equal(c.find('host-log-text').props.source, '中' + raw);
+    assert.deepEqual(
+      c.out.subscriptions.find((entry) => entry.binding === 'hostLogs'),
+      watch,
+    );
+    assert.equal(
+      c.out.actions.some((entry) => entry.binding === 'terminals'),
+      false,
+    );
+    c.raw('host-log-stop');
+    assert.equal(
+      c.out.subscriptions.some((entry) => entry.binding === 'hostLogs'),
+      false,
+    );
+    hostUpdate(c, watch, hostPage('late', 'bGF0ZQ=='));
+    assert.equal(c.find('host-log-text').props.source, '中' + raw);
+    c.raw('host-log-follow');
+    assert.deepEqual(c.out.subscriptions.find((entry) => entry.binding === 'hostLogs').input, {
+      position: { kind: 'after', cursor: 'opaque:+/=third' },
+    });
+    c.raw('diagnostics-close');
+    assert.equal(
+      c.out.subscriptions.some((entry) => entry.binding === 'hostLogs'),
+      false,
+    );
+  }
+});
+test('Host logs retain a bounded tail, clear replaced bytes, and distinguish missing from empty capture', () => {
+  const c = openDiagnostics(client('zh-CN', { configuration: { hostLogs: true }, sessions: [] }));
+  c.reply(c.action('read'), { kind: 'missing' });
+  assert.equal(c.find('host-log-missing').text, '当前没有 Host 日志捕获文件。');
+  c.raw('host-log-follow');
+  const watch = c.out.subscriptions.find((entry) => entry.binding === 'hostLogs');
+  hostUpdate(c, watch, hostPage('empty', ''));
+  assert.equal(c.find('host-log-missing'), undefined);
+  const block = 'a'.repeat(32 * 1024);
+  for (const cursor of ['one', 'two', 'three'])
+    hostUpdate(c, watch, hostPage(cursor, Buffer.from(block).toString('base64')));
+  assert.equal(c.find('host-log-text').props.source, block + block);
+  assert.equal(c.find('host-log-omitted').text, '已省略较早的日志。');
+  hostUpdate(c, watch, hostPage('new-file', 'bmV3Cg==', { reset: 'replaced' }));
+  assert.equal(c.find('host-log-text').props.source, 'new\n');
+  assert.equal(c.find('host-log-omitted'), undefined);
+  assert.equal(c.find('host-log-reset').text, '日志文件已替换，正在显示新文件。');
+  hostUpdate(c, watch, hostPage('shrunk', 'dGFpbA==', { reset: 'truncated', truncated: true }));
+  assert.equal(c.find('host-log-text').props.source, 'tail');
+  assert.equal(c.find('host-log-omitted').text, '已省略较早的日志。');
+  assert.equal(c.find('host-log-reset').text, '日志文件已截断，正在显示当前末尾。');
+});
+test('Host log source survives session changes and stale closed reads cannot replace its new page', () => {
+  const c = openDiagnostics(
+    client('en', { configuration: { hostLogs: true } })
+      .observe(10)
+      .history(page(10, [])),
+  );
+  c.raw('diagnostics-source-host');
+  c.reply(c.action('read'), hostPage('kept-cursor', 'a2VwdA=='));
+  c.raw('host-log-follow');
+  const watch = c.out.subscriptions.find((entry) => entry.binding === 'hostLogs');
+  const transcript = c.out.subscriptions.find(
+    (entry) => entry.binding === 'agent' && entry.method === 'watch',
+  );
+  c.select('Task B');
+  assert.equal(c.find('host-log-text').props.source, 'kept');
+  assert.deepEqual(
+    c.out.subscriptions.find((entry) => entry.binding === 'hostLogs'),
+    watch,
+  );
+  c.raw('diagnostics-source-conversation');
+  assert.equal(
+    c.out.subscriptions.some((entry) => entry.binding === 'hostLogs'),
+    false,
+  );
+  assert.deepEqual(c.action('diagnostics').input, {
+    sessionId: 'Task B',
+    position: { kind: 'latest' },
+  });
+  assert.ok(transcript, 'Host follow coexists with the transcript subscription');
+  c.raw('diagnostics-source-host');
+  const oldRead = c.action('read');
+  c.raw('diagnostics-close');
+  openDiagnostics(c);
+  const newRead = c.action('read');
+  assert.notEqual(oldRead.key, newRead.key);
+  c.reply(newRead, hostPage('fresh', 'ZnJlc2g='));
+  c.reply(oldRead, hostPage('stale', 'c3RhbGU='));
+  assert.equal(c.find('host-log-text').props.source, 'fresh');
+});
+test('Omitting the Host logs feature creates no optional capability demands', () => {
+  const c = client('en', { sessions: [] });
+  c.raw('palette-open');
+  assert.equal(
+    c.find('command-palette').props.commands.find((entry) => entry.id === 'diagnostics-open')
+      .disabled,
+    true,
+  );
+  assert.equal(
+    c.out.actions.some((entry) => entry.binding === 'hostLogs'),
+    false,
+  );
+  assert.equal(
+    c.out.subscriptions.some((entry) => entry.binding === 'hostLogs'),
+    false,
+  );
+  assert.equal(c.find('host-log-text'), undefined);
+  const selected = openDiagnostics(client().observe(10).history(page(10, [])));
+  assert.ok(selected.action('diagnostics'));
+  assert.equal(selected.find('diagnostics-source-host'), undefined);
+  assert.equal(selected.find('host-log-text'), undefined);
+});
+
+test('Host log follow preserves its visible suffix through missing and same-file return while tail refresh starts over', () => {
+  const c = openDiagnostics(client('en', { configuration: { hostLogs: true }, sessions: [] }));
+  c.reply(
+    c.action('read'),
+    hostPage('same-file-cursor', 'a2VwdA==', { truncated: true, reset: 'replaced' }),
+  );
+  c.raw('host-log-follow');
+  let watch = c.out.subscriptions.find((entry) => entry.binding === 'hostLogs');
+  hostUpdate(c, watch, { kind: 'missing' });
+  assert.equal(c.find('host-log-text').props.source, 'kept');
+  assert.equal(c.find('host-log-missing').text, 'Host log capture file is currently missing.');
+  assert.equal(c.find('host-log-omitted').text, 'Earlier log bytes omitted.');
+  assert.equal(c.find('host-log-reset').text, 'Log file replaced; showing the new file.');
+  c.raw('host-log-stop');
+  c.raw('host-log-follow');
+  watch = c.out.subscriptions.find((entry) => entry.binding === 'hostLogs');
+  assert.deepEqual(watch.input, { position: { kind: 'after', cursor: 'same-file-cursor' } });
+  hostUpdate(c, watch, hostPage('same-file-cursor', ''));
+  assert.equal(c.find('host-log-missing'), undefined);
+  assert.equal(c.find('host-log-text').props.source, 'kept');
+  hostUpdate(c, watch, { kind: 'missing' });
+  hostUpdate(c, watch, hostPage('same-file-next-cursor', 'LXN1ZmZpeA=='));
+  assert.equal(c.find('host-log-text').props.source, 'kept-suffix');
+  assert.equal(c.find('host-log-missing'), undefined);
+  assert.equal(c.find('host-log-omitted').text, 'Earlier log bytes omitted.');
+  c.raw('host-log-refresh');
+  c.reply(c.action('read'), { kind: 'missing' });
+  assert.equal(c.find('host-log-text').props.source, '');
+  assert.equal(c.find('host-log-omitted'), undefined);
+  assert.equal(c.find('host-log-reset'), undefined);
+  c.raw('host-log-follow');
+  assert.deepEqual(c.out.subscriptions.find((entry) => entry.binding === 'hostLogs').input, {
+    position: { kind: 'tail' },
+  });
+});
+
+test('Host log invalid UTF-8 replacements stay within the rendered text budget and retain the newest suffix', () => {
+  const c = openDiagnostics(client('en', { configuration: { hostLogs: true }, sessions: [] }));
+  c.reply(
+    c.action('read'),
+    hostPage('binary-tail', Buffer.alloc(32 * 1024, 0xff).toString('base64')),
+  );
+  let displayed = c.find('host-log-text').props.source;
+  assert.ok(
+    Buffer.byteLength(displayed) <= 65536,
+    'Decoded log text must fit the SourceText UTF-8 budget',
+  );
+  assert.ok(displayed.includes('\ufffd'));
+  assert.equal(c.find('host-log-omitted').text, 'Earlier log bytes omitted.');
+  c.raw('host-log-follow');
+  const watch = c.out.subscriptions.find((entry) => entry.binding === 'hostLogs');
+  hostUpdate(c, watch, hostPage('text-suffix', 'dGFpbAo='));
+  displayed = c.find('host-log-text').props.source;
+  assert.ok(Buffer.byteLength(displayed) <= 65536);
+  assert.ok(displayed.endsWith('tail\n'));
+  assert.ok(displayed.includes('\ufffd'));
 });

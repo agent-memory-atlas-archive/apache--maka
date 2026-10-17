@@ -23,6 +23,7 @@ pub mod backend;
 mod caller;
 mod context;
 pub mod host;
+pub mod logs;
 pub mod management;
 mod native_context;
 pub mod operations;
@@ -730,6 +731,7 @@ impl Application {
         }
         operations::provide(&mut native)?;
         management::provide(&mut native)?;
+        logs::provide(&mut native)?;
         let (source, packages, plan, snapshot) = loaded.into_parts();
         Self::start_owned(
             source.input,

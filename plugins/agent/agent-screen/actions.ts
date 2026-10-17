@@ -52,6 +52,7 @@ import { toolCards } from '../../shared/tool-cards.js';
 import { readingKey } from './state.js';
 import { newGoalState, watchGoal } from './goal.js';
 import { newPlanState, watchPlan } from './plan.js';
+import { readHostLogs } from './host-logs.js';
 import { newDiagnostics, readDiagnostics } from './diagnostics.js';
 import { newGraphState, watchGraph } from './graph.js';
 import { messages } from './messages.js';
@@ -379,6 +380,7 @@ export function follow(state: State, actions: Action[]) {
 }
 
 export function select(state: State, actions: Action[], session: AgentSession | null) {
+  const hostOpen = state.diagnostics.source === 'host' && state.inspector === 'diagnostics';
   const previous = state.visits.find((visit) => visit.id === state.selected?.id);
   if (previous)
     Object.assign(previous, {
@@ -392,7 +394,7 @@ export function select(state: State, actions: Action[], session: AgentSession | 
       landing: state.landing,
       searchOpen: state.searchOpen,
       browse: state.browse,
-      inspector: state.inspector,
+      inspector: hostOpen ? null : state.inspector,
     });
   let visit = session
     ? state.visits.find(
@@ -426,7 +428,7 @@ export function select(state: State, actions: Action[], session: AgentSession | 
     ].slice(-3);
   state.searchOpen = visit?.searchOpen ?? false;
   state.browse = visit?.browse ?? null;
-  state.inspector = visit?.inspector ?? null;
+  state.inspector = hostOpen ? 'diagnostics' : (visit?.inspector ?? null);
   state.recallAnchor = null;
   state.selected = session;
   state.backendReady = false;
@@ -435,7 +437,11 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.executor = null;
   state.modelRefreshing = false;
   state.epoch++;
-  state.diagnostics = newDiagnostics(session?.id, state.epoch);
+  state.diagnostics = {
+    ...newDiagnostics(session?.id, state.epoch),
+    source: state.diagnostics.source,
+    host: state.diagnostics.host,
+  };
   state.graph = newGraphState(state.graph.enabled);
   if (session) watchGraph(state);
   state.plan = newPlanState();
@@ -730,7 +736,7 @@ export function rootCommands(
       id: 'diagnostics-open',
       label: text.diagnosticsTitleLabel,
       hint: '',
-      disabled: !route || !state.selected,
+      disabled: !route || (!state.selected && !state.hostLogsEnabled),
     },
     {
       kind: 'compact-open',
@@ -1104,7 +1110,9 @@ export function rootCommand(
   if (kind === 'diagnostics-open') {
     if (target === 'tui') state.inspector = 'diagnostics';
     else state.dialog = 'diagnostics';
-    readDiagnostics(state, actions);
+    if (!state.selected && state.hostLogsEnabled) state.diagnostics.source = 'host';
+    if (state.diagnostics.source === 'host' && state.hostLogsEnabled) readHostLogs(state, actions);
+    else readDiagnostics(state, actions);
   } else if (kind === 'compact-open') openCompact(state, actions);
   else if (kind === 'outputs-open') {
     state.inspector = 'outputs';

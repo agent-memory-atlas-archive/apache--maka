@@ -402,6 +402,11 @@ export const nativeImplementations = /* @__PURE__ */ ((): {
     configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
     exports: { Authentication: typeof contracts.settingsAuthentication };
   };
+  hostLogs: {
+    implementation: string;
+    configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
+    exports: { HostLogs: typeof contracts.hostLogs };
+  };
   settingsSetup: {
     implementation: string;
     configuration: { type: 'object'; properties: {}; required: []; additionalProperties: false };
@@ -786,6 +791,11 @@ export const nativeImplementations = /* @__PURE__ */ ((): {
     implementation: 'maka.settings.authentication',
     configuration: { type: 'object', properties: {}, required: [], additionalProperties: false },
     exports: { Authentication: contracts.settingsAuthentication },
+  },
+  hostLogs: {
+    implementation: 'maka.host.logs',
+    configuration: { type: 'object', properties: {}, required: [], additionalProperties: false },
+    exports: { HostLogs: contracts.hostLogs },
   },
   settingsSetup: {
     implementation: 'maka.settings.setup',

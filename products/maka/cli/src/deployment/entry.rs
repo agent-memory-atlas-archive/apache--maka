@@ -29,10 +29,14 @@ pub(crate) struct ServiceRun {
 
 impl ServiceRun {
     pub async fn run(self) -> Result<(), HostError> {
+        let source = maka_host_runtime::logs::Source::for_root(
+            &self.root_id.0,
+            &maka_event_log::root::RootNamespaces::for_current_account()?,
+        )?;
+        crate::logging::capture(source.open_capture()?)?;
         let directory = directory(&self.root_id.0)?;
         #[cfg(windows)]
         {
-            crate::windows::service_stderr(&directory)?;
             crate::windows::own_process_tree()?;
         }
         let store::Installation::Installed(deployment) = store::read(&directory).await? else {

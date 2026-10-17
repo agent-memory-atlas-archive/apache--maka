@@ -27,4 +27,6 @@
 
 持久化由已持有的 EventLog 提供。插件数据归属于 Root、部署和实例；激活 epoch 标识一次执行，不会创建新的数据所有者。
 
+内置 `maka.host.logs` provider 从同一个 Root 所有者派生日志源。其 `HostLogs` 导出（`maka.host.Logs`）提供有界原始字节 `read` 查询和可取消的 `watch` 订阅。组合必须绑定并显式授权这些方法；注册本身不授予访问权，请求也不能选择其他 Root 或文件。页和游标字段见生成的 SDK 契约。
+
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

@@ -24,6 +24,7 @@ use serde_json::json;
 use unicode_width::UnicodeWidthStr;
 
 mod chat;
+mod host_logs;
 
 #[track_caller]
 fn click(tui: &mut Pty, label: &str) {

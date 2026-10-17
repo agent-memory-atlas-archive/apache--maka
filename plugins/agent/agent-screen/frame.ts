@@ -50,6 +50,7 @@ import {
   type Presentation,
 } from '../../shared/view.js';
 
+import { hostLogsOpen, stopHostLogs } from './host-logs.js';
 import { diagnosticsView } from './diagnostics.js';
 import { checklistView } from './checklist-view.js';
 import { goalView } from './goal.js';
@@ -83,6 +84,11 @@ export function frame<N extends Node>(
   actions: Action[] = [],
   events: Emission[] = [],
 ) {
+  if (
+    !hostLogsOpen(state) &&
+    (state.diagnostics.host.watch || state.diagnostics.host.loading !== null)
+  )
+    stopHostLogs(state);
   const target = presentation.target;
   const currentPage = state.pages.at(-1);
   if (currentPage && !state.openedPages.includes(currentPage)) state.openedPages.push(currentPage);
@@ -248,7 +254,9 @@ export function frame<N extends Node>(
           ]),
   ];
   const inspectorOpen =
-    conversationRoute(state) && !!state.selected && (state.inspector !== null || inlineInteraction);
+    conversationRoute(state) &&
+    ((!!state.selected && (state.inspector !== null || inlineInteraction)) ||
+      (hostLogsOpen(state) && state.inspector === 'diagnostics'));
   const inspectorSlots = [
     diagnosticsView(presentation, state, theme, locale),
     graphView(presentation, state, theme, locale),
@@ -706,6 +714,18 @@ export function frame<N extends Node>(
   out.actions = actions;
   out.events = events;
   out.subscriptions = [
+    ...(hostLogsOpen(state) && state.diagnostics.host.watch
+      ? [
+          {
+            key: state.diagnostics.host.watch.key,
+            input: state.diagnostics.host.watch.input,
+            binding: 'hostLogs',
+            member: 0,
+            method: 'watch',
+            resources: {},
+          },
+        ]
+      : []),
     ...(state.diagnostics.watch
       ? [
           {

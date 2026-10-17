@@ -19,6 +19,51 @@
 
 use super::*;
 
+#[test]
+fn host_logs_reads_captured_stderr_without_an_installed_deployment() {
+    use base64::Engine;
+
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = CandidateFixture::new(directory.path().join("root"));
+    let path = fixture
+        .registration
+        .parent()
+        .unwrap()
+        .join("host.stderr.log");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut capture = options.open(path).unwrap();
+    capture.write_all(b"pre-Ready host failure\n\xff").unwrap();
+    drop(capture);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_maka"))
+        .args(["host", "logs", "--root-id", &fixture.root_id])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "uninstalled Root's captured stderr must remain readable: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let page: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(page["kind"], "data");
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(page["bytes"].as_str().unwrap())
+            .unwrap(),
+        b"pre-Ready host failure\n\xff"
+    );
+    assert_eq!(page["reset"], Value::Null);
+    assert_eq!(page["truncated"], false);
+    assert_eq!(page["hasMore"], false);
+    assert!(!page["cursor"].as_str().unwrap().is_empty());
+}
+
 fn start(directory: &Path) -> CandidateFixture {
     let mut fixture = CandidateFixture::new(directory.join("root"));
     fixture.child = Some(
@@ -105,4 +150,280 @@ fn candidate_owner_eof_without_an_accepted_client_drains_startup() {
         )
         .unwrap(),
     );
+}
+
+#[test]
+fn detached_candidate_captures_pre_ready_and_released_owner_failures() {
+    use base64::Engine;
+    use futures_util::FutureExt;
+    use maka_host_runtime::logs::Source;
+    use tokio::io::AsyncWriteExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = CandidateFixture::new(directory.path().join("root"));
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        for released in [false, true] {
+            let owner = RootOwner::open(
+                &fixture.root,
+                &RootNamespaces::for_current_account().unwrap(),
+            )
+            .unwrap();
+            let source = Source::from_owner(&owner).unwrap();
+            let capture = source.open_capture().unwrap();
+            drop(owner);
+            let expected_id = if released {
+                fixture.root_id.as_str()
+            } else {
+                "wrong-root"
+            };
+            let mut child = maka_process::detached::spawn(
+                Path::new(env!("CARGO_BIN_EXE_maka")),
+                &[
+                    "host",
+                    "candidate",
+                    "--root",
+                    fixture.root.to_str().unwrap(),
+                    "--expected-root-id",
+                    expected_id,
+                    "--startup-attempt-id",
+                    &uuid::Uuid::new_v4().to_string(),
+                    "--owner-stdin",
+                    "--initial-connection-timeout-ms",
+                    "30000",
+                ],
+                Some(capture),
+            )
+            .await
+            .unwrap();
+            let mut original_registration = None;
+            let outcome = std::panic::AssertUnwindSafe(async {
+                tokio::time::timeout(Duration::from_secs(15), async {
+                    if released {
+                        loop {
+                            if fixture.registration.exists() {
+                                break;
+                            }
+                            assert!(
+                                child.try_wait().unwrap().is_none(),
+                                "candidate exited before Ready"
+                            );
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                        }
+                        let found = discovery::read(&fixture.root).unwrap();
+                        original_registration = Some(fs::read(&fixture.registration).unwrap());
+                        let mut client = connect(&fixture.root).await;
+                        let mut stdin = child.stdin.take().unwrap();
+                        stdin
+                            .write_all(b"{\"kind\":\"runtime-host-launch-owner-release\"}\n")
+                            .await
+                            .unwrap();
+                        drop(stdin);
+                        assert!(
+                            !Client::status(&found.endpoint, Some(client.epoch()))
+                                .await
+                                .unwrap()
+                                .closing
+                        );
+                        // A real shutdown failure after launcher release must still reach stderr.
+                        fs::write(&fixture.registration, b"not a registration").unwrap();
+                        client.close().await.unwrap();
+                        assert!(
+                            Client::retire_with_options(
+                                &found.endpoint,
+                                found.host_epoch,
+                                false,
+                                false
+                            )
+                            .await
+                            .unwrap()
+                        );
+                    }
+                    let status = child.wait().await.unwrap();
+                    assert!(
+                        !status.success(),
+                        "injected startup/shutdown failure was not reported"
+                    );
+                })
+                .await
+                .expect("captured candidate did not settle");
+                let output = Command::new(env!("CARGO_BIN_EXE_maka"))
+                    .args(["host", "logs", "--root-id", &fixture.root_id])
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let page: Value = serde_json::from_slice(&output.stdout).unwrap();
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(page["bytes"].as_str().unwrap())
+                    .unwrap();
+                let log = String::from_utf8_lossy(&bytes);
+                assert!(
+                    log.contains(if released {
+                        "could not remove Host registration"
+                    } else {
+                        "candidate State Root identity mismatch"
+                    }),
+                    "{log}"
+                );
+            })
+            .catch_unwind()
+            .await;
+            // Reap the exact spawned child even when an assertion or readiness wait fails.
+            child.start_kill().unwrap();
+            tokio::time::timeout(Duration::from_secs(5), child.wait())
+                .await
+                .unwrap()
+                .unwrap();
+            if let Some(bytes) = original_registration {
+                fs::write(&fixture.registration, bytes).unwrap();
+            }
+            if let Err(panic) = outcome {
+                std::panic::resume_unwind(panic);
+            }
+        }
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn host_logs_follow_streams_uninstalled_root_and_exits_with_a_full_stdout_pipe() {
+    use base64::Engine;
+    use std::{
+        io::Read,
+        os::fd::{AsRawFd, FromRawFd},
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut fixture = CandidateFixture::new(directory.path().join("root"));
+    let mut descriptors = [-1; 2];
+    // This test owns both ends; retaining the writer permits observing actual backpressure.
+    assert_eq!(unsafe { libc::pipe(descriptors.as_mut_ptr()) }, 0);
+    for descriptor in descriptors {
+        assert_eq!(
+            unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) },
+            0
+        );
+    }
+    let mut reader = unsafe { fs::File::from_raw_fd(descriptors[0]) };
+    let writer = unsafe { fs::File::from_raw_fd(descriptors[1]) };
+    let flags = unsafe { libc::fcntl(reader.as_raw_fd(), libc::F_GETFL) };
+    assert!(flags >= 0);
+    assert_eq!(
+        unsafe { libc::fcntl(reader.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) },
+        0
+    );
+    #[cfg(target_os = "linux")]
+    assert!(unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_SETPIPE_SZ, 4096) } >= 4096);
+    fixture.child = Some(
+        Command::new(env!("CARGO_BIN_EXE_maka"))
+            .args([
+                "--timeout-ms",
+                "1",
+                "host",
+                "logs",
+                "--root-id",
+                &fixture.root_id,
+                "--follow",
+            ])
+            .stdout(Stdio::from(writer.try_clone().unwrap()))
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+
+    fn page(reader: &mut fs::File, fixture: &mut CandidateFixture) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut bytes = Vec::new();
+        loop {
+            let mut byte = [0];
+            match reader.read(&mut byte) {
+                Ok(1) if byte[0] == b'\n' => return serde_json::from_slice(&bytes).unwrap(),
+                Ok(1) => bytes.push(byte[0]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        fixture
+                            .child
+                            .as_mut()
+                            .unwrap()
+                            .try_wait()
+                            .unwrap()
+                            .is_none(),
+                        "follow exited before its next page"
+                    );
+                    assert!(Instant::now() < deadline, "follow page timed out");
+                    let mut poll = libc::pollfd {
+                        fd: reader.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    assert!(unsafe { libc::poll(&mut poll, 1, 100) } >= 0);
+                }
+                other => panic!("unexpected follow read: {other:?}"),
+            }
+        }
+    }
+
+    assert_eq!(
+        page(&mut reader, &mut fixture),
+        serde_json::json!({"kind":"missing"})
+    );
+    let owner = RootOwner::open(
+        &fixture.root,
+        &RootNamespaces::for_current_account().unwrap(),
+    )
+    .unwrap();
+    let source = maka_host_runtime::logs::Source::from_owner(&owner).unwrap();
+    let mut capture = source.open_capture().unwrap();
+    drop(owner);
+    let initial = page(&mut reader, &mut fixture);
+    assert_eq!(initial["kind"], "data");
+    assert_eq!(initial["bytes"], "");
+    capture.write_all(b"after creation\n\xff").unwrap();
+    let appended = page(&mut reader, &mut fixture);
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(appended["bytes"].as_str().unwrap())
+            .unwrap(),
+        b"after creation\n\xff"
+    );
+    assert_eq!(appended["reset"], Value::Null);
+
+    // More than the pipe, one blocking write, and the bounded async bridge can hold.
+    capture.write_all(&vec![b'x'; 1024 * 1024]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut poll = libc::pollfd {
+            fd: writer.as_raw_fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        assert!(unsafe { libc::poll(&mut poll, 1, 0) } >= 0);
+        if poll.revents & libc::POLLOUT == 0 {
+            break;
+        }
+        assert!(
+            fixture
+                .child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            Instant::now() < deadline,
+            "follow never filled its stdout pipe"
+        );
+        std::thread::park_timeout(Duration::from_millis(2));
+    }
+    // The exact owned child must service cancellation without waiting for this reader.
+    assert_eq!(
+        unsafe { libc::kill(fixture.child.as_ref().unwrap().id() as i32, libc::SIGTERM) },
+        0
+    );
+    assert!(fixture.wait_for_exit().success());
 }

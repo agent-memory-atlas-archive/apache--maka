@@ -19,6 +19,13 @@
 
 import { createCopy } from '../../shared/locale.js';
 import {
+  msg_diagnosticsConversation,
+  msg_hostLogsLabel,
+  msg_hostLogsMissing,
+  msg_hostLogsOmitted,
+  msg_hostLogsReplaced,
+  msg_hostLogsTruncated,
+  msg_hostLogsFollow,
   msg_recoveryRefreshFailed,
   msg_diagnosticsSessionBusy,
   msg_diagnosticsContinuationChanged,
@@ -375,6 +382,13 @@ import type {
 
 // This feature owns this explicit message catalog; shared messages remain tree-shakeable.
 const messages = {
+  diagnosticsConversation: msg_diagnosticsConversation,
+  hostLogsLabel: msg_hostLogsLabel,
+  hostLogsMissing: msg_hostLogsMissing,
+  hostLogsOmitted: msg_hostLogsOmitted,
+  hostLogsReplaced: msg_hostLogsReplaced,
+  hostLogsTruncated: msg_hostLogsTruncated,
+  hostLogsFollow: msg_hostLogsFollow,
   recoveryRefreshFailed: msg_recoveryRefreshFailed,
   diagnosticsSessionBusy: msg_diagnosticsSessionBusy,
   diagnosticsContinuationChanged: msg_diagnosticsContinuationChanged,

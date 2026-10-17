@@ -18,6 +18,7 @@
  */
 
 import { compactQuery, compactSettled } from './compact.js';
+import { hostLogResult } from './host-logs.js';
 import { diagnosticResult } from './diagnostics.js';
 import type {
   Action,
@@ -306,6 +307,10 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
 }
 
 export function queryFailed(state: State, request: Request) {
+  if (request.kind === 'hostLogRead') {
+    hostLogResult(state, [], request, null);
+    return;
+  }
   if (request.kind === 'diagnostics') {
     diagnosticResult(state, request, null);
     return;
@@ -441,6 +446,14 @@ export function queryFailed(state: State, request: Request) {
 
 export function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'hostLogRead':
+      hostLogResult(
+        state,
+        actions,
+        request,
+        value as import('../../../packages/plugin-sdk/src/index.js').HostLogPage,
+      );
+      break;
     case 'diagnostics':
       diagnosticResult(
         state,

@@ -57,6 +57,11 @@ pub(super) async fn run(
     if expected_root.is_some_and(|expected| expected != owner.root_id()) {
         return Err("service State Root identity changed".into());
     }
+    if expected_root.is_none() {
+        let logs = maka_host_runtime::logs::Source::from_owner(&owner)?;
+        eprintln!("Host diagnostics: {}", logs.path().display());
+        crate::logging::capture(logs.open_capture()?)?;
+    }
     let deployment = crate::deployment::admit(&owner, crate::deployment::Mode::Supervised).await?;
     if expected_root.is_some() && deployment.is_none() {
         return Err("service State Root must have a supervised deployment".into());

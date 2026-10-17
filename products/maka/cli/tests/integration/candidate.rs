@@ -358,6 +358,7 @@ impl Drop for CandidateFixture {
             std::thread::sleep(Duration::from_millis(20));
         }
         let _ = fs::remove_file(&self.registration);
+        let _ = fs::remove_file(control.join("host.stderr.log"));
         let deployment = namespaces
             .ownership
             .parent()

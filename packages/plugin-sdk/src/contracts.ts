@@ -53028,6 +53028,238 @@ export const contracts = {
       },
     },
   },
+  hostLogs: {
+    name: 'maka.host.Logs',
+    version: 1,
+    transport: 'remote',
+    interface: {
+      kind: 'service',
+      methods: {
+        read: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'HostLogRequest',
+            type: 'object',
+            properties: {
+              position: {
+                $ref: '#/$defs/HostLogPosition',
+              },
+            },
+            additionalProperties: false,
+            required: ['position'],
+            $defs: {
+              HostLogPosition: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'tail',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      cursor: {
+                        $ref: '#/$defs/HostLogCursor',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'after',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'cursor'],
+                  },
+                ],
+              },
+              HostLogCursor: {
+                type: 'string',
+                maxLength: 512,
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'HostLogPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'missing',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  cursor: {
+                    $ref: '#/$defs/HostLogCursor',
+                  },
+                  bytes: {
+                    type: 'string',
+                  },
+                  reset: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HostLogReset',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  truncated: {
+                    type: 'boolean',
+                  },
+                  hasMore: {
+                    type: 'boolean',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'data',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'cursor', 'bytes', 'truncated', 'hasMore'],
+              },
+            ],
+            $defs: {
+              HostLogCursor: {
+                type: 'string',
+                maxLength: 512,
+              },
+              HostLogReset: {
+                type: 'string',
+                enum: ['replaced', 'truncated'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watch: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'HostLogRequest',
+            type: 'object',
+            properties: {
+              position: {
+                $ref: '#/$defs/HostLogPosition',
+              },
+            },
+            additionalProperties: false,
+            required: ['position'],
+            $defs: {
+              HostLogPosition: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'tail',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      cursor: {
+                        $ref: '#/$defs/HostLogCursor',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'after',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'cursor'],
+                  },
+                ],
+              },
+              HostLogCursor: {
+                type: 'string',
+                maxLength: 512,
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'HostLogPage',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'missing',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  cursor: {
+                    $ref: '#/$defs/HostLogCursor',
+                  },
+                  bytes: {
+                    type: 'string',
+                  },
+                  reset: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HostLogReset',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  truncated: {
+                    type: 'boolean',
+                  },
+                  hasMore: {
+                    type: 'boolean',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'data',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'cursor', 'bytes', 'truncated', 'hasMore'],
+              },
+            ],
+            $defs: {
+              HostLogCursor: {
+                type: 'string',
+                maxLength: 512,
+              },
+              HostLogReset: {
+                type: 'string',
+                enum: ['replaced', 'truncated'],
+              },
+            },
+          },
+          resources: {},
+        },
+      },
+    },
+  },
   workspaceComputer: {
     name: 'maka.workspace.Computer',
     version: 1,

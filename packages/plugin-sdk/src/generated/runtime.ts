@@ -20,6 +20,8 @@
 // Generated from Rust runtime schemas. Run npm run schema:generate -w @maka-agent/plugin-sdk.
 
 export type RuntimeProtocol =
+  | HostLogRequest
+  | HostLogPage
   | UiAuthoringCommand
   | UiAuthoringClaim
   | UiAuthoringState
@@ -341,6 +343,28 @@ export type RuntimeProtocol =
   | ResourceMetadata
   | MarkdownTextInput
   | MarkdownTextResult;
+export type HostLogPosition =
+  | {
+      kind: 'tail';
+    }
+  | {
+      cursor: HostLogCursor;
+      kind: 'after';
+    };
+export type HostLogCursor = string;
+export type HostLogPage =
+  | {
+      kind: 'missing';
+    }
+  | {
+      cursor: HostLogCursor;
+      bytes: string;
+      reset?: HostLogReset | null;
+      truncated: boolean;
+      hasMore: boolean;
+      kind: 'data';
+    };
+export type HostLogReset = 'replaced' | 'truncated';
 export type UiAuthoringCommand =
   | {
       method: 'instances';
@@ -5081,6 +5105,9 @@ export type MarkdownTextResult =
       kind: 'too_large';
     };
 
+export interface HostLogRequest {
+  position: HostLogPosition;
+}
 export interface DeploymentRef {
   stateDomain: string;
   deployment: string;

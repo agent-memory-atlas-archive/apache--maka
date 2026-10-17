@@ -44,4 +44,6 @@ npm --workspace @maka-agent/plugin-sdk run typecheck
 
 组件的同步回调提出帧和动作，终端与桌面使用各自场景类型。原生控件管理编辑器缓冲区、选择和 IME；应通过声明的契约捕获资源。Host 服务接收请求作用域内的导入与附件，不提供环境级 Node API。
 
+客体运行时提供 `TextEncoder`、`TextDecoder`、`atob`、`URL` 和 `URLSearchParams` 进行纯文本与字节转换。可用 `Uint8Array.from(atob(value), c => c.charCodeAt(0))` 将 Base64 解码成字节；这些 API 不授予文件或网络访问权限。
+
 TypeScript 帮助发现编写错误，运行时另外校验值、契约兼容性、资源槽位和权限。参阅[插件指南](../../plugins/README.zh-CN.md)和[可运行示例](../../skills/maka-plugin-authoring/references/quickstart.md)。

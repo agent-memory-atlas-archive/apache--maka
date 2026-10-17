@@ -28,14 +28,18 @@ pub use tokio::process::Child;
 pub use windows::{Child, spawn};
 
 #[cfg(unix)]
-pub async fn spawn(executable: &std::path::Path, args: &[&str]) -> std::io::Result<Child> {
+pub async fn spawn(
+    executable: &std::path::Path,
+    args: &[&str],
+    stderr: Option<std::fs::File>,
+) -> std::io::Result<Child> {
     use std::process::Stdio;
     let mut command = tokio::process::Command::new(executable);
     command
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(stderr.map(Stdio::from).unwrap_or_else(Stdio::null));
     // SAFETY: setsid is async-signal-safe and touches no Rust state.
     unsafe {
         command.pre_exec(|| {

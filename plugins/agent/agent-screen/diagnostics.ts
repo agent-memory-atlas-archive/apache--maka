@@ -29,8 +29,18 @@ import { type Presentation, type Node, fill } from '../../shared/view.js';
 import { copy, type Copy } from './locale.js';
 import { intent } from './actions.js';
 import type { State } from './state.js';
+import {
+  newHostLogs,
+  hostLogsView,
+  readHostLogs,
+  stopHostLogs,
+  hostLogEvent,
+  type HostLogsState,
+} from './host-logs.js';
 
 export interface DiagnosticsState {
+  source: 'conversation' | 'host';
+  host: HostLogsState;
   watch: { key: string; input: { sessionId: string } } | null;
   revision: number;
   through: number;
@@ -49,6 +59,8 @@ export type DiagnosticsRequest = {
 };
 export function newDiagnostics(sessionId?: string, epoch = 0): DiagnosticsState {
   return {
+    source: 'conversation',
+    host: newHostLogs(),
     watch: sessionId ? { key: 'diagnostics-watch-' + epoch, input: { sessionId } } : null,
     revision: 0,
     through: 0,
@@ -61,14 +73,17 @@ export function newDiagnostics(sessionId?: string, epoch = 0): DiagnosticsState 
   };
 }
 function open(state: State) {
-  return state.inspector === 'diagnostics' || state.dialog === 'diagnostics';
+  return (
+    state.diagnostics.source === 'conversation' &&
+    (state.inspector === 'diagnostics' || state.dialog === 'diagnostics')
+  );
 }
 export function readDiagnostics(
   state: State,
   actions: Action[],
   position: AgentDiagnostics['position'] = { kind: 'latest' },
 ) {
-  if (!state.selected) return;
+  if (!state.selected || state.diagnostics.source !== 'conversation') return;
   if (!state.diagnostics.watch)
     state.diagnostics.watch = {
       key: `diagnostics-watch-${state.epoch}-${++state.serial}`,
@@ -119,9 +134,18 @@ export function diagnosticResult(
   diagnostics.failed = false;
 }
 export function diagnosticEvent(state: State, actions: Action[], key: string): boolean {
+  if (hostLogEvent(state, actions, key)) return true;
   if (!key.startsWith('diagnostic')) return false;
   const diagnostics = state.diagnostics;
-  if (key === 'diagnostics-close') {
+  if (key === 'diagnostics-source-host' && state.hostLogsEnabled) {
+    diagnostics.source = 'host';
+    readHostLogs(state, actions);
+  } else if (key === 'diagnostics-source-conversation' && state.selected) {
+    stopHostLogs(state);
+    diagnostics.source = 'conversation';
+    readDiagnostics(state, actions);
+  } else if (key === 'diagnostics-close') {
+    stopHostLogs(state);
     if (state.dialog === 'diagnostics') state.dialog = null;
     if (state.inspector === 'diagnostics') state.inspector = null;
   } else if (key === 'diagnostics-back') diagnostics.selected = null;
@@ -257,94 +281,117 @@ export function diagnosticsView<N extends Node>(
         ],
         { row: true, gap: 1 },
       ),
-      ...(diagnostics.failed
-        ? [ui.text('diagnostics-error', text.recoveryRefreshFailed, 13, theme.warning)]
-        : []),
-      ...(selected
+      ...(state.hostLogsEnabled
         ? [
-            ui.button('diagnostics-back', text.back),
-            ui.text('diagnostic-detail-source', source(selected, text), 15, theme.text, 550),
-            ui.text(
-              'diagnostic-detail-cause',
-              cause(selected, text),
-              14,
-              failureColor(selected, theme),
-            ),
-            ui.text(
-              'diagnostic-detail-time',
-              new Date(selected.recordedAt).toISOString(),
-              12,
-              theme.muted,
-            ),
-            ui.text(
-              'diagnostic-detail-invocation',
-              selected.detail.invocation.invocation_id,
-              12,
-              theme.muted,
-            ),
-            ui.text('diagnostic-detail-event', selected.eventId, 12, theme.muted),
-            ...(selected.detail.kind === 'model_step'
-              ? [ui.text('diagnostic-detail-step', selected.detail.stepId, 12, theme.muted)]
-              : []),
-          ]
-        : [
-            presentation.reading(
-              'diagnostics-reading',
-              {
-                command: null,
-                content: ui.box(
-                  'diagnostics-records',
-                  diagnostics.page
-                    ? diagnostics.page.entries.length
-                      ? diagnostics.page.entries.map((record) => {
-                          const tone = failureColor(record, theme);
-                          return ui.box(
-                            'diagnostic-' + record.sequence,
-                            [
-                              ui.button('diagnostic-open-' + record.sequence, source(record, text)),
-                              ui.text(
-                                'diagnostic-cause-' + record.sequence,
-                                cause(record, text),
-                                13,
-                                tone,
-                              ),
-                              ui.text(
-                                'diagnostic-time-' + record.sequence,
-                                new Date(record.recordedAt).toISOString(),
-                                12,
-                                theme.muted,
-                              ),
-                            ],
-                            { gap: 0 },
-                          );
-                        })
-                      : [ui.text('diagnostics-empty', text.diagnosticsEmpty, 13, theme.muted)]
-                    : [ui.text('diagnostics-loading', text.loading, 13, theme.muted)],
-                  {
-                    gap: 1,
-                    scroll: 'manual',
-                    terminal: { grow: 1 },
-                    style: { width: fill, height: fill },
-                  },
-                ),
-              },
-              {},
-            ),
             ui.box(
-              'diagnostics-controls',
+              'diagnostics-sources',
               [
                 ui.button(
-                  'diagnostics-refresh',
-                  diagnostics.position.kind === 'before' ? text.latest : text.check,
+                  'diagnostics-source-conversation',
+                  text.diagnosticsConversation,
+                  !state.selected,
                 ),
-                ui.button(
-                  'diagnostics-older',
-                  text.older,
-                  diagnostics.loading !== null || diagnostics.page?.nextBefore == null,
-                ),
+                ui.button('diagnostics-source-host', text.hostLogsLabel),
               ],
               { row: true, gap: 1 },
             ),
+          ]
+        : []),
+      ...(diagnostics.source === 'host' && state.hostLogsEnabled
+        ? [hostLogsView(presentation, state, theme, locale)]
+        : [
+            ...(diagnostics.failed
+              ? [ui.text('diagnostics-error', text.recoveryRefreshFailed, 13, theme.warning)]
+              : []),
+            ...(selected
+              ? [
+                  ui.button('diagnostics-back', text.back),
+                  ui.text('diagnostic-detail-source', source(selected, text), 15, theme.text, 550),
+                  ui.text(
+                    'diagnostic-detail-cause',
+                    cause(selected, text),
+                    14,
+                    failureColor(selected, theme),
+                  ),
+                  ui.text(
+                    'diagnostic-detail-time',
+                    new Date(selected.recordedAt).toISOString(),
+                    12,
+                    theme.muted,
+                  ),
+                  ui.text(
+                    'diagnostic-detail-invocation',
+                    selected.detail.invocation.invocation_id,
+                    12,
+                    theme.muted,
+                  ),
+                  ui.text('diagnostic-detail-event', selected.eventId, 12, theme.muted),
+                  ...(selected.detail.kind === 'model_step'
+                    ? [ui.text('diagnostic-detail-step', selected.detail.stepId, 12, theme.muted)]
+                    : []),
+                ]
+              : [
+                  presentation.reading(
+                    'diagnostics-reading',
+                    {
+                      command: null,
+                      content: ui.box(
+                        'diagnostics-records',
+                        diagnostics.page
+                          ? diagnostics.page.entries.length
+                            ? diagnostics.page.entries.map((record) => {
+                                const tone = failureColor(record, theme);
+                                return ui.box(
+                                  'diagnostic-' + record.sequence,
+                                  [
+                                    ui.button(
+                                      'diagnostic-open-' + record.sequence,
+                                      source(record, text),
+                                    ),
+                                    ui.text(
+                                      'diagnostic-cause-' + record.sequence,
+                                      cause(record, text),
+                                      13,
+                                      tone,
+                                    ),
+                                    ui.text(
+                                      'diagnostic-time-' + record.sequence,
+                                      new Date(record.recordedAt).toISOString(),
+                                      12,
+                                      theme.muted,
+                                    ),
+                                  ],
+                                  { gap: 0 },
+                                );
+                              })
+                            : [ui.text('diagnostics-empty', text.diagnosticsEmpty, 13, theme.muted)]
+                          : [ui.text('diagnostics-loading', text.loading, 13, theme.muted)],
+                        {
+                          gap: 1,
+                          scroll: 'manual',
+                          terminal: { grow: 1 },
+                          style: { width: fill, height: fill },
+                        },
+                      ),
+                    },
+                    {},
+                  ),
+                  ui.box(
+                    'diagnostics-controls',
+                    [
+                      ui.button(
+                        'diagnostics-refresh',
+                        diagnostics.position.kind === 'before' ? text.latest : text.check,
+                      ),
+                      ui.button(
+                        'diagnostics-older',
+                        text.older,
+                        diagnostics.loading !== null || diagnostics.page?.nextBefore == null,
+                      ),
+                    ],
+                    { row: true, gap: 1 },
+                  ),
+                ]),
           ]),
     ],
     {

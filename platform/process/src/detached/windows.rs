@@ -22,7 +22,7 @@ use crate::{
     windows::{attributes::Attributes, checked, owned, pipe, try_wait_process, wait_process},
 };
 use std::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io,
     mem::size_of,
     os::windows::io::{AsRawHandle, OwnedHandle},
@@ -32,7 +32,9 @@ use std::{
 };
 use tokio::net::windows::named_pipe::NamedPipeServer;
 use windows_sys::Win32::{
-    Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation},
+    Foundation::{
+        DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE_FLAG_INHERIT, SetHandleInformation,
+    },
     System::Threading::*,
 };
 
@@ -65,7 +67,7 @@ impl Child {
     }
 }
 
-pub async fn spawn(executable: &Path, args: &[&str]) -> io::Result<Child> {
+pub async fn spawn(executable: &Path, args: &[&str], stderr: Option<File>) -> io::Result<Child> {
     if !executable.is_absolute() {
         return Err(io::Error::other("detached executable must be absolute"));
     }
@@ -81,7 +83,26 @@ pub async fn spawn(executable: &Path, args: &[&str]) -> io::Result<Child> {
     let mut line = wide(Path::new(&arguments))?;
     let (stdin, reader) = pipe::pty_input().await?;
     let null = OpenOptions::new().read(true).write(true).open("NUL")?;
-    let handles = [reader.as_raw_handle(), null.as_raw_handle()];
+    // Duplicate rather than change inheritance on the caller's capture handle.
+    let mut duplicate = ptr::null_mut();
+    // SAFETY: the selected owned file and current process remain live through duplication.
+    unsafe {
+        checked(DuplicateHandle(
+            GetCurrentProcess(),
+            stderr.as_ref().unwrap_or(&null).as_raw_handle(),
+            GetCurrentProcess(),
+            &mut duplicate,
+            0,
+            1,
+            DUPLICATE_SAME_ACCESS,
+        ))?;
+    }
+    let capture = owned(duplicate)?;
+    let handles = [
+        reader.as_raw_handle(),
+        null.as_raw_handle(),
+        capture.as_raw_handle(),
+    ];
     // SAFETY: owned pipe/NUL handles, inherited only through the explicit list.
     for handle in handles {
         unsafe {
@@ -98,7 +119,7 @@ pub async fn spawn(executable: &Path, args: &[&str]) -> io::Result<Child> {
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput = handles[0];
     startup.StartupInfo.hStdOutput = handles[1];
-    startup.StartupInfo.hStdError = handles[1];
+    startup.StartupInfo.hStdError = handles[2];
     startup.lpAttributeList = attributes.as_ptr();
     let mut process = PROCESS_INFORMATION::default();
     // SAFETY: all buffers/handles outlive this call; environment and cwd inherit.

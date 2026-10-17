@@ -44,4 +44,6 @@ Generation uses [maka-schema](../../tools/schema/README.md) and does not build t
 
 Components have synchronous callbacks that propose a frame and actions. Terminal and desktop use their own scene types. Native controls own editor buffers, selection and IME; capture resources through their declared contracts. Host services receive request-scoped imports and attachments, without ambient Node APIs.
 
+Guest realms provide `TextEncoder`, `TextDecoder`, `atob`, `URL` and `URLSearchParams` for pure text and byte conversion. Decode Base64 to bytes with `Uint8Array.from(atob(value), c => c.charCodeAt(0))`; these APIs grant no filesystem or network access.
+
 TypeScript checks authoring mistakes. The runtime separately validates values, contract compatibility, resource slots and permissions. See the [plugin guide](../../plugins/README.md) and [runnable starter](../../skills/maka-plugin-authoring/references/quickstart.md).

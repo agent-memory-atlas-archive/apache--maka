@@ -29,6 +29,7 @@ pub(super) struct Service {
     target: String,
     path: PathBuf,
     definition: String,
+    capture: Option<maka_host_runtime::logs::Source>,
 }
 
 struct Instance {
@@ -47,11 +48,18 @@ impl Service {
         let args = arguments(deployment, role)?
             .map(|arg| format!("<string>{}</string>", xml(arg)))
             .join("");
-        let log = super::super::directory(&deployment.root_id)?.join(if role == Role::Host {
-            "host.stderr.log"
+        let capture = if role == Role::Host {
+            Some(maka_host_runtime::logs::Source::for_root(
+                &deployment.root_id,
+                &maka_event_log::root::RootNamespaces::for_current_account()?,
+            )?)
         } else {
-            "update.stderr.log"
-        });
+            None
+        };
+        let log = match &capture {
+            Some(source) => source.path().to_owned(),
+            None => super::super::directory(&deployment.root_id)?.join("update.stderr.log"),
+        };
         let log = xml(log.to_str().ok_or("service log path must be UTF-8")?);
         let definition = if role == Role::Updater {
             format!(
@@ -68,6 +76,7 @@ impl Service {
             label,
             path,
             definition,
+            capture,
         })
     }
 
@@ -79,6 +88,9 @@ impl Service {
 
     pub fn prepare(&self) -> Result<(), HostError> {
         self.stop()?;
+        if let Some(source) = &self.capture {
+            drop(source.open_capture()?);
+        }
         publish(&self.path, &self.definition)?;
         checked(command("/bin/launchctl", &["enable", &self.target])?)?;
         checked(command(

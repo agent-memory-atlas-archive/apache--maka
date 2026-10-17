@@ -51,6 +51,16 @@ pub(super) fn native() -> Result<NativeRegistry, HostError> {
     Ok(native)
 }
 pub(super) async fn run(args: Serve) -> Result<(), HostError> {
+    let owner = tokio::task::spawn_blocking(move || {
+        maka_event_log::root::RootOwner::open(
+            &args.root,
+            &maka_event_log::root::RootNamespaces::for_current_account()?,
+        )
+    })
+    .await??;
+    let logs = maka_host_runtime::logs::Source::from_owner(&owner)?;
+    eprintln!("Host diagnostics: {}", logs.path().display());
+    crate::logging::capture(logs.open_capture()?)?;
     let endpoints: BTreeMap<String, HostEndpoint> = super::read_json(&args.endpoints)?;
     let grants: Vec<NativeGrant> = args
         .native
@@ -58,7 +68,7 @@ pub(super) async fn run(args: Serve) -> Result<(), HostError> {
         .map(super::read_json)
         .transpose()?
         .unwrap_or_default();
-    let store = Arc::new(super::open_store(args.root).await?);
+    let store = Arc::new(maka_transport::open_store(Arc::new(owner)).await?);
     let host = Host::open_with_options(
         store,
         args.deployment,

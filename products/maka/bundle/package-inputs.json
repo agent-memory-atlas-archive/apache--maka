@@ -4,6 +4,7 @@
   "deployment-settings": "plugins/application/deployment-settings",
   "deployment": "plugins/application/deployment",
   "workhub-root": "plugins/workhub/workhub-root",
+  "host-logs": "plugins/application/host-logs",
   "agent-screen": "plugins/agent/agent-screen",
   "apps": "plugins/application/apps",
   "skill-library": "plugins/skills/skill-library",

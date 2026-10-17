@@ -61,8 +61,12 @@ fn runtime_base(health: &Arc<Health>, limits: &Limits, realm: super::Realm) -> R
     runtime
         .execute_script(
             "maka-plugin-globals",
-            r#"for (const [path, names] of [
+            r#"const { DOMException } = Deno.core.loadExtScript('ext:deno_web/01_dom_exception.js');
+            Deno.core.registerErrorBuilder('DOMExceptionInvalidCharacterError',
+                message => new DOMException(message, 'InvalidCharacterError'));
+            for (const [path, names] of [
                 ['ext:deno_web/08_text_encoding.js', ['TextEncoder', 'TextDecoder']],
+                ['ext:deno_web/05_base64.js', ['atob']],
                 ['ext:deno_web/00_url.js', ['URL', 'URLSearchParams']],
             ]) {
                 const exports = Deno.core.loadExtScript(path);

@@ -95,7 +95,7 @@ enum HostCommand {
     Uninstall(crate::deployment::Control),
     /// Observe a Host or managed deployment without starting or changing it.
     Status(crate::deployment::Status),
-    /// Read a bounded tail of supervised Host diagnostics without starting it.
+    /// Read or follow captured Host diagnostics without starting it.
     Logs(crate::deployment::Logs),
     /// Retire the exact current Host when idle, or explicitly interrupt its work.
     Retire {
@@ -165,7 +165,8 @@ impl Cli {
         }
         let finite = matches!(&self.command, Some(Command::Host(command)) if !matches!(command,
             HostCommand::Candidate(_) | HostCommand::Serve { .. } | HostCommand::ServiceRun(_)
-            | HostCommand::Connect(_) | HostCommand::Ensure(_)));
+            | HostCommand::Connect(_) | HostCommand::Ensure(_))
+            && !matches!(command, HostCommand::Logs(logs) if logs.follow));
         if finite {
             let default = if matches!(
                 &self.command,

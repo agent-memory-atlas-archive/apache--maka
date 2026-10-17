@@ -65,6 +65,7 @@ import { type AttachmentDrafts } from '../../shared/attachments.js';
 
 import { type ComposerReadiness } from '../../shared/drafts.js';
 
+import type { HostLogRead } from './host-logs.js';
 import type { DiagnosticsState, DiagnosticsRequest } from './diagnostics.js';
 
 import type { CompactState, CompactRequest } from './compact.js';
@@ -78,6 +79,7 @@ type BackendPreference = import('../../../packages/plugin-sdk/src/index.js').Age
 type Notice = keyof Copy | null;
 
 export type Request =
+  | HostLogRead
   | DiagnosticsRequest
   | CompactRequest
   | { kind: 'sandboxChange'; epoch: number; sessionId: string }
@@ -303,6 +305,7 @@ export interface State {
   insightsScope: InsightsProps['scope'];
   sidebar: { open: boolean } | { command: TerminalPaneCommand | null };
   diagnostics: DiagnosticsState;
+  hostLogsEnabled: boolean;
   inspector:
     | 'diagnostics'
     | 'details'

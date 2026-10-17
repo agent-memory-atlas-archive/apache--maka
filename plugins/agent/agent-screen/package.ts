@@ -26,6 +26,7 @@ const entries = uiEntries({
   export: 'AgentScreen',
   imports: {
     agent: one(sdk.contracts.agent),
+    hostLogs: { contract: sdk.contracts.hostLogs, cardinality: { kind: 'optional' } },
     workhub: { contract: sdk.contracts.workhubCoordinator, cardinality: { kind: 'optional' } },
     reading: one(sdk.contracts.readingArea),
     file: one(sdk.contracts.filePicker),
@@ -84,6 +85,7 @@ const entries = uiEntries({
       web: { type: 'boolean' },
       jev: { type: 'boolean' },
       graphs: { type: 'boolean' },
+      hostLogs: { type: 'boolean' },
       place: { type: 'string', maxLength: 4096 },
     },
     ['locale'],
