@@ -19,7 +19,7 @@
 
 # GPUI Kit local presentation projection
 
-The `gpui-base` crate is copied from [GPUI Kit](https://github.com/longbridge/gpui-kit/tree/c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2), revision `c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2`, under Apache-2.0. Other Kit crates remain dependencies from that exact revision. `upstream.json` records the finite imported file inventory and original SHA-256 hashes before modifications; licenses are retained byte-for-byte. The root README is retained because upstream library tests include it. Examples, benchmarks and website sources are omitted. Benchmark-only dependencies and GPUI profiler features are omitted; library tests keep their original test support. The crate manifest is normalized to explicit upstream dependencies/lints and disables automatic example targets; this repository includes the adapted Base crate as a workspace member so its actual unit tests can run with the same source patches as the application.
+The `gpui-base` crate is copied from [GPUI Kit](https://github.com/longbridge/gpui-kit/tree/c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2), revision `c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2`, under Apache-2.0. The `gpui-shell` crate is copied from the same revision; see the section below. Other Kit crates remain dependencies from that exact revision. `upstream.json` records the finite imported file inventory and original SHA-256 hashes before modifications; licenses are retained byte-for-byte. The root README is retained because upstream library tests include it. Examples, benchmarks and website sources are omitted. Benchmark-only dependencies and GPUI profiler features are omitted; library tests keep their original test support. The crate manifest is normalized to explicit upstream dependencies/lints and disables automatic example targets; this repository includes the adapted Base crate as a workspace member so its actual unit tests can run with the same source patches as the application.
 
 The bounded changes preserve the single native editing engine:
 
@@ -171,3 +171,60 @@ The local physical input groups, exact byte selections, per-hitbox retained geom
 Participant enablement checks the current value before acquiring a write lease. Repeating the same admission state during layout must not invalidate retained rows under upstream's finer-grained entity-write tracking; real enablement changes retain the original revocation and group withdrawal path.
 
 Plain input modes can install an exact whitespace-delimited literal-token registry. The existing inline-token store derives annotations synchronously after native edits, initialization and history replay; active IME text remains provisional until commit. This reuses upstream chip geometry and atomic range expansion without replacing the native buffer, selection or undo owner. An absent registry preserves the existing explicit token API; an explicitly empty registry removes literal annotations, including during later undo. Tests cover Unicode surroundings, repeated references, partial selections, interior carets, both deletion directions, cut, completion, history and composition.
+
+## gpui-shell runtime (2026-10-16)
+
+`crates/shell` (`gpui-shell`) is copied from revision `c5f8eca4a0759f8c0c7ed624eddfd03f1c93a5f2` with its `rquickjs-compat` facade, README and component inventory; `upstream.json` records each original file. Its integration tests are omitted because most of them need `gpui-component`. The facade's manifest declares MIT to match the `rquickjs` crate it replaces; its source comes from the GPUI Kit repository. The workspace includes both crates as members and patches crates.io `rquickjs` to the vendored facade, so LLRT and the shell share one QuickJS VM as in GPUI Kit.
+
+The manifest is normalized to explicit upstream dependencies and lints. `gpui-fast` and `quickjs` are default features. The `components` feature and its `gpui-component` dependency are removed: `gpui-component` at this revision does not build against the adapted Base above, so an embedding host registers its own component catalog. Check-cfg declares the removed feature name, so the code it guards compiles out without warnings.
+
+The bounded source changes adapt the runtime to the adapted Base, add two development switches, and backport four upstream pull requests (#3547, #3549 and #3550 have since been merged; #3548 is open):
+
+- `TextView` link handling uses Base's `on_link_activation`. Both handlers return a decision that prevents Base's default URL opening: the script callback receives the URL, or, without one, the shell opens only URLs its own rules admit. Accessibility activation counts as keyboard activation.
+- Two element helpers that call `ElementExt::on_prepaint` add the `IntoElement` bound the adapted trait requires.
+- `GPUI_SHELL_PASSIVE` opens the window without activating the application or taking focus. `GPUI_SHELL_METRICS_LOG` prints the runtime's script counters to stderr once a second. Both are off unless the variable is set.
+- From longbridge/gpui-kit #3547, #3548, #3549 and #3550: a `list` keeps the reader on the item at the top of the view when its item count changes; `with_follow_mode("tail")` makes a `list` follow its end; `on_visible_range_change` reports which items a `list` shows after a frame in which that changed; and `TextareaState.set_submit_on_enter` makes Enter submit without inserting a line break. The next sync replaces them with the upstream versions.
+
+`gpui-shell` 及其 `rquickjs-compat` 兼容层自同一上游版本复制，`upstream.json` 记录每个原始文件；集成测试大多依赖 `gpui-component`，因此未导入。兼容层清单声明 MIT 以对应其替代的 `rquickjs`，源码来自 GPUI Kit 仓库。工作区将两者作为成员，并把 crates.io 的 `rquickjs` 指向本地兼容层，使 LLRT 与 shell 共用同一 QuickJS VM。清单改为显式上游依赖与 lints，默认启用 `gpui-fast` 与 `quickjs`；该版本的 `gpui-component` 无法基于上面改过的 Base 编译，因此移除 `components` 特性及其依赖，由嵌入方注册自己的组件目录。源码改动仅限：链接处理改用 Base 的 `on_link_activation` 并阻止 Base 默认打开 URL，由脚本回调或 shell 自身的 URL 规则决定；两个调用 `on_prepaint` 的辅助函数补上 `IntoElement` 约束；新增仅在设置环境变量时生效的开发开关 `GPUI_SHELL_PASSIVE`（不激活、不抢焦点）与 `GPUI_SHELL_METRICS_LOG`（每秒输出脚本计数）；回移四个上游 PR（longbridge/gpui-kit #3547、#3548、#3549、#3550；其中 #3547、#3549、#3550 已合入，#3548 尚未合入）：`list` 在条目数变化时让读者停在视口顶部的条目上，`with_follow_mode("tail")` 让 `list` 跟随末尾，`on_visible_range_change` 在可见范围变化的帧之后报告，`TextareaState.set_submit_on_enter` 让 Enter 直接提交、不插入换行。下次同步时以上游版本替换。
+
+## Desktop theme fixes (2026-10-16)
+
+Two fixes found while giving the Maka desktop its own palette, both candidates for upstream pull requests:
+
+- Base's input editor falls back to the palette's `selection` role for its selection, at most 40% opaque, instead of `accent` at 40%. A product that sets `accent` to an opaque fill (Maka uses it for code blocks) otherwise draws a selection that cannot be seen; text views already paint `selection`.
+- The shell's `cx.theme()` writes a translucent color as `#rrggbbaa`. It used to drop the alpha, so a script that drew a border in the `input` or `border` token got it opaque.
+
+为 Maka 桌面端配色时修了两处，均可提交上游 PR：Base 输入框的默认选区改用调色板的 `selection` 角色（不透明度至多 40%），不再用 40% 的 `accent`；产品把 `accent` 设为不透明填充（Maka 用于代码块）时，原选区看不见，而文本视图本来就用 `selection`。shell 的 `cx.theme()` 对半透明颜色输出 `#rrggbbaa`；此前丢弃 alpha，脚本用 `input` 或 `border` 画的边框会变成不透明。
+
+## Script spinner and TextView style (2026-10-16)
+
+Two additions to the script API of `gpui-shell`, both candidates for upstream pull requests:
+
+- `svg(path).spin(period_ms)` turns an icon about its center, one full turn every `period_ms` milliseconds. `svg(...)` now returns `SvgElement`, which declares the method. On any other element the call is recorded, does nothing, and is logged as not honoured, as `tooltip` is. The angle is computed when the icon is painted, from the time elapsed since one epoch shared by the process, so a script render that rebuilds the icon does not restart the turn. It moves in steps of 33 ms, 30 a second, as the native Maka client's spinner does: each paint schedules a notification of its view for when the next step is due, one timer per view. The view then materializes its retained snapshot again without calling the script's `render`; a `list` in the same view still calls its item renderer for the rows on screen, as on any redraw. Stepping rather than asking for every display frame keeps that to 30 redraws a second instead of 60 or 120. The notification makes a scroll container's content count as changed, so GPUI-fast does not show a spinner at an old angle from its scroll layer. With reduced motion on, the icon is drawn upright and schedules nothing.
+- `TextView.text_style({...})` replaces parts of the `TextViewStyle` the shell builds from the theme: `headings` (a `default` entry and the levels 1 to 6), `paragraph_gap`, `foreground`, `muted_foreground`, `link`, `selection`, `border`, `code_background`, `inline_code_background`, `code_font_family`, `code_font_size`, `code_block`, `table_head` and `table_cell`. Keys left out keep the theme's value, and later calls fold onto earlier ones. The nested objects use the names and value formats of the element style methods (`text_size`, `line_height`, `font_weight`, `text_color`, `bg`, `border_color`, `rounded`, `px`, `py`), limited to those that apply to each part. An unknown key, a `null`, or a value of the wrong type throws where `text_style` is called. A method argument crosses into Rust only as a primitive value, so the prelude sends the object as one `path, value` pair per leaf; `style::absolute_length` is now `pub(crate)` for the parser.
+
+为脚本 API 新增两项，均可提交上游 PR。`svg(path).spin(period_ms)` 让图标绕中心旋转，每 `period_ms` 毫秒转一整圈；`svg(...)` 改为返回声明了该方法的 `SvgElement`，在其他元素上调用会被记录但不生效，并像 `tooltip` 一样记录日志。角度在绘制时按当前时间相对进程内统一起点的差值计算，脚本重新 render 重建图标时不会从头开始转。角度按 33 毫秒一步（每秒 30 步）前进，与原生 Maka 客户端的转圈一致：每次绘制为下一步到期时安排一次对所在视图的通知，每个视图只用一个定时器。视图随后用保留的快照重新 materialize，不调用脚本的 `render`；同一视图里的 `list` 仍会像任何重绘一样为可见行调用条目渲染函数。按步前进而非每个显示帧都请求重绘，使重绘次数为每秒 30 次，而不是 60 或 120 次。该通知让滚动容器的内容算作已变化，GPUI-fast 因此不会从滚动层显示旧角度的图标。开启减少动态效果时，图标保持不转，也不安排任何步进。`TextView.text_style({...})` 替换 shell 按主题生成的 `TextViewStyle` 中的指定部分：`headings`（`default` 与 1 至 6 级）、`paragraph_gap`、`foreground`、`muted_foreground`、`link`、`selection`、`border`、`code_background`、`inline_code_background`、`code_font_family`、`code_font_size`、`code_block`、`table_head`、`table_cell`；未给出的键保留主题值，多次调用按顺序叠加。嵌套对象沿用元素样式方法的名称与取值格式（`text_size`、`line_height`、`font_weight`、`text_color`、`bg`、`border_color`、`rounded`、`px`、`py`），且每个部分只接受对它有效的方法。未知键、`null` 或类型错误的值在调用 `text_style` 处抛出异常。方法参数只能以基本类型值进入 Rust，因此 prelude 把对象展开为每个叶子一对 `路径, 值`；解析时用到的 `style::absolute_length` 因此改为 `pub(crate)`。
+
+## Focus kept when its element goes away (2026-10-16)
+
+One fix to `ShellRoot`, a candidate for an upstream pull request:
+
+- A pressed control takes focus, and the press can remove it, as a button that closes the panel it is in does, or one that turns disabled. GPUI was then focused on nothing it rendered and sent every key to the window root alone, so actions bound further in stopped answering until the next press. The root now registers `Window::on_focus_lost` and moves focus to `Window::focus_lost_restore_target`, the nearest tab stop left on the path focus was on. It does so only when the focused element went away: a blur, such as the root's own blur on a background press, is left alone. The root remembers what was focused when it last rendered; a blur before the frame leaves nothing there, and a blur during the frame leaves the blurred element as its own target.
+
+为 `ShellRoot` 修了一处，可提交上游 PR：按下的控件会拿到焦点，而按下的动作可能让它消失（如关闭所在面板的按钮，或变为禁用的按钮）。此前 GPUI 此时聚焦在一个已不渲染的元素上，所有按键只到窗口根节点，更内层绑定的 action 在下次点击前都不响应。现在根节点注册 `Window::on_focus_lost`，把焦点移到 `Window::focus_lost_restore_target`，即原焦点路径上仍存在的最近 tab stop。只有持有焦点的元素消失时才这样做；主动 blur（如根节点在点击背景时的 blur）保持不动。根节点记录自己上次渲染时的焦点：帧前的 blur 让该记录为空，帧内的 blur 则让被 blur 的元素本身成为目标，两种情况都不恢复。
+
+## Placeholders replaced while a field lives (2026-10-17)
+
+One addition to the script API of `gpui-shell`, a candidate for an upstream pull request:
+
+- `InputState` and `TextareaState` gain `set_placeholder(text)`, which calls gpui-base's `set_placeholder` on the live state. A placeholder could be set only by `new({ placeholder })`, so an application that changes its language while running had to rebuild every field, with its listeners, to translate the text an empty field shows.
+
+为 `gpui-shell` 的脚本 API 新增一项，可提交上游 PR：`InputState` 与 `TextareaState` 新增 `set_placeholder(text)`，在存活的状态上调用 gpui-base 的 `set_placeholder`。此前占位文字只能在 `new({ placeholder })` 时设定，应用在运行中切换语言时，必须连同监听器重建每个输入框，才能翻译空输入框显示的文字。
+
+## `<pre>` text kept as text (2026-10-17)
+
+One fix to Base's HTML minifier, submitted upstream as longbridge/gpui-kit#3570:
+
+- `TextView::html` minifies the HTML and parses the result again. The text of a `<pre>` or `<textarea>` skips whitespace collapsing, and the minifier wrote it as it was decoded, so escaped markup such as `&lt;b&gt;` came back as an element and an `&amp;` as a bare `&`. That text is now escaped with the function the collapsing path uses. The parser also drops a line feed right after `<pre>` or `<textarea>`, so text that starts the element with a line feed (comments before it, which the minifier leaves out, do not count) is written with one more in front of it, and a leading blank line survives the second parse.
+
+为 Base 的 HTML minifier 修了一处，已提交上游 longbridge/gpui-kit#3570：`TextView::html` 先压缩 HTML 再重新解析。`<pre>` 与 `<textarea>` 中的文本不折叠空白，minifier 原样写出解码后的文本，因此 `&lt;b&gt;` 这类转义标记会变回元素，`&amp;` 变回单独的 `&`。现在这段文本用折叠路径的同一函数转义。解析器还会丢掉紧跟 `<pre>` 或 `<textarea>` 的换行，因此以换行开头的首段文本（其前被 minifier 略去的注释不计）会在前面多写一个换行，开头的空行在第二次解析后得以保留。
