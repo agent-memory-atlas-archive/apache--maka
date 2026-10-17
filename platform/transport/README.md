@@ -23,6 +23,16 @@
 
 Connects a foreground UI to independently owned Host deployments over local IPC. The launcher supplies trusted connection configuration and method/recovery grants. Public connections discover a Root-bound Host or ask the trusted CLI launcher to start it; cohosts borrow the UI Store. `connections` owns those connections; `Updates` coordinates approved source changes.
 
+Trusted local applications can use one public entry point with an explicit `startup::Request` selecting the Root, deployment and endpoint grants:
+
+```rust
+let mut client = maka_transport::startup::connect(&maka_executable, request).await?;
+// Use the authenticated Client's catalogue and calls.
+client.close().await?;
+```
+
+The executable must be an absolute path to the trusted Maka CLI. The entry point reuses a live Host or asks that CLI to start it, verifies the Root and Host incarnation, and admits the caller within 40 seconds. It uses the current account's Root namespaces and does not install, update or repair a deployment. Endpoint/native selections prepare startup; a live Host retains its published catalogue and grants. `close` detaches this session; `quit` requests shutdown when no other session remains. Keep original calls through their cleanup acknowledgement, and resolve uncertain mutations through their original receipts; reconnecting does not retry them.
+
 Remote registration data describes available services. It cannot create permission, choose a different caller or retarget an accepted operation. Closing the UI waits for its original physical calls and locally owned cohost cleanup. Normal quit asks each public Host to stop if no other session remains, atomically with session admission. Explicit UI-only exit detaches and preserves background work.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

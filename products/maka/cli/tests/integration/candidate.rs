@@ -28,6 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod owned;
 mod startup;
 
 #[test]

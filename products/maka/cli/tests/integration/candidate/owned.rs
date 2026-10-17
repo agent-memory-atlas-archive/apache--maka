@@ -1,0 +1,312 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use crate::local_fixture as support;
+use maka_host_runtime::application::transport::{Grant, HostEndpoint, Reply};
+use maka_plugin_core::operation::{OperationCleanup, OperationOutcome, OperationReply, Receipt};
+use maka_transport::startup::{self, Request};
+use serde_json::json;
+use std::{collections::BTreeMap, sync::Arc};
+use uuid::Uuid;
+
+async fn query(client: &Client, endpoint: &str, method: &str, input: Value) -> Value {
+    let mut call = client
+        .call(endpoint, method.into(), input, Default::default())
+        .await
+        .unwrap();
+    call.start().await.unwrap();
+    let reply = call.receive().await.unwrap();
+    assert!(call.cleanup_confirmed());
+    match reply {
+        Reply::Finished {
+            result: Ok(value),
+            cleanup: Ok(()),
+        } => value,
+        other => panic!("query must complete with confirmed cleanup: {other:?}"),
+    }
+}
+
+#[test]
+fn owned_startup_connects_concurrently_and_preserves_original_effect_and_last_client_lifetime() {
+    let directory = tempfile::tempdir().unwrap();
+    // The real CLI helper uses the current account's control namespace. This
+    // fixture owns only a fresh random Root and cleans its exact registration.
+    let fixture = CandidateFixture::new(directory.path().join("root"));
+    let namespaces = RootNamespaces::for_current_account().unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            let store = maka_event_log::EventLog::for_root(Arc::new(
+                RootOwner::open(&fixture.root, &namespaces).unwrap(),
+            ))
+            .await
+            .unwrap();
+            let deployment = Uuid::new_v4();
+            let (input, packages) = support::host();
+            let source = store
+                .commit_application(deployment, 0, input, vec![], packages)
+                .await
+                .unwrap();
+            store.close().await.unwrap();
+            let endpoints = BTreeMap::from([
+                (
+                    "business".into(),
+                    HostEndpoint {
+                        consumer: support::identity(13),
+                        import: "business".into(),
+                        grant: Grant {
+                            methods: ["read".into(), "write".into()].into(),
+                            recovery: false,
+                        },
+                    },
+                ),
+                (
+                    "receipts".into(),
+                    HostEndpoint {
+                        consumer: support::identity(13),
+                        import: "receipts".into(),
+                        grant: Grant {
+                            methods: ["read".into()].into(),
+                            recovery: true,
+                        },
+                    },
+                ),
+            ]);
+            let request = || Request {
+                root: fixture.root.clone(),
+                state_domain: Some(fixture.root_id.clone()),
+                deployment,
+                endpoints: endpoints.clone(),
+                native: vec![],
+            };
+            let executable = Path::new(env!("CARGO_BIN_EXE_maka"));
+            // No candidate is launched by the fixture. Both public entry calls must
+            // reach the actual CLI ensure/launch serialization and converge.
+            let (first, second) = tokio::join!(
+                startup::connect(executable, request()),
+                startup::connect(executable, request()),
+            );
+            let mut first = first.unwrap();
+            let mut second = second.unwrap();
+            assert_eq!(first.epoch(), second.epoch());
+            assert!(!first.epoch().is_nil());
+            assert_eq!(first.source(), &source);
+            assert_eq!(second.source(), &source);
+            let found = discovery::read(&fixture.root).unwrap();
+            assert_eq!(found.host_epoch, first.epoch());
+            let status = Client::status(&found.endpoint, Some(first.epoch()))
+                .await
+                .unwrap();
+            found.verify(&status).unwrap();
+            assert_eq!(
+                query(&first, "business", "read", Value::Null).await,
+                json!({"effects":0})
+            );
+
+            let mut write = first
+                .call("business", "write".into(), Value::Null, Default::default())
+                .await
+                .unwrap();
+            write.start().await.unwrap();
+            assert!(matches!(
+                write.receive().await.unwrap(),
+                Reply::Prepared { .. }
+            ));
+            let reference = write.reference().unwrap().clone();
+            assert_eq!(reference.source, source);
+            // Preparation owns no dispatched effect. The real Host journal, not a
+            // fabricated caller attestation, admits this mutation on confirmation.
+            assert_eq!(
+                query(&second, "business", "read", Value::Null).await,
+                json!({"effects":0})
+            );
+            let reply = match write.confirm().await.unwrap() {
+                Reply::Mutation {
+                    reply,
+                    cleanup: Ok(()),
+                } => *reply,
+                other => panic!("owned confirmation must settle its original mutation: {other:?}"),
+            };
+            assert!(write.cleanup_confirmed());
+            assert_eq!(reply.reference, reference);
+            assert_eq!(
+                reply.receipt,
+                Receipt::Recorded {
+                    outcome: OperationOutcome::Returned {
+                        value: json!({"effects":1})
+                    },
+                    cleanup: OperationCleanup::Confirmed,
+                }
+            );
+            first.close().await.unwrap();
+            assert!(
+                first
+                    .call("business", "read".into(), Value::Null, Default::default())
+                    .await
+                    .is_err()
+            );
+            let recovered: OperationReply = serde_json::from_value(
+                query(
+                    &second,
+                    "receipts",
+                    "read",
+                    serde_json::to_value(&reference).unwrap(),
+                )
+                .await,
+            )
+            .unwrap();
+            assert_eq!(recovered, reply);
+            assert_eq!(
+                query(&second, "business", "read", Value::Null).await,
+                json!({"effects":1})
+            );
+
+            let impossible_helper = directory.path().join("never-created-startup-helper");
+            assert_eq!(
+                startup::connect(Path::new("maka"), request())
+                    .await
+                    .err()
+                    .unwrap(),
+                "local Host startup executable must be absolute"
+            );
+            let mut reused = startup::connect(&impossible_helper, request())
+                .await
+                .unwrap();
+            assert_eq!(
+                reused.epoch(),
+                second.epoch(),
+                "live reuse must not run a helper"
+            );
+            assert_eq!(reused.source(), &source);
+            let mut wrong_domain = request();
+            wrong_domain.state_domain.as_mut().unwrap().replace_range(
+                0..1,
+                if fixture.root_id.starts_with('0') {
+                    "1"
+                } else {
+                    "0"
+                },
+            );
+            assert_eq!(
+                startup::connect(&impossible_helper, wrong_domain)
+                    .await
+                    .err()
+                    .unwrap(),
+                "discovered Host differs from its configured deployment or State Root"
+            );
+            let mut wrong_deployment = request();
+            wrong_deployment.deployment = Uuid::new_v4();
+            assert_eq!(
+                startup::connect(&impossible_helper, wrong_deployment)
+                    .await
+                    .err()
+                    .unwrap(),
+                "discovered Host differs from its configured deployment or State Root"
+            );
+            let mut invalid = request();
+            invalid.root = PathBuf::from("relative-root");
+            assert_eq!(
+                startup::connect(&impossible_helper, invalid)
+                    .await
+                    .err()
+                    .unwrap(),
+                "invalid local Host startup selection"
+            );
+
+            let original = fs::read(&fixture.registration).unwrap();
+            let mut stale: Value = serde_json::from_slice(&original).unwrap();
+            stale["pid"] = json!(status.pid.get() + 1);
+            fs::write(&fixture.registration, serde_json::to_vec(&stale).unwrap()).unwrap();
+            let rejected = startup::connect(&impossible_helper, request()).await;
+            fs::write(&fixture.registration, original).unwrap();
+            assert_eq!(
+                rejected.err().unwrap(),
+                "Host discovery is stale, incompatible or not ready"
+            );
+
+            // Individually valid field limits still permit an oversized encoded
+            // request. Live reuse must enforce bytes before selecting/spawning.
+            let mut oversized = request();
+            let mut endpoint = endpoints["business"].clone();
+            endpoint.grant.methods = (0..64)
+                .map(|index| format!("{index:03}{}", "x".repeat(253)))
+                .collect();
+            oversized.endpoints = (0..64)
+                .map(|index| (format!("endpoint-{index}"), endpoint.clone()))
+                .collect();
+            oversized.validate().unwrap();
+            let error = startup::connect(&impossible_helper, oversized)
+                .await
+                .err()
+                .expect("encoded request must be bounded before live reuse");
+            assert!(
+                error.contains("Application frame exceeds byte limit"),
+                "{error}"
+            );
+            assert_eq!(
+                query(&second, "business", "read", Value::Null).await,
+                json!({"effects":1})
+            );
+            reused.close().await.unwrap();
+
+            // Startup Anchor EOF is asynchronous. Observe the real session count,
+            // rather than mistaking helper drop for last-client ownership.
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let status = Client::status(&found.endpoint, Some(second.epoch()))
+                        .await
+                        .unwrap();
+                    found.verify(&status).unwrap();
+                    if status.sessions == 1 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("startup helper residency must leave only the accepted last Client");
+            second.quit().await.unwrap();
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    match RootOwner::open(&fixture.root, &namespaces) {
+                        Ok(owner) => {
+                            assert_eq!(owner.root_id(), fixture.root_id);
+                            drop(owner);
+                            break;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            tokio::task::yield_now().await
+                        }
+                        Err(error) => {
+                            panic!("reopen original Root after last-client quit: {error}")
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("last-client quit must release the original Root");
+            assert!(!fixture.registration.exists());
+            #[cfg(unix)]
+            assert!(!found.endpoint.exists());
+        })
+        .await
+        .unwrap();
+    });
+}

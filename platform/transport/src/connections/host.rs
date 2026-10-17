@@ -19,6 +19,7 @@
 
 //! Public session attachment and locally owned cohost execution.
 use super::*;
+use maka_host_runtime::application::host::discovery;
 pub(super) struct ConnectedHost {
     pub(super) owner: HostLink,
     pub(super) connection: Option<Arc<native::Connection>>,

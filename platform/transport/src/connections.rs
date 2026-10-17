@@ -26,7 +26,7 @@ use futures_util::{
     future::{BoxFuture, join_all},
 };
 use maka_event_log::{EventLog, root::RootNamespaces};
-use maka_host_runtime::application::host::{Client, discovery};
+use maka_host_runtime::application::host::Client;
 use maka_plugin_core::{
     composition::{ExecutionLocation, InstanceId, PresentationTarget},
     deployment::{DeploymentRef, RemoteObservation},
@@ -397,71 +397,28 @@ impl Connections {
         root: PathBuf,
         source: DeploymentRef,
     ) -> Result<crate::transport::Catalogue> {
-        let mut startup = None;
-        let mut discovered = match self.discover(&root).await {
-            Ok(discovered) => discovered,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                startup = Some(self.start_public_helper(&configuration, &root).await?);
-                self.discover(&root)
-                    .await
-                    .map_err(|error| error.to_string())?
-            }
-            Err(error) => return Err(error.to_string()),
-        };
         let HostLocation::Public { state_domain, .. } = &configuration.location else {
             unreachable!()
         };
-        if discovered.source.deployment != configuration.deployment
-            || state_domain
-                .as_ref()
-                .is_some_and(|expected| *expected != discovered.root_id)
-        {
-            return Err(
-                "discovered Host differs from its configured deployment or State Root".into(),
-            );
-        }
-        let stream = match maka_host_runtime::ipc::connect(&discovered.endpoint).await {
-            Ok(stream) => stream,
-            Err(error)
-                if startup.is_none()
-                    && error.downcast_ref::<std::io::Error>().is_some_and(|error| {
-                        error.kind() == std::io::ErrorKind::ConnectionRefused
-                            || error.kind() == std::io::ErrorKind::NotFound
-                    }) =>
-            {
-                startup = Some(self.start_public_helper(&configuration, &root).await?);
-                discovered = self
-                    .discover(&root)
-                    .await
-                    .map_err(|error| error.to_string())?;
-                maka_host_runtime::ipc::connect(&discovered.endpoint)
-                    .await
-                    .map_err(|error| error.to_string())?
-            }
-            Err(error) => return Err(error.to_string()),
+        let request = crate::startup::Request {
+            root,
+            state_domain: state_domain.clone(),
+            deployment: configuration.deployment,
+            endpoints: configuration.endpoints.clone(),
+            native: configuration.native.clone(),
         };
-        let status = Client::status_stream(stream, Some(discovered.host_epoch)).await?;
-        discovered
-            .verify(&status)
-            .map_err(|error| error.to_string())?;
-        if discovered.source.deployment != configuration.deployment
-            || state_domain
-                .as_ref()
-                .is_some_and(|expected| *expected != discovered.root_id)
-            || startup.as_ref().is_some_and(|(_, ready)| {
-                discovered.host_epoch != ready.epoch || discovered.root_id != ready.root_id
-            })
-        {
-            return Err("local Host identity changed during startup".into());
-        }
+        let prepared = crate::startup::prepare(&self.helper, &request, &self.namespaces).await?;
         let client = Client::connect_peer(
-            &discovered.endpoint,
-            Some(discovered.host_epoch),
+            &prepared.discovery.endpoint,
+            Some(prepared.discovery.host_epoch),
             source.clone(),
             consumers.clone(),
             configuration.endpoints.clone(),
         )
         .await?;
+        if client.source() != &prepared.discovery.source {
+            return Err("local Host source changed during admission".into());
+        }
         let catalogue = client.catalogue().clone();
         let connection =
             native::Connection::new(Arc::new(ipc::Connector::new(client.call_channel_opener()?)));
@@ -476,35 +433,8 @@ impl Connections {
             configuration,
             peers: crate::transport::Peers::new(crate::transport::Peer::new(source, consumers)?),
         });
-        drop(startup);
+        drop(prepared);
         Ok(catalogue)
-    }
-    async fn discover(&self, root: &Path) -> std::io::Result<discovery::Discovery> {
-        let namespaces = self.namespaces.clone();
-        let root = root.to_owned();
-        tokio::task::spawn_blocking(move || discovery::read_with_namespaces(&root, &namespaces))
-            .await
-            .map_err(std::io::Error::other)?
-    }
-    async fn start_public_helper(
-        &self,
-        configuration: &Host,
-        root: &Path,
-    ) -> Result<(crate::startup::Anchor, crate::startup::Ready)> {
-        let HostLocation::Public { state_domain, .. } = &configuration.location else {
-            unreachable!()
-        };
-        crate::startup::launch(
-            &self.helper,
-            crate::startup::Request {
-                root: root.to_owned(),
-                state_domain: state_domain.clone(),
-                deployment: configuration.deployment,
-                endpoints: configuration.endpoints.clone(),
-                native: configuration.native.clone(),
-            },
-        )
-        .await
     }
     async fn start_cohost(
         &mut self,

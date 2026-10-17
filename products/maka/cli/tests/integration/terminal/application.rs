@@ -267,9 +267,7 @@ fn plugin_application_setup_rejection_is_clean_and_diagnostics_cannot_emit_escap
     );
 }
 
-#[allow(dead_code)]
-#[path = "../../../../../../platform/transport/tests/support/mod.rs"]
-mod local_fixture;
+use crate::local_fixture;
 /// Tests retain the business Host independently of every foreground UI. This
 /// guard also retires product auto-started Hosts before temporary Roots vanish.
 pub(super) struct HostRootGuard(std::path::PathBuf);

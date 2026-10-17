@@ -17,14 +17,22 @@
  * under the License.
  */
 
-//! A finite trusted CLI helper holds startup residency until peer admission.
+//! Discover and admit local callers while the trusted CLI owns Host startup.
 use crate::{HostEndpoint, Result};
-use maka_host_runtime::application::transport::{NativeGrant, wire};
+use maka_event_log::root::RootNamespaces;
+use maka_host_runtime::application::{
+    host::{
+        Client,
+        discovery::{self, Discovery},
+    },
+    transport::{NativeGrant, wire},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     process::Stdio,
+    time::Duration,
 };
 use tokio::process::{Child, ChildStdin, Command};
 use uuid::Uuid;
@@ -71,15 +79,124 @@ pub struct Ready {
     pub root_id: String,
     pub epoch: Uuid,
 }
+/// Discover or start the explicitly selected Host and admit an owned caller.
+/// `executable` must be an absolute path to the trusted CLI launcher. Startup
+/// uses the current account's Root namespaces and never installs or repairs it.
+/// Endpoint/native selections prepare startup; a live Host retains its published
+/// catalogue and grants.
+/// Close the returned Client to detach; quit requests idle Host shutdown.
+/// Reconnecting never retries an unconfirmed mutation or confirms its cleanup.
+pub async fn connect(executable: &Path, request: Request) -> Result<Client> {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let namespaces =
+            RootNamespaces::for_current_account().map_err(|error| error.to_string())?;
+        let prepared = prepare(executable, &request, &namespaces).await?;
+        let client = Client::connect(
+            &prepared.discovery.endpoint,
+            Some(prepared.discovery.host_epoch),
+        )
+        .await?;
+        if client.source() != &prepared.discovery.source {
+            return Err("local Host source changed during admission".into());
+        }
+        drop(prepared);
+        Ok(client)
+    })
+    .await
+    .map_err(|_| "local Host connection/startup deadline elapsed".to_owned())?
+}
+
+pub(super) struct Prepared {
+    pub(super) discovery: Discovery,
+    _startup: Option<Anchor>,
+}
+
+/// Retains startup residency until the caller's actual session is admitted.
+pub(super) async fn prepare(
+    executable: &Path,
+    request: &Request,
+    namespaces: &RootNamespaces,
+) -> Result<Prepared> {
+    request.validate()?;
+    wire::encode_bounded(request, REQUEST_LIMIT)?;
+    if !executable.is_absolute() {
+        return Err("local Host startup executable must be absolute".into());
+    }
+    let mut startup = None;
+    let mut discovered = match discover(&request.root, namespaces).await {
+        Ok(discovered) => discovered,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            startup = Some(launch(executable, request).await?);
+            discover(&request.root, namespaces)
+                .await
+                .map_err(|error| error.to_string())?
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    check_selection(&discovered, request)?;
+    let stream = match maka_host_runtime::ipc::connect(&discovered.endpoint).await {
+        Ok(stream) => stream,
+        Err(error)
+            if startup.is_none()
+                && error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                    )
+                }) =>
+        {
+            startup = Some(launch(executable, request).await?);
+            discovered = discover(&request.root, namespaces)
+                .await
+                .map_err(|error| error.to_string())?;
+            check_selection(&discovered, request)?;
+            maka_host_runtime::ipc::connect(&discovered.endpoint)
+                .await
+                .map_err(|error| error.to_string())?
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let status = Client::status_stream(stream, Some(discovered.host_epoch)).await?;
+    discovered
+        .verify(&status)
+        .map_err(|error| error.to_string())?;
+    if startup.as_ref().is_some_and(|(_, ready)| {
+        discovered.host_epoch != ready.epoch || discovered.root_id != ready.root_id
+    }) {
+        return Err("local Host identity changed during startup".into());
+    }
+    Ok(Prepared {
+        discovery: discovered,
+        _startup: startup.map(|(anchor, _)| anchor),
+    })
+}
+
+fn check_selection(discovered: &Discovery, request: &Request) -> Result<()> {
+    if discovered.source.deployment != request.deployment
+        || request
+            .state_domain
+            .as_ref()
+            .is_some_and(|expected| *expected != discovered.root_id)
+    {
+        return Err("discovered Host differs from its configured deployment or State Root".into());
+    }
+    Ok(())
+}
+
+async fn discover(root: &Path, namespaces: &RootNamespaces) -> std::io::Result<Discovery> {
+    let root = root.to_owned();
+    let namespaces = namespaces.clone();
+    tokio::task::spawn_blocking(move || discovery::read_with_namespaces(&root, &namespaces))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
 /// Owns only a finite helper's startup pipe, never a Host process or UI calls.
-/// Dropping it releases startup residency after the real peer is connected.
-pub(crate) struct Anchor {
+struct Anchor {
     _child: Child,
     _input: ChildStdin,
 }
-pub(crate) async fn launch(executable: &Path, request: Request) -> Result<(Anchor, Ready)> {
-    request.validate()?;
-    wire::encode_bounded(&request, REQUEST_LIMIT)?;
+async fn launch(executable: &Path, request: &Request) -> Result<(Anchor, Ready)> {
     let mut child = Command::new(executable)
         .args(["host", "ensure"])
         .stdin(Stdio::piped())
@@ -89,7 +206,7 @@ pub(crate) async fn launch(executable: &Path, request: Request) -> Result<(Ancho
         .map_err(|error| format!("local Host startup helper: {error}"))?;
     let mut input = child.stdin.take().expect("piped startup input");
     let output = child.stdout.take().expect("piped startup output");
-    wire::write_bounded(&mut input, &request, REQUEST_LIMIT).await?;
+    wire::write_bounded(&mut input, request, REQUEST_LIMIT).await?;
     let ready: Ready = wire::Reader::new(output).read_bounded(4096).await?;
     if !crate::connections::valid_domain(&ready.root_id)
         || ready.epoch.is_nil()

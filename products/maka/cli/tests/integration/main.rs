@@ -22,6 +22,9 @@ mod candidate;
 mod code_command;
 #[cfg(unix)]
 mod desktop;
+#[allow(dead_code)]
+#[path = "../../../../../platform/transport/tests/support/mod.rs"]
+mod local_fixture;
 mod sandbox;
 mod terminal;
 #[path = "../../src/tests.rs"]
