@@ -26,6 +26,74 @@ use maka_event_log::sessions::PluginSession;
 use maka_plugin_core::scope::Scope as StorageScope;
 
 #[tokio::test]
+async fn history_search_options_match_persisted_unicode_literals_and_original_preview_offsets() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
+        let seed = fixture.create("Unicode search").await;
+        let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
+        let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
+        let owner = PluginSession {
+            session_id: session.clone(),
+            creator: Namespace::new("unicode-search.fixture", StorageScope::Profile).unwrap(),
+            fingerprint: "unicode-search-import".into(),
+            managed: false,
+            authority_session_id: None,
+        };
+        let texts = [
+            format!("xNeedle {} NeEdLe valid", "界".repeat(150)),
+            "literal .* token".into(),
+            "literal ab token".into(),
+            "CAFÉ accent".into(),
+            "ΟΣ uppercase".into(),
+            "ος final".into(),
+            "οσ medial".into(),
+            "MARK\u{301} MARK_ MARK\u{200d} MARK界".into(),
+            "mark".into(),
+            format!("{} CAFÉ original-tail", "Ⱥ".repeat(400)),
+        ];
+        let records = texts.into_iter().enumerate().map(|(i, text)| Record {
+            source_message_id: format!("unicode-{i}"),
+            source_turn_id: format!("unicode-turn-{i}"),
+            timestamp: Some(i as u64 + 1),
+            content: Content::User { text },
+        }).collect();
+        fixture.store.import_session(&owner,
+            &Source { adapter: "fixture".into(), session_id: "unicode-original".into() },
+            &configuration, records, now()).await.unwrap();
+        let through = *fixture.store.subscribe_commits().borrow();
+        for (query, case_sensitive, whole_word, expected) in [
+            ("NEEDLE", false, true, vec![format!("…{} NeEdLe valid", "界".repeat(21))]),
+            ("NEEDLE", true, true, vec![]),
+            (".*", false, true, vec!["literal .* token".into()]),
+            ("café", false, true, vec!["CAFÉ accent".into(), format!("…{} CAFÉ original-tail", "Ⱥ".repeat(32))]),
+            ("ος", false, true, vec!["ΟΣ uppercase".into(), "ος final".into(), "οσ medial".into()]),
+            ("mark", false, true, vec!["mark".into()]),
+            ("mark", false, false, vec!["MARK\u{301} MARK_ MARK\u{200d} MARK界".into(), "mark".into()]),
+        ] {
+            let mut actual = Vec::new();
+            let mut after = 0;
+            let mut finished = false;
+            for _ in 0..32 {
+                let page = fixture.query("search", json!({"sessionId":session,"through":through,"after":after,"query":query,"caseSensitive":case_sensitive,"wholeWord":whole_word,"includeInternal":false})).await.unwrap();
+                assert_eq!(page["through"], through);
+                if page["kind"] == "preparing" { continue; }
+                for hit in page["matches"].as_array().unwrap() {
+                    assert_eq!(hit["field"], "body");
+                    actual.push(hit["preview"].as_str().unwrap().to_owned());
+                }
+                let Some(next) = page["nextAfter"].as_u64() else { finished = true; break; };
+                assert!(next > after);
+                after = next;
+            }
+            assert!(finished, "{query}");
+            assert_eq!(actual, expected, "query={query} caseSensitive={case_sensitive} wholeWord={whole_word}");
+        }
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
 async fn history_search_preserves_empty_batches_and_exact_cursors_with_original_authority() {
     tokio::time::timeout(Duration::from_secs(45), async {
         let fixture = Fixture::new("http://127.0.0.1:9/v1", None).await;
@@ -55,7 +123,7 @@ async fn history_search_preserves_empty_batches_and_exact_cursors_with_original_
         }
         fixture.store.publish_session_import(&session, 112).await.unwrap();
         let through = *fixture.store.subscribe_commits().borrow();
-        let request = json!({"sessionId":session,"through":through,"after":0,"query":"中😀","includeInternal":false});
+        let request = json!({"sessionId":session,"through":through,"after":0,"query":"中😀","caseSensitive":true,"wholeWord":false,"includeInternal":false});
         let mut input = request.clone();
         let mut matches = Vec::new();
         let mut empty_continuation = false;
@@ -126,7 +194,7 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
         let body = format!("user-body-hit {}", "中😀\0\n".repeat(1400));
         let thought = format!("thinking-hit {}", "中😀\0\n".repeat(1400));
         let args = json!({"argument-key-hit": "原始😀\"\n".repeat(1400)});
-        let result = json!({"result-key-hit": "原始输出😀".repeat(1400)});
+        let result = json!({"nested": {"result-key-hit": "原始输出😀".repeat(1400)}});
         let records = [
             Content::User { text: body.clone() },
             Content::Assistant { text: String::new(), model: None, thinking: Some(thought.clone()) },
@@ -162,16 +230,16 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
         }
         for (query, field, expected, is_tool) in [
             ("user-body-hit", "body", body, false),
-            ("thinking-hit 中", "thinking", thought, false),
+            ("THINKING-HIT 中", "thinking", thought, false),
             ("body-hit-after", "body", "body-hit-after-empty-thought".to_owned(), false),
             ("other-thinking-hit", "thinking", "other-thinking-hit".to_owned(), false),
             ("tool-name-hit", "tool_name", "tool-name-hit".to_owned(), true),
             ("argument-key-hit", "arguments", serde_json::to_string(&args).unwrap(), true),
-            ("result-key-hit", "result", serde_json::to_string(&result).unwrap(), true),
+            ("RESULT-KEY-HIT", "result", serde_json::to_string(&result).unwrap(), true),
         ] {
             let mut hit = None;
             for _ in 0..8 {
-                let page = fixture.query("search", json!({"sessionId":session,"through":through,"after":0,"query":query,"includeInternal":false})).await.unwrap();
+                let page = fixture.query("search", json!({"sessionId":session,"through":through,"after":0,"query":query,"caseSensitive":!matches!(field, "thinking" | "result"),"wholeWord":false,"includeInternal":false})).await.unwrap();
                 if page["kind"] == "preparing" { continue; }
                 assert_eq!(page["matches"].as_array().unwrap().len(), 1, "{query}");
                 hit = Some(page["matches"][0].clone()); break;
@@ -209,7 +277,7 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
                             assert_eq!(related["source"]["role"], role);
                             assert_eq!(related["source"]["fields"], fields);
                             assert_eq!(related["source"]["timestamp"], source["timestamp"]);
-                            if query == "thinking-hit 中" && other == "body" { assert_eq!(related["source"]["text"], ""); }
+                            if query == "THINKING-HIT 中" && other == "body" { assert_eq!(related["source"]["text"], ""); }
                         }
                     }
                     assert_eq!(source["sequence"], sequence);
@@ -248,7 +316,7 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
                     }
                 }
             }
-            if query == "thinking-hit 中" {
+            if query == "THINKING-HIT 中" {
                 let page = fixture.query("history", json!({"sessionId":session,"through":through,"position":{"kind":"after","cursor":hit["cursor"]}})).await.unwrap();
                 assert_ne!(page["chunks"][0]["sequence"], sequence, "body projection must not be mistaken for the search source");
                 for (key, value) in [("sessionId", json!("foreign")), ("through", json!(0)), ("field", json!("arguments"))] {

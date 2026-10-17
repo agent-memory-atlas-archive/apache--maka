@@ -287,6 +287,8 @@ function scan(search: ConversationSearch, actions: Action[]) {
     through: history.through,
     after,
     query: search.query,
+    caseSensitive: true,
+    wholeWord: false,
     includeInternal: false,
   });
   history.scanning = true;

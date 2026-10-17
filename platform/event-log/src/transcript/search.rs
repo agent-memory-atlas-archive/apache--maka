@@ -20,6 +20,7 @@
 use super::read::{prepared, sql_number};
 use crate::{EventLog, StoreError, sequence_number, sessions};
 use maka_agent_ports::session::history::SourceField;
+use regex::{Regex, RegexBuilder};
 use serde_json::Value;
 use sqlx::{Connection, Row, SqliteConnection};
 
@@ -28,6 +29,8 @@ pub struct TranscriptSearch {
     /// Last scanned message sequence, exclusive. Zero starts at the beginning.
     pub after: u64,
     pub query: String,
+    pub case_sensitive: bool,
+    pub whole_word: bool,
     pub include_internal: bool,
     pub max_matches: usize,
 }
@@ -62,6 +65,16 @@ impl EventLog {
                 "invalid transcript search".into(),
             ));
         }
+        let escaped = regex::escape(&input.query);
+        let pattern = if input.whole_word {
+            format!(r"\b{{start-half}}{escaped}\b{{end-half}}")
+        } else {
+            escaped
+        };
+        let matcher = RegexBuilder::new(&pattern)
+            .case_insensitive(!input.case_sensitive)
+            .build()
+            .map_err(|_| StoreError::InvalidTransition("invalid transcript search".into()))?;
         let session = session.to_owned();
         self.connection
             .run(move |connection| {
@@ -107,7 +120,7 @@ impl EventLog {
                         {
                             continue;
                         }
-                        if let Some((field, preview)) = matching_text(&row, &input.query) {
+                        if let Some((field, preview)) = matching_text(&row, &matcher) {
                             result.matches.push(TranscriptMatch {
                                 sequence: position,
                                 field,
@@ -152,8 +165,8 @@ async fn internal(
     ))
 }
 
-fn matching_text(row: &Value, query: &str) -> Option<(SourceField, String)> {
-    let find = |field, value: &str| text(value, query).map(|preview| (field, preview));
+fn matching_text(row: &Value, matcher: &Regex) -> Option<(SourceField, String)> {
+    let find = |field, value: &str| text(value, matcher).map(|preview| (field, preview));
     match row["type"].as_str()? {
         "user" => find(
             SourceField::Body,
@@ -172,15 +185,15 @@ fn matching_text(row: &Value, query: &str) -> Option<(SourceField, String)> {
             row["toolName"].as_str().unwrap_or(""),
         )
         .or_else(|| {
-            json_text(&row["args"], query).map(|preview| (SourceField::Arguments, preview))
+            json_text(&row["args"], matcher).map(|preview| (SourceField::Arguments, preview))
         }),
         "tool_result" => match row["content"]["kind"].as_str()? {
             "text" => find(SourceField::Result, row["content"]["text"].as_str()?),
-            "json" => json_text(&row["content"]["value"], query)
+            "json" => json_text(&row["content"]["value"], matcher)
                 .map(|preview| (SourceField::Result, preview)),
             "operation" => json_text(
                 &row["content"]["reply"]["receipt"]["outcome"]["value"],
-                query,
+                matcher,
             )
             .map(|preview| (SourceField::Result, preview)),
             _ => None, // No searching image bytes or storage locators.
@@ -198,10 +211,10 @@ fn matching_text(row: &Value, query: &str) -> Option<(SourceField, String)> {
         _ => None,
     }
 }
-fn json_text(value: &Value, query: &str) -> Option<String> {
+fn json_text(value: &Value, matcher: &Regex) -> Option<String> {
     match value {
-        Value::String(value) => text(value, query),
-        Value::Array(values) => values.iter().find_map(|value| json_text(value, query)),
+        Value::String(value) => text(value, matcher),
+        Value::Array(values) => values.iter().find_map(|value| json_text(value, matcher)),
         Value::Object(values) => {
             if matches!(value["type"].as_str(), Some("image" | "audio")) || value["kind"] == "image"
             {
@@ -209,14 +222,14 @@ fn json_text(value: &Value, query: &str) -> Option<String> {
             }
             values
                 .iter()
-                .find_map(|(key, value)| text(key, query).or_else(|| json_text(value, query)))
+                .find_map(|(key, value)| text(key, matcher).or_else(|| json_text(value, matcher)))
         }
         Value::Null => None,
-        value => text(&value.to_string(), query),
+        value => text(&value.to_string(), matcher),
     }
 }
-fn text(value: &str, query: &str) -> Option<String> {
-    let found = value.find(query)?;
+fn text(value: &str, matcher: &Regex) -> Option<String> {
+    let found = matcher.find(value)?.start();
     let start = value.floor_char_boundary(found.saturating_sub(64));
     let end = value.floor_char_boundary((start + 378).min(value.len()));
     let mut preview = String::new();
@@ -238,53 +251,56 @@ fn text(value: &str, query: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    fn literal(query: &str) -> Regex {
+        Regex::new(&regex::escape(query)).unwrap()
+    }
     #[test]
     fn search_is_literal_content_only_and_previews_are_bounded_unicode() {
         let row = json!({"type":"user","id":"private-id","text":"raw hidden","displayText":"中文🦀 needle"});
         assert_eq!(
-            matching_text(&row, "中文")
+            matching_text(&row, &literal("中文"))
                 .map(|(_, preview)| preview)
                 .as_deref(),
             Some("中文🦀 needle")
         );
-        assert!(matching_text(&row, "private-id").is_none());
-        assert!(matching_text(&row, "hidden").is_none());
-        assert!(matching_text(&row, "NEEDLE").is_none());
+        assert!(matching_text(&row, &literal("private-id")).is_none());
+        assert!(matching_text(&row, &literal("hidden")).is_none());
+        assert!(matching_text(&row, &literal("NEEDLE")).is_none());
         let operation = json!({"type":"tool_result","content":{"kind":"operation","reply":{
             "reference":{"method":"private-reference"},"receipt":{"outcome":{"value":{"text":"business 中😀", "number":42}}}
         }}});
         assert_eq!(
-            matching_text(&operation, "中😀"),
+            matching_text(&operation, &literal("中😀")),
             Some((SourceField::Result, "business 中😀".into()))
         );
-        assert!(matching_text(&operation, "private-reference").is_none());
+        assert!(matching_text(&operation, &literal("private-reference")).is_none());
         // Shape alone does not change ordinary JSON's content semantics.
         let ordinary = json!({"type":"tool_result","content":{"kind":"json","value":operation["content"]["reply"]}});
-        assert!(matching_text(&ordinary, "private-reference").is_some());
+        assert!(matching_text(&ordinary, &literal("private-reference")).is_some());
         assert!(
             matching_text(
                 &json!({"type":"tool_result","content":{"kind":"image","ref":"needle"}}),
-                "needle"
+                &literal("needle")
             )
             .is_none()
         );
         assert!(
             json_text(
                 &json!({"content":[{"type":"image","data":"needle"}]}),
-                "needle"
+                &literal("needle")
             )
             .is_none()
         );
         assert!(
             json_text(
                 &json!({"content":[{"type":"text","text":"needle"}]}),
-                "needle"
+                &literal("needle")
             )
             .is_some()
         );
         let preview = text(
             &format!("{}needle\n{}", "界".repeat(100), "界".repeat(200)),
-            "needle",
+            &literal("needle"),
         )
         .unwrap();
         assert!(
@@ -293,6 +309,6 @@ mod tests {
                 && preview.starts_with('…')
                 && preview.ends_with('…')
         );
-        assert_eq!(text("a .* b", ".*").as_deref(), Some("a .* b"));
+        assert_eq!(text("a .* b", &literal(".*")).as_deref(), Some("a .* b"));
     }
 }

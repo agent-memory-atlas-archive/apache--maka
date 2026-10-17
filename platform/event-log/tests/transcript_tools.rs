@@ -302,6 +302,8 @@ async fn tool_boundaries_page_independently_and_rebuild_exact_ids_without_readin
                         through: maka_presentation::watermark(through).unwrap(),
                         after,
                         query: query.into(),
+                        case_sensitive: true,
+                        whole_word: false,
                         include_internal,
                         max_matches: 64,
                     },

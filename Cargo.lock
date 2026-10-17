@@ -9148,6 +9148,7 @@ dependencies = [
  "maka-plugin-core",
  "maka-presentation",
  "maka-sandbox",
+ "regex",
  "rusqlite",
  "schemars 1.2.2",
  "serde",

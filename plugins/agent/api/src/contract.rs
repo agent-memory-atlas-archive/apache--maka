@@ -1159,9 +1159,14 @@ pub struct HistorySearch {
     /// Exclusive transcript-row sequence returned by the previous batch; zero starts a scan.
     #[schemars(range(max = 9_007_199_254_740_991u64))]
     pub after: u64,
-    /// Literal, case-sensitive query, additionally limited to 512 UTF-8 bytes.
+    /// Literal query, additionally limited to 512 UTF-8 bytes; no normalization.
     #[schemars(length(min = 1, max = 512))]
     pub query: String,
+    /// False uses Unicode simple case folding, without locale or multi-character folding.
+    pub case_sensitive: bool,
+    /// Require no adjacent Unicode word character (Alphabetic, marks, decimal
+    /// digits, connector punctuation or join controls); not dictionary segmentation.
+    pub whole_word: bool,
     pub include_internal: bool,
 }
 

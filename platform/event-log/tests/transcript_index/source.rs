@@ -372,7 +372,7 @@ async fn failure_search_reads_original_diagnostic_fields_and_visible_body() {
         .await
         .unwrap();
     log.append(&event("failed", opening())).await.unwrap();
-    let message = format!("failure-hit {}", "中😀\n".repeat(2000));
+    let message = format!("failure-hit a... é Straße {}", "中😀\n".repeat(2000));
     let through = end(
         &log,
         "failed",
@@ -384,6 +384,41 @@ async fn failure_search_reads_original_diagnostic_fields_and_visible_body() {
     )
     .await;
     assert!(log.prepare_transcript("failed", through, 32).await.unwrap());
+    // The first '..' touches 'a'; the overlapping second occurrence is valid.
+    // Simple case folding does not normalize é or expand ß into SS.
+    for (query, count) in [
+        ("..", 1),
+        ("é", 1),
+        ("e\u{301}", 0),
+        ("straße", 1),
+        ("STRASSE", 0),
+    ] {
+        let result = log
+            .search_transcript(
+                "failed",
+                maka_event_log::transcript::search::TranscriptSearch {
+                    through: maka_presentation::watermark(through).unwrap(),
+                    after: 0,
+                    query: query.into(),
+                    case_sensitive: false,
+                    whole_word: true,
+                    include_internal: false,
+                    max_matches: 16,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.matches.len(), count, "{query}");
+        if count == 1 {
+            assert_eq!(result.matches[0].field, SourceField::FailureMessage);
+            assert!(
+                result.matches[0]
+                    .preview
+                    .starts_with("failure-hit a... é Straße ")
+            );
+        }
+        assert_eq!(result.next_after, None);
+    }
     for (query, field, expected) in [
         // The original transcript intentionally limits displayed failure messages
         // to 256 UTF-8 bytes; source reads preserve that same searchable field.
@@ -405,6 +440,8 @@ async fn failure_search_reads_original_diagnostic_fields_and_visible_body() {
                     through: maka_presentation::watermark(through).unwrap(),
                     after: 0,
                     query: query.into(),
+                    case_sensitive: true,
+                    whole_word: false,
                     include_internal: false,
                     max_matches: 16,
                 },

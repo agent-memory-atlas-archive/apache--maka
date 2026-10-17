@@ -803,3 +803,116 @@ async fn independent_public_agent_client_finds_published_fork_after_uncertain_ho
         server.await.unwrap().unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_public_agent_client_searches_history_with_case_and_word_flags() {
+    async fn search(client: &Client, input: Value) -> Result<Value, String> {
+        loop {
+            let mut call = client
+                .call("agent", "search".into(), input.clone(), Default::default())
+                .await?;
+            let result = async {
+                call.start().await?;
+                match call.receive().await? {
+                    Reply::Finished { result, cleanup } => {
+                        cleanup?;
+                        result
+                    }
+                    reply => Err(format!(
+                        "history search did not return a query result: {reply:?}"
+                    )),
+                }
+            }
+            .await;
+            call.close().await?;
+            assert!(call.cleanup_confirmed());
+            let page = result?;
+            if page["kind"] != "preparing" {
+                return Ok(page);
+            }
+        }
+    }
+
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut fixture = Fixture::open().await;
+        let session = fixture.session.clone();
+        let models = support::query(&fixture.native, "settings", "models", json!({"kind":"start"})).await;
+        let accepted = support::mutate(&fixture.native, "agent", "send", json!({
+            "sessionId":session,"message":"catalog Cat",
+            "model":models["choices"][0]["selection"],"thinkingLevel":"off",
+        })).await;
+        assert_eq!(accepted["kind"], "started");
+        let mut updates = watch(&fixture.native, &session, 0).await;
+        let request = fixture.model_requests.recv().await.unwrap();
+        assert_eq!(request.body["model"], "fixture-model");
+        request.reply.send(json!({"index":0,"delta":{"content":"Search fixture response"},"finish_reason":"stop"})).unwrap();
+        loop {
+            if let DeliveryPage::Events { events, .. } = page(&mut updates).await
+                && events.iter().any(|event| event.invocation_id == accepted["invocationId"].as_str().unwrap()
+                    && matches!(&event.fact, DeliveryFact::Ended { .. })) {
+                break;
+            }
+        }
+        updates.close().await.unwrap();
+        assert!(updates.cleanup_confirmed());
+        let observed = support::query(&fixture.native, "agent", "observe", json!({"sessionId":session})).await;
+        let through = observed["through"].as_u64().unwrap();
+        let input = json!({
+            "sessionId":session,"through":through,"after":0,"query":"CAT",
+            "includeInternal":false,"caseSensitive":false,"wholeWord":true,
+        });
+        // Keep a rejected future contract as a value until the real Host has settled.
+        let result: Result<Value, String> = async {
+            let found = search(&fixture.native, input.clone()).await?;
+            assert_eq!(found["kind"], "ready");
+            assert_eq!(found["through"], through);
+            assert_eq!(found["nextAfter"], Value::Null);
+            let hits = found["matches"].as_array().unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0]["field"], "body");
+            assert_eq!(hits[0]["preview"], "catalog Cat");
+            assert_eq!(hits[0]["cursor"]["offset"], 0);
+            let source = support::query(&fixture.native, "agent", "source", json!({
+                "sessionId":session,"through":through,
+                "source":{"kind":"sequence","sequence":hits[0]["cursor"]["sequence"]},
+                "field":hits[0]["field"],"position":{"kind":"start"},
+            })).await;
+            assert_eq!(source["kind"], "ready");
+            assert_eq!(source["through"], through);
+            assert_eq!(source["source"]["role"], "user");
+            assert_eq!(source["source"]["sequence"], hits[0]["cursor"]["sequence"]);
+            assert_eq!(source["source"]["field"], "body");
+            assert_eq!(source["source"]["text"], "catalog Cat");
+            for (query, case_sensitive, whole_word, expected) in [
+                ("CAT", true, true, 0),
+                ("CATAL", false, true, 0),
+                ("CATAL", false, false, 1),
+            ] {
+                let page = search(&fixture.native, json!({
+                    "sessionId":session,"through":through,"after":0,"query":query,
+                    "includeInternal":false,"caseSensitive":case_sensitive,"wholeWord":whole_word,
+                })).await?;
+                assert_eq!(page["kind"], "ready");
+                assert_eq!(page["through"], through);
+                assert_eq!(page["nextAfter"], Value::Null);
+                assert_eq!(page["matches"].as_array().unwrap().len(), expected, "{query}, caseSensitive={case_sensitive}, wholeWord={whole_word}");
+                if expected == 1 {
+                    assert_eq!(page["matches"], found["matches"]);
+                }
+            }
+            fixture.native.close().await?;
+            fixture.client.close().await?;
+            let mut reconnected = Client::connect(&fixture.endpoint, Some(fixture.epoch)).await?;
+            let repeated = search(&reconnected, input.clone()).await;
+            reconnected.close().await?;
+            assert_eq!(repeated?, found, "reconnect preserves the original fence and exact match cursor");
+            Ok(found)
+        }.await;
+        fixture.native.close().await.unwrap();
+        fixture.client.close().await.unwrap();
+        let mut final_client = Client::connect(&fixture.endpoint, Some(fixture.epoch)).await.unwrap();
+        final_client.quit().await.unwrap();
+        fixture.server.await.unwrap().unwrap();
+        result.expect("the public history search must accept and apply caseSensitive and wholeWord");
+    }).await.unwrap();
+}

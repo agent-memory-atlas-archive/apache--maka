@@ -552,6 +552,8 @@ impl Handler for Agent {
                                     through: fence,
                                     after: input.after,
                                     query: input.query,
+                                    case_sensitive: input.case_sensitive,
+                                    whole_word: input.whole_word,
                                     include_internal: input.include_internal,
                                     max_matches: 16,
                                 },

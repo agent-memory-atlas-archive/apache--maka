@@ -23569,17 +23569,35 @@ export const contracts = {
               },
               query: {
                 description:
-                  'Literal, case-sensitive query, additionally limited to 512 UTF-8 bytes.',
+                  'Literal query, additionally limited to 512 UTF-8 bytes; no normalization.',
                 type: 'string',
                 minLength: 1,
                 maxLength: 512,
+              },
+              caseSensitive: {
+                description:
+                  'False uses Unicode simple case folding, without locale or multi-character folding.',
+                type: 'boolean',
+              },
+              wholeWord: {
+                description:
+                  'Require no adjacent Unicode word character (Alphabetic, marks, decimal\ndigits, connector punctuation or join controls); not dictionary segmentation.',
+                type: 'boolean',
               },
               includeInternal: {
                 type: 'boolean',
               },
             },
             additionalProperties: false,
-            required: ['sessionId', 'through', 'after', 'query', 'includeInternal'],
+            required: [
+              'sessionId',
+              'through',
+              'after',
+              'query',
+              'caseSensitive',
+              'wholeWord',
+              'includeInternal',
+            ],
           },
           output: {
             $schema: 'https://json-schema.org/draft/2020-12/schema',

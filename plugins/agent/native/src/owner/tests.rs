@@ -960,7 +960,7 @@ async fn canonical_history_is_bounded_utf8_and_keeps_its_original_fence() {
         assert!(finished);
         assert_eq!(newer_user, "Hello");
         assert_eq!(newer_assistant, "Later response");
-        let search = |through| json!({"sessionId":session,"through":through,"after":0,"query":"Later response","includeInternal":false});
+        let search = |through| json!({"sessionId":session,"through":through,"after":0,"query":"Later response","caseSensitive":true,"wholeWord":false,"includeInternal":false});
         let original_search = fixture.query("search", search(event_fence)).await.unwrap();
         assert_eq!(original_search["matches"], json!([]));
         let current_search = fixture.query("search", search(newer_fence.unwrap())).await.unwrap();

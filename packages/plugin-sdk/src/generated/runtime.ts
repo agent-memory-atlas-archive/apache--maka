@@ -10602,9 +10602,18 @@ export interface AgentHistorySearch {
    */
   after: number;
   /**
-   * Literal, case-sensitive query, additionally limited to 512 UTF-8 bytes.
+   * Literal query, additionally limited to 512 UTF-8 bytes; no normalization.
    */
   query: string;
+  /**
+   * False uses Unicode simple case folding, without locale or multi-character folding.
+   */
+  caseSensitive: boolean;
+  /**
+   * Require no adjacent Unicode word character (Alphabetic, marks, decimal
+   * digits, connector punctuation or join controls); not dictionary segmentation.
+   */
+  wholeWord: boolean;
   includeInternal: boolean;
 }
 export interface AgentHistoryMatch {

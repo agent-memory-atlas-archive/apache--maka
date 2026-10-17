@@ -1237,6 +1237,8 @@ async fn installed_javascript_service_is_a_real_model_tool_with_business_project
                     through,
                     after: 0,
                     query: "journal_v1".into(),
+                    case_sensitive: true,
+                    whole_word: false,
                     include_internal: true,
                     max_matches: 64,
                 },
