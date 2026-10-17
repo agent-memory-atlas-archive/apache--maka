@@ -164,6 +164,7 @@ async fn seed(log: &EventLog, invocation: &Invocation, call: &ModelToolCall) {
         .await
         .unwrap();
     append(Fact::ModelRequested {
+        context_breakdown: None,
         item_acceptance: false,
         effective_source_digest: None,
         step_id: "step".into(),

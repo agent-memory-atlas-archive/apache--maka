@@ -56,6 +56,7 @@ async fn accounting_pages_bound_bytes_without_dropping_records_or_reading_respon
     for i in 0..80 {
         log.append_batch(&[
             event(Fact::ModelRequested {
+                context_breakdown: None,
                 item_acceptance: false,
                 step_id: format!("step-{i}"),
                 model_id: format!("{i}-{}", "model".repeat(400)),

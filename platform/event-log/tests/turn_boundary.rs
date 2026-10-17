@@ -74,6 +74,7 @@ async fn turn_control_reads_survive_history_budget_exhaustion_and_reopen() {
         log.append(
             &EventWrite::plain(
                 (event(Fact::ModelRequested {
+                    context_breakdown: None,
                     item_acceptance: false,
                     purpose: maka_agent_facts::context::ModelPurpose::Main,
                     context: None,

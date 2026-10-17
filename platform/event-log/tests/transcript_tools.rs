@@ -77,6 +77,7 @@ async fn accepted(log: &EventLog, step: &str, name: &str) -> u64 {
     };
     let facts = [
         Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             purpose: maka_agent_facts::context::ModelPurpose::Main,
             context: None,

@@ -42,6 +42,7 @@ fn request(id: &str, step: &str, purpose: ModelPurpose, source: &ModelContextSou
     event(
         id,
         Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             effective_source_digest: (purpose == ModelPurpose::Summary)
                 .then(|| source.effective_source_digest.clone()),

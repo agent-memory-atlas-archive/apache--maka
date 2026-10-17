@@ -43,6 +43,7 @@ pub(super) fn opening() -> Fact {
 }
 pub(super) fn request(session: &str) -> Fact {
     Fact::ModelRequested {
+        context_breakdown: None,
         item_acceptance: false,
         purpose: maka_agent_facts::context::ModelPurpose::Main,
         context: None,

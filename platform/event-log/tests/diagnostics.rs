@@ -95,6 +95,7 @@ async fn diagnostic_pages_preserve_sources_fences_and_operational_copy_scope() {
         &log,
         &invocation,
         Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             step_id: "step".into(),
             model_id: "requested".into(),

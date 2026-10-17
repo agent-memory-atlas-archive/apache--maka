@@ -61,6 +61,7 @@ fn events(outcome: InvocationOutcome) -> Vec<StoredEvent> {
             },
         },
         Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             effective_source_digest: None,
             purpose: maka_agent_facts::context::ModelPurpose::Main,

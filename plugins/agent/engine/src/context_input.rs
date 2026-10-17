@@ -19,63 +19,121 @@
 
 //! Fit only a provider's summary input. Canonical history is never shortened.
 use crate::RunInput;
-use maka_agent_facts::context::ModelPurpose;
+use maka_agent_facts::context::{
+    ContextBucket, ContextCounts, ModelPurpose, PreparedContextBreakdown,
+};
 use maka_agent_facts::model::ToolInput;
 use maka_model::prompt::{AssistantPart, ContentPart, Message, ToolOutput};
 
 /// A preflight estimate, never measured provider usage. Attachment encodings
 /// are not text tokens; provider overflow is handled by fitting a smaller request.
 pub(super) fn estimate(prompt: &[Message]) -> u64 {
-    prompt
-        .iter()
-        .map(|message| {
-            16 + match message {
-                Message::System { content, .. } => text_tokens(content),
-                Message::User { content, .. } => content.iter().map(content_tokens).sum(),
-                Message::Assistant { content, .. } => content
-                    .iter()
-                    .map(|part| match part {
+    prompt_breakdown(prompt).estimated_tokens()
+}
+
+pub(super) fn breakdown(
+    prompt: &[Message],
+    tools: &[maka_model::ToolDefinition],
+) -> PreparedContextBreakdown {
+    let mut measured = prompt_breakdown(prompt);
+    measured.counts.tools = tools.len() as u64;
+    add_json(&mut measured.tool_schemas, tools);
+    measured
+}
+
+fn prompt_breakdown(prompt: &[Message]) -> PreparedContextBreakdown {
+    let mut measured = PreparedContextBreakdown::default();
+    for message in prompt {
+        measured.counts.messages += 1;
+        let (bucket, counts) = match message {
+            Message::System { .. } => (&mut measured.system, &mut measured.counts),
+            Message::User { .. } => (&mut measured.user, &mut measured.counts),
+            Message::Assistant { .. } => (&mut measured.assistant, &mut measured.counts),
+            Message::Tool { .. } => (&mut measured.tool, &mut measured.counts),
+        };
+        bucket.estimated_tokens += 16;
+        match message {
+            Message::System { content, .. } => add_text(bucket, content),
+            Message::User { content, .. } => {
+                for part in content {
+                    add_content(bucket, counts, part);
+                }
+            }
+            Message::Assistant { content, .. } => {
+                for part in content {
+                    match part {
                         AssistantPart::Text { text, .. }
-                        | AssistantPart::Reasoning { text, .. } => text_tokens(text),
+                        | AssistantPart::Reasoning { text, .. } => add_text(bucket, text),
                         AssistantPart::ToolCall {
                             tool_name, input, ..
                         } => {
-                            16 + text_tokens(tool_name)
-                                + match input {
-                                    ToolInput::Json(value) => json_tokens(value),
-                                    ToolInput::InvalidJson { raw } => text_tokens(raw),
-                                }
+                            counts.tool_calls += 1;
+                            bucket.estimated_tokens += 16;
+                            add_text(bucket, tool_name);
+                            match input {
+                                ToolInput::Json(value) => add_json(bucket, value),
+                                ToolInput::InvalidJson { raw } => add_text(bucket, raw),
+                            }
                         }
                         AssistantPart::ToolResult {
                             tool_name, output, ..
-                        } => 16 + text_tokens(tool_name) + output_tokens(output),
-                    })
-                    .sum(),
-                Message::Tool { content, .. } => content
-                    .iter()
-                    .map(|part| 16 + text_tokens(&part.tool_name) + output_tokens(&part.output))
-                    .sum(),
+                        } => add_result(bucket, counts, tool_name, output),
+                    }
+                }
             }
-        })
-        .sum()
+            Message::Tool { content, .. } => {
+                for part in content {
+                    add_result(bucket, counts, &part.tool_name, &part.output);
+                }
+            }
+        }
+    }
+    measured
 }
-fn text_tokens(text: &str) -> u64 {
-    (text.len() as u64).div_ceil(3)
+
+fn add_text(bucket: &mut ContextBucket, text: &str) {
+    add_bytes(bucket, text.len() as u64);
 }
-fn content_tokens(part: &ContentPart) -> u64 {
+fn add_bytes(bucket: &mut ContextBucket, bytes: u64) {
+    bucket.content_bytes += bytes;
+    // Preserve each original estimator term's rounding, not ceil(sum(bytes)/3).
+    bucket.estimated_tokens += bytes.div_ceil(3);
+}
+fn add_json(bucket: &mut ContextBucket, value: &(impl serde::Serialize + ?Sized)) {
+    add_bytes(bucket, json_bytes(value));
+}
+fn add_content(bucket: &mut ContextBucket, counts: &mut ContextCounts, part: &ContentPart) {
     match part {
-        ContentPart::Text { text, .. } => text_tokens(text),
-        ContentPart::File { .. } => 1024,
+        ContentPart::Text { text, .. } => add_text(bucket, text),
+        ContentPart::File { .. } => {
+            counts.media += 1;
+            bucket.estimated_tokens += 1024;
+        }
     }
 }
-fn output_tokens(output: &ToolOutput) -> u64 {
+fn add_result(
+    bucket: &mut ContextBucket,
+    counts: &mut ContextCounts,
+    name: &str,
+    output: &ToolOutput,
+) {
+    counts.tool_results += 1;
+    bucket.estimated_tokens += 16;
+    add_text(bucket, name);
     match output {
-        ToolOutput::Text(text) | ToolOutput::ErrorText(text) => text_tokens(text),
-        ToolOutput::Json(value) | ToolOutput::ErrorJson(value) => json_tokens(value),
-        ToolOutput::Content(parts) => parts.iter().map(content_tokens).sum(),
+        ToolOutput::Text(text) | ToolOutput::ErrorText(text) => add_text(bucket, text),
+        ToolOutput::Json(value) | ToolOutput::ErrorJson(value) => add_json(bucket, value),
+        ToolOutput::Content(parts) => {
+            for part in parts {
+                add_content(bucket, counts, part);
+            }
+        }
     }
 }
 pub(super) fn json_tokens(value: &(impl serde::Serialize + ?Sized)) -> u64 {
+    json_bytes(value).div_ceil(3)
+}
+fn json_bytes(value: &(impl serde::Serialize + ?Sized)) -> u64 {
     struct Count(u64);
     impl std::io::Write for Count {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -88,7 +146,7 @@ pub(super) fn json_tokens(value: &(impl serde::Serialize + ?Sized)) -> u64 {
     }
     let mut count = Count(0);
     serde_json::to_writer(&mut count, value).expect("model prompt is serializable");
-    count.0.div_ceil(3)
+    count.0
 }
 
 /// Keep 4% of total context capacity (200k if unknown) available for summary
@@ -199,8 +257,7 @@ fn excerpt(text: &str, bytes: usize) -> String {
 /// This cap never changes the configured model limit or the persisted history.
 pub(super) fn output_limit<W>(
     input: &RunInput<W>,
-    prompt: &[Message],
-    tools: &[maka_model::ToolDefinition],
+    estimated_input_tokens: u64,
     requested: u64,
     purpose: ModelPurpose,
 ) -> u64 {
@@ -213,10 +270,6 @@ pub(super) fn output_limit<W>(
         .as_ref()
         .and_then(|context| context.model_context_window)
         .map_or(requested, |window| {
-            requested.min(
-                window
-                    .saturating_sub(estimate(prompt).saturating_add(json_tokens(tools)))
-                    .max(minimum),
-            )
+            requested.min(window.saturating_sub(estimated_input_tokens).max(minimum))
         })
 }

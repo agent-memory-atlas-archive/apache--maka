@@ -66,6 +66,7 @@ async fn invoke(
         EventWrite::plain(RuntimeEvent::new(
             invocation.clone(),
             Fact::ModelRequested {
+                context_breakdown: None,
                 item_acceptance: false,
                 step_id: step.into(),
                 model_id: "fixture".into(),

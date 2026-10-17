@@ -114,6 +114,7 @@ pub async fn accepted(log: &EventLog, invocation: &Invocation, calls: &[ModelToo
             },
         },
         Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             effective_source_digest: None,
             step_id: invocation.invocation_id.clone(),

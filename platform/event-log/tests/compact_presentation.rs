@@ -117,6 +117,7 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
             &mut view,
             &compact,
             Fact::ModelRequested {
+                context_breakdown: None,
                 item_acceptance: false,
                 purpose: ModelPurpose::Summary,
                 context: None,

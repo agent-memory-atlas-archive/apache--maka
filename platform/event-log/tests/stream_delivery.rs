@@ -51,6 +51,7 @@ fn observed(step: &str, observation: ModelEvent) -> Fact {
 
 fn request(step: &str) -> Fact {
     Fact::ModelRequested {
+        context_breakdown: None,
         item_acceptance: false,
         purpose: maka_agent_facts::context::ModelPurpose::Main,
         context: None,

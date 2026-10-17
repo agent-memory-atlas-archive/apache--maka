@@ -140,6 +140,9 @@ pub enum Fact {
         purpose: crate::context::ModelPurpose,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<crate::context::ModelRequestContext>,
+        /// Measured from this request's prepared adapter input before dispatch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_breakdown: Option<crate::context::PreparedContextBreakdown>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effective_source_digest: Option<String>,
     },

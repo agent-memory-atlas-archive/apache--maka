@@ -123,6 +123,7 @@ async fn interrupted_and_terminal_fallback_catalog_match_committed_presentation_
             &log,
             &mut view,
             Fact::ModelRequested {
+                context_breakdown: None,
                 item_acceptance: false,
                 purpose: maka_agent_facts::context::ModelPurpose::Main,
                 context: None,

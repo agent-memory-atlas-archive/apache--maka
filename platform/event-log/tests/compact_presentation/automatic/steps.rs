@@ -35,6 +35,7 @@ pub(super) async fn step(
         log,
         inv,
         Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             step_id: id.into(),
             model_id: "model".into(),

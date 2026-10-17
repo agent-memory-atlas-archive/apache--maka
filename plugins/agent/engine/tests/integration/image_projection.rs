@@ -55,7 +55,7 @@ async fn reopened_images_do_not_starve_current_images_and_each_artifact_read_is_
         let message = serde_json::from_value(json!({"text":"historical", "attachments":[historical]})).unwrap();
         let facts = [
             Fact::InvocationOpened { input: InvocationInput::Message { source_messages: Vec::new(), content: message, request_fingerprint: None }, configuration: None },
-            Fact::ModelRequested { item_acceptance: false, effective_source_digest: None, purpose: maka_agent_facts::context::ModelPurpose::Main, context: None, checkpoint_event_id: None, step_id: "prior-step".into(), model_id: "test".into(),
+            Fact::ModelRequested { item_acceptance: false, effective_source_digest: None, purpose: maka_agent_facts::context::ModelPurpose::Main, context: None, context_breakdown: None, checkpoint_event_id: None, step_id: "prior-step".into(), model_id: "test".into(),
                 source_scope: maka_agent_facts::event::LogScope::Session { id: "session".into() },
                 source_high_water: 1, source_digest: "fixture".into(), input_digest: "fixture".into(), route_identity: "fixture".into() },
             Fact::ModelCompleted { step_id: "prior-step".into(), output: serde_json::from_value(json!({
@@ -212,4 +212,97 @@ async fn cancelled_image_turn_does_not_commit_or_send_a_model_request() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prepared_context_breakdown_measures_projected_roles_and_freezes_literal_counts() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("events.sqlite");
+        let log = Arc::new(EventLog::open(&path).await.unwrap());
+        log.create_session("session", "create", &json!({}), 1).await.unwrap();
+        artifact(&log, "tool", 8, true).await;
+        let prior = identity("historical");
+        for fact in [
+            Fact::InvocationOpened {
+                input: InvocationInput::Message { source_messages: Vec::new(), content: "é".into(), request_fingerprint: None },
+                configuration: None,
+            },
+            Fact::ModelRequested {
+                item_acceptance: false, effective_source_digest: None,
+                purpose: maka_agent_facts::context::ModelPurpose::Main,
+                context: None, context_breakdown: None, checkpoint_event_id: None,
+                step_id: "prior-step".into(), model_id: "test".into(),
+                source_scope: maka_agent_facts::event::LogScope::Session { id: "session".into() },
+                source_high_water: 1, source_digest: "fixture".into(), input_digest: "fixture".into(), route_identity: "fixture".into(),
+            },
+            Fact::ModelCompleted { step_id: "prior-step".into(), output: serde_json::from_value(json!({
+                "parts":[{"kind":"tool_call","call":{"id":"read","name":"Read","input":{"kind":"json","data":{}},"provider_executed":false}}],
+                "finish_reason":"tool-calls", "usage":{}})).unwrap() },
+            Fact::ToolDispatched { presentation: None, title: None,
+                operation_id: "prior-step:read".into(), call: ToolCallIdentity::provider("prior-step".into(), "read".into()),
+                name: "Read".into(), input: json!({}),
+            },
+        ] {
+            log.append(&EventWrite::plain(RuntimeEvent::new(prior.clone(), fact)).unwrap()).await.unwrap();
+        }
+        log.append(&EventWrite::tool_success("prior-result".into(), std::time::SystemTime::now(), prior.clone(), "prior-step:read".into(),
+            ToolOutput::Image(ImageOutput { detail: None, mime_type: "image/png".into(), reference: serde_json::from_value(attachment("tool")["ref"].clone()).unwrap() }).into()).unwrap().0).await.unwrap();
+        log.append(&EventWrite::plain(RuntimeEvent::new(prior, Fact::InvocationEnded { outcome: InvocationOutcome::Completed })).unwrap()).await.unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let body = request(&mut socket).await;
+            respond(&mut socket).await;
+            body
+        });
+        let effect = Arc::new(crate::support::agent_loop::Effect { log: log.clone(), count: Arc::new(std::sync::atomic::AtomicUsize::new(0)) });
+        let mut input = crate::support::agent_loop::input(&base, "current", effect);
+        input.supports_vision = true;
+        input.configuration.system_prompt = Some(maka_agent_facts::execution::SystemPrompt { text: "系".into(), policy_revision: 1, sources: Vec::new() });
+        input.context = Some(maka_agent_facts::context::ModelRequestContext {
+            provider_id: "fixture".into(), context_window: Some(1300), model_context_window: Some(1300), declared_window: None,
+        });
+        let maka_agent_engine::RunWork::Message { message, .. } = &mut input.work else { unreachable!() };
+        *message = "😀".into();
+        let engine = engine(log.clone());
+        engine.run(input, CancellationToken::new()).await.unwrap();
+        engine.drain().await;
+        let body = server.await.unwrap();
+        let prefix = log.prefix(100, 128 * 1024).await.unwrap();
+        let measured = prefix.events.iter().find_map(|event| match &event.event.fact {
+            Fact::ModelRequested { context_breakdown, .. } if event.event.invocation.invocation_id == "invocation-current" => context_breakdown.clone(),
+            _ => None,
+        }).unwrap();
+        drop(engine);
+        Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
+        let reopened = EventLog::open(&path).await.unwrap();
+        let persisted = reopened.prefix(100, 128 * 1024).await.unwrap();
+        reopened.close().await.unwrap();
+
+        assert_eq!(body["messages"].as_array().unwrap().len(), 6);
+        assert_eq!(body["messages"][0]["content"], "系");
+        assert_eq!(body["messages"][3]["role"], "tool");
+        assert_eq!(body["messages"][3]["content"], r#"[{"type":"text","text":"Image read successfully."}]"#);
+        assert_eq!(body["messages"][4]["role"], "user");
+        assert_eq!(body["messages"][4]["content"][0]["text"], "Images from tool Read (toolCallId: read):");
+        assert!(body["messages"][4]["content"][1]["image_url"]["url"].as_str().unwrap().starts_with("data:image/png;base64,"));
+        assert_eq!(body["tools"][0]["function"]["name"], "echo");
+        assert_eq!(serde_json::to_value(&measured).unwrap(), json!({
+            "system":{"contentBytes":3,"estimatedTokens":17},
+            "user":{"contentBytes":47,"estimatedTokens":1089},
+            "assistant":{"contentBytes":6,"estimatedTokens":35},
+            "tool":{"contentBytes":28,"estimatedTokens":42},
+            "toolSchemas":{"contentBytes":70,"estimatedTokens":24},
+            "counts":{"messages":6,"media":1,"toolCalls":1,"toolResults":1,"tools":1}
+        }));
+        // Original estimator: tool message 16 + result 16 + ceil(Read's 4/3)
+        // + ceil(the retained 24-byte success text / 3) = 42; no fallback text.
+        assert_eq!(measured.estimated_tokens(), 1207);
+        assert_eq!(body["max_tokens"], 93, "1300 capacity minus the original 1207-token input heuristic");
+        assert!(persisted.events.iter().any(|event| matches!(&event.event.fact,
+            Fact::ModelRequested { context_breakdown: Some(value), .. } if value == &measured)));
+    }).await.unwrap();
 }

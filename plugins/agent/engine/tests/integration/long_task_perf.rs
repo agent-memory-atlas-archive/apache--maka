@@ -95,6 +95,7 @@ async fn seed(
                 item_acceptance: tool_count == 0,
                 purpose: ModelPurpose::Main,
                 context: None,
+                context_breakdown: None,
                 checkpoint_event_id: None,
                 effective_source_digest: None,
                 step_id: step.clone(),

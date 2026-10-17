@@ -217,7 +217,7 @@ mod tests {
             Fact::InvocationOpened { configuration: None, input: InvocationInput::Message {
                 content: "question".into(), request_fingerprint: None, source_messages: Vec::new(),             }},
             Fact::ModelRequested { item_acceptance: false, step_id: "step".into(), model_id: "old".into(), route_identity: "old".into(),
-                purpose: maka_agent_facts::context::ModelPurpose::Main, context: None, source_scope: maka_agent_facts::event::LogScope::Root, source_high_water: 1,
+                purpose: maka_agent_facts::context::ModelPurpose::Main, context: None, context_breakdown: None, source_scope: maka_agent_facts::event::LogScope::Root, source_high_water: 1,
                 source_digest: "fixture".into(), input_digest: "fixture".into(), checkpoint_event_id: None, effective_source_digest: None },
             Fact::ModelCompleted { step_id: "step".into(), output: serde_json::from_value(json!({
                 "parts":[

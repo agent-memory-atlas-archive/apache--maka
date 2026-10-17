@@ -79,6 +79,7 @@ async fn request_mode(log: &EventLog, item_acceptance: bool) {
             effective_source_digest: None,
             purpose: maka_agent_facts::context::ModelPurpose::Main,
             context: None,
+            context_breakdown: None,
             checkpoint_event_id: None,
             step_id: "step".into(),
             model_id: "test".into(),

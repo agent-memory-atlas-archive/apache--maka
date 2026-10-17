@@ -287,6 +287,13 @@ export type RuntimeProtocol =
   | FormResponse
   | WorkspaceProcessConfiguration
   | WorkspacePath
+  | AgentContextRead
+  | AgentContextReport
+  | AgentContextRequest
+  | AgentContextRequestState
+  | PreparedContextBreakdown
+  | ContextBucket
+  | ContextCounts
   | AgentFileListRead
   | AgentFileWatch
   | AgentFileCursor
@@ -4411,6 +4418,7 @@ export type FormResult =
     };
 export type QuestionRejection = 'invalid_input' | 'unavailable';
 export type WorkspaceProcessSessionKind = 'agent' | 'workhub';
+export type AgentContextRequestState = 'requested' | 'completed' | 'interrupted';
 export type AgentFileKind = 'file' | 'directory' | 'symlink' | 'other';
 export type AgentFileChange =
   | {
@@ -10059,6 +10067,82 @@ export interface Policy {
 }
 export interface WorkspacePath {
   bytesBase64: string;
+}
+export interface AgentContextRead {
+  sessionId: string;
+  /**
+   * Null captures the committed head; a supplied fence must not exceed it.
+   */
+  through: number | null;
+}
+export interface AgentContextReport {
+  through: number;
+  /**
+   * Latest Main request made by this Session, excluding copied source requests.
+   */
+  request: AgentContextRequest | null;
+}
+export interface AgentContextRequest {
+  invocationId: string;
+  stepId: string;
+  sequence: number;
+  /**
+   * Original request timestamp in milliseconds since the Unix epoch.
+   */
+  recordedAt: number;
+  /**
+   * Original input history fence, before this request was recorded.
+   */
+  sourceThrough: number;
+  modelId: string;
+  contextWindow: number | null;
+  inputLimit: number | null;
+  state: AgentContextRequestState;
+  /**
+   * Original Host prepared-input measurements, not provider wire sizes or exact tokenization.
+   */
+  breakdown: PreparedContextBreakdown | null;
+  /**
+   * Provider-reported input tokens from this exact completed step, if available.
+   */
+  reportedInputTokens: number | null;
+}
+/**
+ * Host-prepared adapter input, not provider tokenization or HTTP wire bytes.
+ */
+export interface PreparedContextBreakdown {
+  system: ContextBucket;
+  user: ContextBucket;
+  assistant: ContextBucket;
+  /**
+   * Messages with the tool role; assistant-embedded results stay in assistant.
+   */
+  tool: ContextBucket;
+  toolSchemas: ContextBucket;
+  counts: ContextCounts;
+}
+export interface ContextBucket {
+  /**
+   * UTF-8 text and compact JSON payload bytes counted by the Host heuristic.
+   * Excludes file encodings, message metadata, request-level provider options
+   * and synthetic framing overhead. Tool definitions are counted in full.
+   */
+  contentBytes: number;
+  /**
+   * Heuristic: separately rounded text/JSON bytes / 3, plus message/tool
+   * framing and 1024 per media part. Never provider-measured tokens.
+   */
+  estimatedTokens: number;
+}
+export interface ContextCounts {
+  messages: number;
+  media: number;
+  toolCalls: number;
+  /**
+   * Result parts across both tool and assistant roles.
+   */
+  toolResults: number;
+  tools: number;
 }
 export interface AgentFileListRead {
   sessionId: string;

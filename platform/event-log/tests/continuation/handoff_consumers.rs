@@ -171,6 +171,7 @@ async fn handoff_output_keeps_one_public_identity_and_all_physical_evidence_afte
             &RuntimeEvent::new(
                 current.invocation.clone(),
                 Fact::ModelRequested {
+                    context_breakdown: None,
                     item_acceptance: false,
                     purpose: maka_agent_facts::context::ModelPurpose::Main,
                     context: None,

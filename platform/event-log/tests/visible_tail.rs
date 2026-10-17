@@ -134,6 +134,7 @@ async fn visible_ids_match_presentation_for_accepted_and_partial_parts_across_ca
             &mut view,
             &mut ids,
             Fact::ModelRequested {
+                context_breakdown: None,
                 item_acceptance: false,
                 purpose: maka_agent_facts::context::ModelPurpose::Main,
                 context: None,

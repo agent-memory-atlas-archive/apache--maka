@@ -47,6 +47,7 @@ async fn handoff_reserves_successor_and_cancellation_before_sealing_a_near_capac
             &RuntimeEvent::new(
                 source.invocation.clone(),
                 Fact::ModelRequested {
+                    context_breakdown: None,
                     item_acceptance: false,
                     step_id: "step".into(),
                     model_id: "test".into(),

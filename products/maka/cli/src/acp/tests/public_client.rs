@@ -416,3 +416,163 @@ async fn independent_public_agent_client_lists_and_watches_files_after_reconnect
     .await
     .unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_public_agent_client_reads_context_without_own_model_request() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut fixture = Fixture::open().await;
+        let before = {
+            use sqlx::Connection;
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&fixture.database)
+                .read_only(true);
+            let mut connection = sqlx::SqliteConnection::connect_with(&options)
+                .await
+                .unwrap();
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM application_intents")
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            connection.close().await.unwrap();
+            count
+        };
+        let observed = support::query(
+            &fixture.native,
+            "agent",
+            "observe",
+            json!({"sessionId":fixture.session}),
+        )
+        .await;
+        let result: Result<Value, String> = async {
+            let mut call = fixture
+                .native
+                .call(
+                    "agent",
+                    "context".into(),
+                    json!({
+                        "sessionId":fixture.session,"through":null,
+                    }),
+                    Default::default(),
+                )
+                .await?;
+            call.start().await?;
+            let reply = call.receive().await?;
+            let Reply::Finished { result, cleanup } = reply else {
+                return Err(format!("context query did not finish: {reply:?}"));
+            };
+            cleanup?;
+            assert!(call.cleanup_confirmed());
+            assert!(!call.holds_caller_intent());
+            result
+        }
+        .await;
+        // A session without its own model request has no prepared input to report.
+        let expected = json!({"through":observed["through"],"request":null});
+        if let Ok(value) = &result {
+            assert_eq!(value, &expected);
+        }
+        // Close both clients even when the query was rejected.
+        fixture.native.close().await.unwrap();
+        fixture.client.close().await.unwrap();
+        let status = Client::status(&fixture.endpoint, Some(fixture.epoch))
+            .await
+            .unwrap();
+        assert_eq!(status.sessions, 0);
+        assert!(!status.closing && !status.closed);
+        let mut reconnected = Client::connect(&fixture.endpoint, Some(fixture.epoch))
+            .await
+            .unwrap();
+        if result.is_ok() {
+            assert_eq!(
+                support::query(
+                    &reconnected,
+                    "agent",
+                    "context",
+                    json!({
+                        "sessionId":fixture.session,"through":observed["through"],
+                    })
+                )
+                .await,
+                expected
+            );
+            let mut foreign = reconnected
+                .call(
+                    "agent",
+                    "context".into(),
+                    json!({
+                        "sessionId":"foreign-session","through":null,
+                    }),
+                    Default::default(),
+                )
+                .await
+                .unwrap();
+            foreign.start().await.unwrap();
+            let Reply::Finished { result, cleanup } = foreign.receive().await.unwrap() else {
+                panic!("foreign context query did not settle");
+            };
+            assert_eq!(result.unwrap_err(), "agent_session_unavailable");
+            cleanup.unwrap();
+            assert!(foreign.cleanup_confirmed());
+            // The Settings endpoint does not expose this Agent method.
+            let mut unselected = reconnected
+                .call(
+                    "settings",
+                    "context".into(),
+                    json!({
+                        "sessionId":fixture.session,"through":null,
+                    }),
+                    Default::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                unselected.start().await.unwrap_err(),
+                "Application method is not granted"
+            );
+            unselected.close().await.unwrap();
+            assert!(unselected.cleanup_confirmed());
+            assert_eq!(
+                support::query(
+                    &reconnected,
+                    "agent",
+                    "context",
+                    json!({
+                        "sessionId":fixture.session,"through":observed["through"],
+                    })
+                )
+                .await,
+                expected
+            );
+        }
+        reconnected.quit().await.unwrap();
+        fixture.server.await.unwrap().unwrap();
+        {
+            use sqlx::Connection;
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&fixture.database)
+                .read_only(true);
+            let mut connection = sqlx::SqliteConnection::connect_with(&options)
+                .await
+                .unwrap();
+            let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM application_intents")
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            connection.close().await.unwrap();
+            assert_eq!(
+                after, before,
+                "context queries and rejections must not create caller intents"
+            );
+        }
+        assert!(
+            fixture.model_requests.try_recv().is_err(),
+            "context reads must not request a model"
+        );
+        assert_eq!(
+            result.expect("the public Agent context query must be available"),
+            json!({"through":observed["through"],"request":null}),
+        );
+    })
+    .await
+    .unwrap();
+}

@@ -27,6 +27,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+#[path = "contract_context.rs"]
+mod context;
+pub use context::*;
 #[path = "contract_files.rs"]
 mod files;
 pub use files::*;
@@ -1500,6 +1503,10 @@ pub fn contract() -> Contract {
                 (
                     "watchFiles".into(),
                     method::<FileWatch, FileChange>(MethodMode::Subscription),
+                ),
+                (
+                    "context".into(),
+                    method::<ContextRead, ContextReport>(MethodMode::Query),
                 ),
                 (
                     "gitStatus".into(),

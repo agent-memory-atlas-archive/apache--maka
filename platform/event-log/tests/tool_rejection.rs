@@ -57,6 +57,7 @@ async fn malformed_accepted_call_cannot_dispatch_and_recovers_exactly_once() {
     let input = ToolInput::from_json(raw.into());
     log.append_batch(&[
         write(Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: true,
             purpose: maka_agent_facts::context::ModelPurpose::Main,
             context: None,

@@ -20,6 +20,8 @@
 use crate::model::{ModelFinishReason, ModelPart, ModelStep, TextKind};
 use serde::{Deserialize, Serialize};
 
+mod breakdown;
+pub use breakdown::{ContextBucket, ContextCounts, PreparedContextBreakdown};
 mod checkpoint_mode;
 mod summary;
 pub use checkpoint_mode::CheckpointMode;

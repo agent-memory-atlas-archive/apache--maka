@@ -66,6 +66,7 @@ async fn canonical_images_use_original_agent_grants_and_bounded_base64() {
     fixture
         .store
         .append(&write(Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             purpose: maka_agent_facts::context::ModelPurpose::Main,
             context: None,

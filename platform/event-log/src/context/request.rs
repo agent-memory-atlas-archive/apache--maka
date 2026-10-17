@@ -40,11 +40,15 @@ pub(super) async fn validate(
         route_identity,
         checkpoint_event_id,
         effective_source_digest,
+        context_breakdown,
         ..
     } = &event.fact
     else {
         return Ok(());
     };
+    if let Some(breakdown) = context_breakdown {
+        breakdown.validate().map_err(invalid)?;
+    }
     let (opened, opening) = proof::by_kind(
         connection,
         &event.invocation.invocation_id,

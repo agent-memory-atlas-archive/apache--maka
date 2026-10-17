@@ -68,6 +68,7 @@ async fn request(log: &EventLog, step: &str, items: bool) {
         .unwrap(),
     );
     let write = event(Fact::ModelRequested {
+        context_breakdown: None,
         item_acceptance: items,
         step_id: step.into(),
         model_id: "m".into(),

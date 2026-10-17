@@ -121,6 +121,7 @@ async fn reopened_pending_main_and_summary_are_failed_without_replaying_admissio
                         purpose: maka_agent_facts::context::ModelPurpose::Summary,
                         model_id: "test".into(),
                         context: None,
+                        context_breakdown: None,
                         source_scope: source.source_evidence.scope,
                         source_high_water: source.source_evidence.high_water,
                         source_digest: source.source_evidence.digest,

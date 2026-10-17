@@ -9292,6 +9292,236 @@ export const contracts = {
           },
           resources: {},
         },
+        context: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentContextRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              through: {
+                description:
+                  'Null captures the committed head; a supplied fence must not exceed it.',
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'through'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentContextReport',
+            type: 'object',
+            properties: {
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              request: {
+                description:
+                  'Latest Main request made by this Session, excluding copied source requests.',
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentContextRequest',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['through', 'request'],
+            $defs: {
+              AgentContextRequest: {
+                type: 'object',
+                properties: {
+                  invocationId: {
+                    type: 'string',
+                  },
+                  stepId: {
+                    type: 'string',
+                  },
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  recordedAt: {
+                    description: 'Original request timestamp in milliseconds since the Unix epoch.',
+                    type: 'number',
+                    format: 'double',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  sourceThrough: {
+                    description: 'Original input history fence, before this request was recorded.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  modelId: {
+                    type: 'string',
+                  },
+                  contextWindow: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  inputLimit: {
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 1,
+                    maximum: 9007199254740991,
+                  },
+                  state: {
+                    $ref: '#/$defs/AgentContextRequestState',
+                  },
+                  breakdown: {
+                    description:
+                      'Original Host prepared-input measurements, not provider wire sizes or exact tokenization.',
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/PreparedContextBreakdown',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
+                  reportedInputTokens: {
+                    description:
+                      'Provider-reported input tokens from this exact completed step, if available.',
+                    type: ['integer', 'null'],
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: [
+                  'invocationId',
+                  'stepId',
+                  'sequence',
+                  'recordedAt',
+                  'sourceThrough',
+                  'modelId',
+                  'contextWindow',
+                  'inputLimit',
+                  'state',
+                  'breakdown',
+                  'reportedInputTokens',
+                ],
+              },
+              AgentContextRequestState: {
+                type: 'string',
+                enum: ['requested', 'completed', 'interrupted'],
+              },
+              PreparedContextBreakdown: {
+                description:
+                  'Host-prepared adapter input, not provider tokenization or HTTP wire bytes.',
+                type: 'object',
+                properties: {
+                  system: {
+                    $ref: '#/$defs/ContextBucket',
+                  },
+                  user: {
+                    $ref: '#/$defs/ContextBucket',
+                  },
+                  assistant: {
+                    $ref: '#/$defs/ContextBucket',
+                  },
+                  tool: {
+                    description:
+                      'Messages with the tool role; assistant-embedded results stay in assistant.',
+                    $ref: '#/$defs/ContextBucket',
+                  },
+                  toolSchemas: {
+                    $ref: '#/$defs/ContextBucket',
+                  },
+                  counts: {
+                    $ref: '#/$defs/ContextCounts',
+                  },
+                },
+                additionalProperties: false,
+                required: ['system', 'user', 'assistant', 'tool', 'toolSchemas', 'counts'],
+              },
+              ContextBucket: {
+                type: 'object',
+                properties: {
+                  contentBytes: {
+                    description:
+                      'UTF-8 text and compact JSON payload bytes counted by the Host heuristic.\nExcludes file encodings, message metadata, request-level provider options\nand synthetic framing overhead. Tool definitions are counted in full.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  estimatedTokens: {
+                    description:
+                      'Heuristic: separately rounded text/JSON bytes / 3, plus message/tool\nframing and 1024 per media part. Never provider-measured tokens.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: ['contentBytes', 'estimatedTokens'],
+              },
+              ContextCounts: {
+                type: 'object',
+                properties: {
+                  messages: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  media: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  toolCalls: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  toolResults: {
+                    description: 'Result parts across both tool and assistant roles.',
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  tools: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
+                required: ['messages', 'media', 'toolCalls', 'toolResults', 'tools'],
+              },
+            },
+          },
+          resources: {},
+        },
         create: {
           mode: 'mutation',
           input: {

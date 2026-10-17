@@ -382,6 +382,7 @@ pub(super) async fn execute_once(
             effective_source_digest: Some(source.effective_digest.clone()),
             purpose,
             context: input.context.clone(),
+            context_breakdown: Some(prepared.context_breakdown),
             step_id: step_id.clone(),
             model_id: input.provider.model.clone(),
             source_scope: source.evidence.scope.clone(),
@@ -459,6 +460,7 @@ pub(super) async fn execute_once(
 }
 
 pub(super) struct PreparedRequest {
+    pub context_breakdown: maka_agent_facts::context::PreparedContextBreakdown,
     pub request: ModelRequest,
     pub input_digest: String,
     pub route_identity: String,
@@ -487,10 +489,13 @@ pub(super) fn prepare_request<W>(
     };
     let prompt = history::project_compatible(prompt, &input.provider.kind);
     let prompt = maka_model::reasoning::project(prompt, &input.provider.kind);
+    let context_breakdown = crate::context_input::breakdown(&prompt, &definitions);
+    context_breakdown
+        .validate()
+        .map_err(|error| RunError::Internal(error.into()))?;
     let max_output_tokens = Some(crate::context_input::output_limit(
         input,
-        &prompt,
-        &definitions,
+        context_breakdown.estimated_tokens(),
         max_output_tokens.unwrap_or(8000),
         purpose,
     ));
@@ -512,6 +517,7 @@ pub(super) fn prepare_request<W>(
         max_output_tokens,
     })?;
     Ok(PreparedRequest {
+        context_breakdown,
         request: ModelRequest {
             provider: input.provider.clone(),
             prompt,

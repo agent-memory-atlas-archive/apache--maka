@@ -44,6 +44,7 @@ fn request(id: &str, source: &ModelContextSource) -> EventWrite {
     event(
         id,
         Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             effective_source_digest: Some(source.effective_source_digest.clone()),
             purpose: maka_agent_facts::context::ModelPurpose::Summary,
@@ -81,6 +82,7 @@ pub(super) async fn closed(
     log.append(&event(
         id,
         Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             effective_source_digest: None,
             purpose: maka_agent_facts::context::ModelPurpose::Main,

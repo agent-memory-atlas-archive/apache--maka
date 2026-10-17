@@ -376,6 +376,7 @@ mod tests {
             Some(12 + text_units("draft now admitted"))
         );
         let request = Fact::ModelRequested {
+            context_breakdown: None,
             item_acceptance: false,
             step_id: "next".into(),
             model_id: "other".into(),

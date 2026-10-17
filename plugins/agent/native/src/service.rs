@@ -270,6 +270,7 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.create(input, operation, context.scope()).await?)
                 }
+                "context" => encode(owner.context(decode(input)?, context.scope()).await?),
                 "gitStatus" => {
                     let result = encode(owner.git_status(decode(input)?, context.scope()).await?)?;
                     maka_plugin_core::json::check_delivery(&result, 512 * 1024)

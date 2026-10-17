@@ -85,6 +85,16 @@ impl Fixture {
             async move { host.serve_local(listener, stop).await }
         });
         let native = Native::connect(&endpoint, Some(epoch)).await.unwrap();
+        assert!(
+            native
+                .catalogue()
+                .describe("agent")
+                .unwrap()
+                .registration_epoch
+                .is_some(),
+            "public Agent fixture failed to activate: {:?}",
+            native.catalogue().startup_error(),
+        );
         let roots = query(&native, "agent", "directories", json!({"kind":"roots"})).await;
         let created = mutate(&native, "agent", "create", json!({"title":"SDK session","labels":[],"workspace":{"kind":"directory","selection":roots["roots"][0]["selection"]}})).await;
         let session = created["session"]["id"].as_str().unwrap().to_owned();

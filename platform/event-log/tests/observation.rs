@@ -253,6 +253,7 @@ async fn active_stream_seeds_are_fenced_bounded_and_survive_reopen() {
         log.append(
             &EventWrite::plain(
                 (event(Fact::ModelRequested {
+                    context_breakdown: None,
                     item_acceptance: false,
                     purpose: maka_agent_facts::context::ModelPurpose::Main,
                     context: None,
@@ -482,6 +483,7 @@ async fn stream_seed_bytes_are_bounded_before_identity_hydration() {
         .unwrap();
         log.append(
             &EventWrite::plain(event(Fact::ModelRequested {
+                context_breakdown: None,
                 item_acceptance: false,
                 purpose: maka_agent_facts::context::ModelPurpose::Main,
                 context: None,

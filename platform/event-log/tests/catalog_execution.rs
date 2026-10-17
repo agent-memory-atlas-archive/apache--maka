@@ -97,6 +97,7 @@ async fn execution_projection_is_bounded_and_catalog_revision_tracks_committed_f
             (RuntimeEvent::new(
                 invocation.clone(),
                 Fact::ModelRequested {
+                    context_breakdown: None,
                     item_acceptance: false,
                     purpose: maka_agent_facts::context::ModelPurpose::Main,
                     context: None,

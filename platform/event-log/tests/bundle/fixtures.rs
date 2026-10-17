@@ -52,6 +52,17 @@ pub(super) async fn output(
     let event = |fact| EventWrite::plain(RuntimeEvent::new(invocation.clone(), fact)).unwrap();
     log.append(
         &event(Fact::ModelRequested {
+            context_breakdown: Some(maka_agent_facts::context::PreparedContextBreakdown {
+                system: maka_agent_facts::context::ContextBucket {
+                    content_bytes: 3,
+                    estimated_tokens: 17,
+                },
+                counts: maka_agent_facts::context::ContextCounts {
+                    messages: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
             item_acceptance: false,
             step_id: step.into(),
             model_id: "test".into(),
