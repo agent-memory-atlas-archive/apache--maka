@@ -89,7 +89,7 @@ pub(super) async fn run(args: Serve) -> Result<(), HostError> {
     let registration = host.publish_registration(&endpoint.path, None)?;
     println!(
         "{}",
-        json!({"kind":"ready","rootId":host.root_id(),"socketPath":endpoint.path})
+        json!({"kind":"ready","rootId":host.root_id(),"hostEpoch":host.epoch(),"socketPath":endpoint.path})
     );
     let result = crate::serve::listen(endpoint, None, host, cancellation).await;
     result.and(registration.remove().map_err(Into::into))

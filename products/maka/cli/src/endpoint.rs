@@ -36,7 +36,7 @@ impl LocalEndpoint {
             tempfile::Builder::new()
                 .prefix("maka-host-")
                 .permissions(std::fs::Permissions::from_mode(0o700))
-                .tempdir_in("/tmp")?
+                .tempdir()?
         };
         #[cfg(unix)]
         let path = directory.path().join("h.sock");

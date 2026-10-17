@@ -420,7 +420,33 @@ fn local_arguments(
         let mut line = String::new();
         stdout.read_line(&mut line).unwrap();
         let ready: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(ready["kind"], "ready");
+        let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            use maka_host_runtime::application::host::{Client, discovery};
+            assert_eq!(ready["kind"], "ready");
+            let epoch = ready["hostEpoch"]
+                .as_str()
+                .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                .expect("actual application serve Ready must include its Host epoch");
+            assert!(!epoch.is_nil());
+            let found = discovery::read(&directory.join("host")).unwrap();
+            assert_eq!(ready["rootId"], found.root_id);
+            assert_eq!(ready["socketPath"], found.endpoint.to_str().unwrap());
+            assert_eq!(epoch, found.host_epoch);
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let path = std::path::Path::new(ready["socketPath"].as_str().unwrap());
+                let mut client = Client::connect(path, Some(epoch)).await.unwrap();
+                let status = Client::status(path, Some(epoch)).await.unwrap();
+                found.verify(&status).unwrap();
+                assert_eq!(status.epoch, epoch);
+                client.close().await.unwrap();
+            });
+        }));
+        if let Err(panic) = checked {
+            HostRootGuard::new(&directory.join("host")).stop();
+            child.wait().unwrap();
+            std::panic::resume_unwind(panic);
+        }
         Some(child)
     };
     (

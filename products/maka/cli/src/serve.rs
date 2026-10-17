@@ -101,7 +101,7 @@ pub(super) async fn run(
             .map(|listener| listener.local_addr())
             .transpose()?,
     )?;
-    let mut ready = json!({"kind":"ready","rootId":host.root_id(),"socketPath":endpoint.path});
+    let mut ready = json!({"kind":"ready","rootId":host.root_id(),"hostEpoch":host.epoch(),"socketPath":endpoint.path});
     if let Some(listener) = &websocket {
         ready["websocketUrl"] = format!("ws://{}/runtime-host", listener.local_addr()?).into();
     }

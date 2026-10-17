@@ -38,6 +38,11 @@ fn candidate_preserves_root_authority_and_drains_on_owner_loss_or_released_idle(
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut predecessor = None;
+    #[cfg(unix)]
+    let socket_temp = tempfile::Builder::new()
+        .prefix("mkt-")
+        .tempdir_in("/tmp")
+        .unwrap();
     enum End {
         OwnerLoss,
         ReleasedIdle,
@@ -62,6 +67,8 @@ fn candidate_preserves_root_authority_and_drains_on_owner_loss_or_released_idle(
         let mut command = Command::new(env!("CARGO_BIN_EXE_maka"));
         if matches!(end, End::Standalone) {
             command.args(["host", "serve", "--root"]).arg(&fixture.root);
+            #[cfg(unix)]
+            command.env("TMPDIR", socket_temp.path());
         } else {
             command
                 .args(["host", "candidate", "--root"])
@@ -81,12 +88,29 @@ fn candidate_preserves_root_authority_and_drains_on_owner_loss_or_released_idle(
         fixture.child = Some(
             command
                 .stdin(Stdio::piped())
-                .stdout(Stdio::null())
+                .stdout(if matches!(end, End::Standalone) {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                })
                 .stderr(Stdio::inherit())
                 .spawn()
                 .unwrap(),
         );
         let registration = fixture.wait_for_registration();
+        let ready = matches!(end, End::Standalone).then(|| read_ready(&mut fixture));
+        #[cfg(unix)]
+        let standalone_socket = ready.as_ref().map(|ready| {
+            use std::os::unix::fs::PermissionsExt;
+            let socket = Path::new(ready["socketPath"].as_str().unwrap())
+                .canonicalize()
+                .unwrap();
+            let parent = socket.parent().unwrap().to_owned();
+            let placement = parent.parent().unwrap() == socket_temp.path().canonicalize().unwrap();
+            let directory_mode = fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+            let socket_mode = fs::metadata(&socket).unwrap().permissions().mode() & 0o777;
+            (socket, parent, placement, directory_mode, socket_mode)
+        });
         assert_eq!(registration["pid"], fixture.child.as_ref().unwrap().id());
         assert_eq!(registration["rootId"], fixture.root_id);
         assert_eq!(
@@ -132,11 +156,30 @@ fn candidate_preserves_root_authority_and_drains_on_owner_loss_or_released_idle(
         }
 
         runtime.block_on(async {
-            let mut client = connect(&fixture.root).await;
+            let mut client = if let Some(ready) = &ready {
+                let epoch = ready["hostEpoch"]
+                    .as_str()
+                    .and_then(|value| uuid::Uuid::parse_str(value).ok())
+                    .expect("actual host serve Ready must include its Host epoch");
+                assert!(!epoch.is_nil());
+                Client::connect(
+                    Path::new(ready["socketPath"].as_str().unwrap()),
+                    Some(epoch),
+                )
+                .await
+                .unwrap()
+            } else {
+                connect(&fixture.root).await
+            };
             let found = discovery::read(&fixture.root).unwrap();
-            let status = Client::status(&found.endpoint, Some(client.epoch()))
+            let endpoint = ready
+                .as_ref()
+                .map(|ready| Path::new(ready["socketPath"].as_str().unwrap()))
+                .unwrap_or(&found.endpoint);
+            let status = Client::status(endpoint, Some(client.epoch()))
                 .await
                 .unwrap();
+            found.verify(&status).unwrap();
             assert!(!status.closing);
             assert_eq!(status.epoch.to_string(), registration["hostEpoch"]);
             assert_eq!(status.root_id, fixture.root_id);
@@ -212,6 +255,32 @@ fn candidate_preserves_root_authority_and_drains_on_owner_loss_or_released_idle(
         let reopened = RootOwner::open(&fixture.root, &namespaces).unwrap();
         assert_eq!(reopened.root_id(), fixture.root_id);
         drop(reopened);
+        if let Some(ready) = ready {
+            assert_eq!(ready["kind"], "ready");
+            assert_eq!(ready["rootId"], registration["rootId"]);
+            assert_eq!(ready["socketPath"], registration["endpoint"]);
+            assert_eq!(ready["hostEpoch"], registration["hostEpoch"]);
+        }
+        #[cfg(unix)]
+        if let Some((socket, child_directory, placement, directory_mode, socket_mode)) =
+            standalone_socket
+        {
+            assert!(
+                placement,
+                "Host must use a fresh private child of the selected TMPDIR"
+            );
+            assert_eq!(directory_mode, 0o700);
+            assert_eq!(socket_mode, 0o600);
+            assert!(!socket.exists());
+            assert!(
+                !child_directory.exists(),
+                "Host must release its owned temporary socket directory"
+            );
+            assert!(
+                socket_temp.path().exists(),
+                "Host must retain the selected parent directory"
+            );
+        }
     }
     assert!(!fixture.registration.exists());
     drop(RootOwner::open(&fixture.root, &namespaces).unwrap());
@@ -261,6 +330,95 @@ async fn verify_takeover(root: &Path, registration: &Value) {
     })
     .await
     .expect("native candidate retirement timed out");
+}
+
+// One bounded reader owns this exact child's pipe. Timeout kills/reaps that
+// child and joins the reader before reporting failure, never leaving a waiter.
+fn read_ready(fixture: &mut CandidateFixture) -> Value {
+    use std::io::{BufRead, Read};
+    let stdout = fixture.child.as_mut().unwrap().stdout.take().unwrap();
+    let (send, receive) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut line = String::new();
+        let result = std::io::BufReader::new(stdout)
+            .take(8192)
+            .read_line(&mut line)
+            .map(|_| line);
+        let _ = send.send(result);
+    });
+    let result = receive.recv_timeout(Duration::from_secs(15));
+    if result.is_err() {
+        let child = fixture.child.as_mut().unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    reader.join().unwrap();
+    serde_json::from_str(&result.expect("Host Ready deadline").unwrap()).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn host_serve_rejects_overlong_system_temp_and_releases_root_and_socket_directory() {
+    use std::io::Read;
+    let directory = tempfile::Builder::new()
+        .prefix("mkt-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let selected = directory.path().join("long-system-temp-".repeat(8));
+    fs::create_dir(&selected).unwrap();
+    let mut fixture = CandidateFixture::new(directory.path().join("root"));
+    fixture.child = Some(
+        Command::new(env!("CARGO_BIN_EXE_maka"))
+            .args(["host", "serve", "--root"])
+            .arg(&fixture.root)
+            .env("TMPDIR", &selected)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let mut stdout = fixture.child.as_mut().unwrap().stdout.take().unwrap();
+    let status = fixture.wait_for_exit();
+    let mut output = String::new();
+    stdout.read_to_string(&mut output).unwrap();
+    assert!(
+        !status.success(),
+        "overlong system temp must fail without fallback"
+    );
+    // Dedicated Host stderr is captured after Root selection.
+    let log = fs::read_to_string(
+        fixture
+            .registration
+            .parent()
+            .unwrap()
+            .join("host.stderr.log"),
+    )
+    .unwrap_or_default();
+    assert!(
+        log.contains("100-byte limit"),
+        "failure must come from the actual portable socket path bound"
+    );
+    assert!(
+        output.is_empty(),
+        "failed socket bind must not publish Ready"
+    );
+    assert!(
+        !fixture.registration.exists(),
+        "failed socket bind must not publish discovery"
+    );
+    assert_eq!(
+        fs::read_dir(&selected).unwrap().count(),
+        0,
+        "failed bind must remove its private child directory"
+    );
+    drop(
+        RootOwner::open(
+            &fixture.root,
+            &RootNamespaces::for_current_account().unwrap(),
+        )
+        .unwrap(),
+    );
 }
 
 /// Reap the exact test child before removing its fresh root's account-level lease files.
