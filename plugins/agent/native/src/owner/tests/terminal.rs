@@ -184,6 +184,8 @@ async fn terminal_original_receipts_scope_isolation_boundary_revoke_and_read_sto
         assert_eq!(started["kind"], "completed", "{started}");
         let replayed = mutation(&f, &owner, "start", input, operation).await;
         assert_eq!(replayed, started);
+        let pipe_output = query(&f, "readOutput", json!({"target":{"sessionId":session,"ref":started["value"]["result"]["ref"]}})).await;
+        assert_eq!(pipe_output["kind"], "failed", "pipes must not masquerade as PTY raw output: {pipe_output}");
         wait_file(&f, "once.txt", "once").await;
         files::change(&f, &session, "danger_full_access", false, true).await;
         let target = start(&f, &owner, &session).await;
@@ -194,6 +196,8 @@ async fn terminal_original_receipts_scope_isolation_boundary_revoke_and_read_sto
         let other = f.create("Other Session").await;
         let denied = query(&f, "read", json!({"sessionId":other,"ref":target["ref"]})).await;
         assert_eq!(denied["kind"], "failed");
+        let denied_output = query(&f, "readOutput", json!({"target":{"sessionId":other,"ref":target["ref"]}})).await;
+        assert_eq!(denied_output["kind"], "failed", "raw output must keep Session authority: {denied_output}");
         let denied = query(&f, "list", json!({"sessionId":"foreign-session"})).await;
         assert_eq!(denied["kind"], "failed");
         let mut no_caller = f.app.client().subscribe(binding(&f).await,"acquire".into(),target.clone(),scope(&f.issuer,true),Attachments::new().into()).await.unwrap();
@@ -211,6 +215,8 @@ async fn terminal_original_receipts_scope_isolation_boundary_revoke_and_read_sto
         assert!(listed["value"]["resources"].as_array().unwrap().iter().all(|r| r["result"]["output"].is_null()));
         let foreign = query(&f, "read", json!({"sessionId":session,"ref":"maka://runtime/background-tasks/other-provider-resource"})).await;
         assert_eq!(foreign["kind"], "failed");
+        let foreign_output = query(&f, "readOutput", json!({"target":{"sessionId":session,"ref":"maka://runtime/background-tasks/other-provider-resource"}})).await;
+        assert_eq!(foreign_output["kind"], "failed", "raw output must keep provider authority: {foreign_output}");
         let (lease, controller) = acquire(&f, &owner, &target).await;
         files::change(&f, &session, "read_only", true, true).await;
         let denied = mutation(&f,&owner,"control",command(&controller,1,"printf revoked > revoked.txt"),Uuid::new_v4()).await;
@@ -282,6 +288,210 @@ async fn workhub_terminal_selects_coordinator_namespace_and_rejects_original_age
         let started = mutation(&f, &owner, "start", json!({"sessionId": coordinator, "command": "printf coordinator > coordinator-terminal.txt"}), Uuid::new_v4()).await;
         assert_eq!(started["kind"], "completed", "{started}");
         wait_file(&f, "coordinator-terminal.txt", "coordinator").await;
+        processes::close(&f).await;
+    }).await.unwrap();
+}
+
+fn output_request(target: &Value, after: u64) -> Value {
+    json!({"target":target,"after":after})
+}
+fn output_event(value: Value) -> Value {
+    assert_eq!(value["kind"], "completed", "{value}");
+    assert!(serde_json::to_vec(&value).unwrap().len() <= 48 * 1024);
+    value["value"].clone()
+}
+async fn output_read(f: &Fixture, target: &Value, after: u64) -> Value {
+    output_event(query(f, "readOutput", output_request(target, after)).await)
+}
+fn output_data(event: &Value, after: &mut u64, size: &Value) -> Vec<u8> {
+    use base64::Engine;
+    assert_eq!(event["kind"], "data", "{event}");
+    let sequence = event["sequence"].as_u64().unwrap();
+    assert_eq!(
+        sequence,
+        *after + 1,
+        "raw events must advance in original order: {event}"
+    );
+    assert_eq!(&event["size"], size);
+    *after = sequence;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(event["dataBase64"].as_str().unwrap())
+        .unwrap();
+    assert!(!bytes.is_empty() && bytes.len() <= 16 * 1024);
+    bytes
+}
+async fn output_through(
+    watch: &mut Subscription,
+    after: &mut u64,
+    bytes: &mut Vec<u8>,
+    needle: &[u8],
+    size: &Value,
+) {
+    while !bytes.windows(needle.len()).any(|window| window == needle) {
+        let event = output_event(
+            watch
+                .recv()
+                .await
+                .expect("raw output ended before its ACK fence"),
+        );
+        match event["kind"].as_str().unwrap() {
+            "pending" => assert_eq!(event["after"], *after),
+            "data" => bytes.extend(output_data(&event, after, size)),
+            _ => panic!("unexpected event before raw byte fence: {event}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn terminal_raw_bytes_resize_resume_gap_and_observer_cancellation_preserve_native_owner() {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let (_, f, session) = processes::fixture().await;
+        files::change(&f, &session, "danger_full_access", false, true).await;
+        let owner = caller();
+        let target = start(&f, &owner, &session).await;
+        let (lease, controller) = acquire(&f, &owner, &target).await;
+        let denied = f.app.client().start(binding(&f).await, "readOutput".into(), output_request(&target, 0), scope(&f.issuer, false), Attachments::new().into()).await;
+        assert_eq!(denied.err().unwrap(), "denied", "raw queries require the original application grant");
+        let denied = f.app.client().subscribe(binding(&f).await, "watchOutput".into(), output_request(&target, 0), scope(&f.issuer, false), Attachments::new().into()).await;
+        assert_eq!(denied.err().unwrap(), "denied", "raw subscriptions require the original application grant");
+        let original_size = json!({"cols":80,"rows":24});
+        let resized = json!({"cols":100,"rows":40});
+
+        // Only the pre-script interactive prompt is intentionally discarded.
+        // A startup Gap is explicitly resumed before any promised payload exists.
+        let mut after = 0;
+        loop {
+            let event = output_read(&f, &target, after).await;
+            match event["kind"].as_str().unwrap() {
+                "data" | "resize" => after = event["sequence"].as_u64().unwrap(),
+                "gap" => after = event["firstAvailable"].as_u64().unwrap() - 1,
+                "pending" => break,
+                _ => panic!("interactive PTY unexpectedly unavailable: {event}"),
+            }
+        }
+        let mut watch = subscribe(&f, &owner, "watchOutput", output_request(&target, after)).await;
+        // The marker is absent from the entered command, so shell echo/prompt
+        // cannot satisfy this fence. Raw discipline removes echo and ONLCR.
+        std::fs::write(f.workspace.join("raw-fixture.sh"), r#"stty raw -echo
+printf '\036RAW_BEGIN\037\377\000\033[31m\344'
+dd bs=1 count=1 of=/dev/null 2>/dev/null
+printf '\270\255\033[0m'
+stty size
+printf '\036SECOND\037'
+dd bs=1 count=1 of=/dev/null 2>/dev/null
+printf '\342\202'
+"#).unwrap();
+        let launched = mutation(&f, &owner, "control", command(&controller, 1, "exec /bin/sh ./raw-fixture.sh"), Uuid::new_v4()).await;
+        assert_eq!(launched["kind"], "completed", "{launched}");
+        let marker = b"\x1eRAW_BEGIN\x1f";
+        let prefix = b"\xff\0\x1b[31m\xe4";
+        let mut head = marker.to_vec();
+        head.extend_from_slice(prefix);
+        let mut initial = Vec::new();
+        output_through(&mut watch, &mut after, &mut initial, &head, &original_size).await;
+        let at = initial.windows(marker.len()).position(|part| part == marker).unwrap() + marker.len();
+        let mut actual = initial[at..].to_vec();
+        assert_eq!(actual, prefix, "the first split UTF8 byte must already be observable");
+        let before_resize = after;
+        let receipt = mutation(&f, &owner, "control", json!({"controller":controller,"sequence":2,"size":resized}), Uuid::new_v4()).await;
+        assert_eq!(receipt["kind"], "completed", "{receipt}");
+        assert_eq!(receipt["value"]["acceptedBytes"], 0);
+        assert_eq!(receipt["value"]["resizeChanged"], true);
+        let resize = loop {
+            let event = output_event(watch.recv().await.unwrap());
+            if event["kind"] == "pending" { continue; }
+            break event;
+        };
+        assert_eq!(resize["kind"], "resize", "{resize}");
+        assert_eq!(resize["size"], resized);
+        assert_eq!(resize["sequence"], after + 1);
+        assert_eq!(output_read(&f, &target, before_resize).await, resize);
+        after = resize["sequence"].as_u64().unwrap();
+        let future = query(&f, "readOutput", output_request(&target, 9_007_199_254_740_991)).await;
+        assert_eq!(future["kind"], "failed", "known live streams must reject a future sequence: {future}");
+        let ack = mutation(&f, &owner, "control", json!({"controller":controller,"sequence":3,"actions":[{"type":"text","text":"x"}]}), Uuid::new_v4()).await;
+        assert_eq!(ack["kind"], "completed", "{ack}");
+        let middle = b"\xb8\xad\x1b[0m40 100\n\x1eSECOND\x1f";
+        let mut following = Vec::new();
+        output_through(&mut watch, &mut after, &mut following, middle, &resized).await;
+        assert_eq!(following, middle, "stty must witness the actual native resize");
+        actual.extend_from_slice(&following);
+        watch.cancel();
+        watch.completion().await.cleanup.unwrap();
+        assert_eq!(query(&f, "read", target.clone()).await["value"]["result"]["status"], "running");
+
+        // Resize receipts, not timed writes, force nine distinct ordered events
+        // while the real script remains gated on its second ACK.
+        let before_gap = after;
+        for index in 0..9u64 {
+            let receipt = mutation(&f, &owner, "control", json!({"controller":controller,"sequence":4+index,"size":{"cols":101+index,"rows":40}}), Uuid::new_v4()).await;
+            assert_eq!(receipt["kind"], "completed", "observer cancellation must leave its independent controller usable: {receipt}");
+            assert_eq!(receipt["value"]["resizeChanged"], true);
+        }
+        let gap = output_read(&f, &target, before_gap).await;
+        assert_eq!(gap["kind"], "gap", "{gap}");
+        assert_eq!(gap["after"], before_gap);
+        assert!(gap["firstAvailable"].as_u64().unwrap() > before_gap + 1);
+        let mut lost = subscribe(&f, &owner, "watchOutput", output_request(&target, before_gap)).await;
+        assert_eq!(output_event(lost.recv().await.unwrap()), gap);
+        assert!(lost.recv().await.is_none(), "a Gap must finish this watch");
+        let completed = lost.completion().await;
+        completed.cleanup.unwrap();
+        assert_eq!(output_event(completed.result.unwrap()), gap);
+        after = gap["firstAvailable"].as_u64().unwrap() - 1;
+        for col in 102..=109 {
+            let event = output_read(&f, &target, after).await;
+            assert_eq!(event["kind"], "resize", "{event}");
+            assert_eq!(event["sequence"], after + 1);
+            assert_eq!(event["size"], json!({"cols":col,"rows":40}));
+            after += 1;
+        }
+        let final_size = json!({"cols":109,"rows":40});
+        assert_eq!(output_read(&f, &target, after).await, json!({"kind":"pending","after":after,"size":final_size}));
+        let mut resumed = subscribe(&f, &owner, "watchOutput", output_request(&target, after)).await;
+        assert_eq!(output_event(resumed.recv().await.unwrap()), json!({"kind":"pending","after":after,"size":final_size}), "the final observer must be attached before releasing the child");
+        let ack = mutation(&f, &owner, "control", json!({"controller":controller,"sequence":13,"actions":[{"type":"text","text":"y"}]}), Uuid::new_v4()).await;
+        assert_eq!(ack["kind"], "completed", "{ack}");
+        loop {
+            let event = output_event(resumed.recv().await.unwrap());
+            match event["kind"].as_str().unwrap() {
+                "pending" => assert_eq!(event["after"], after),
+                "data" => actual.extend(output_data(&event, &mut after, &final_size)),
+                "closed" => {
+                    assert_eq!(event["after"], after);
+                    assert_eq!(event["size"], final_size);
+                    break;
+                },
+                _ => panic!("unexpected resumed event: {event}"),
+            }
+        }
+        resumed.completion().await.cleanup.unwrap();
+        let mut expected = prefix.to_vec();
+        expected.extend_from_slice(middle);
+        expected.extend_from_slice(b"\xe2\x82");
+        assert_eq!(actual, expected, "raw bytes must retain ff, NUL, ANSI and both split and incomplete UTF8");
+        let mut screen = subscribe(&f, &owner, "watch", target.clone()).await;
+        loop {
+            let snapshot = screen.recv().await.unwrap();
+            let status = snapshot["value"]["result"]["status"].as_str().unwrap();
+            if !matches!(status, "starting" | "running") {
+                assert_eq!(status, "completed", "{snapshot}");
+                break;
+            }
+        }
+        screen.cancel();
+        screen.completion().await.cleanup.unwrap();
+        // Existing stop waits for the real worker's drained fence; it cannot
+        // signal this already completed script or turn raw EOF into exit proof.
+        let stopped = mutation(&f, &owner, "stop", target.clone(), Uuid::new_v4()).await;
+        assert_eq!(stopped["kind"], "completed", "{stopped}");
+        assert_eq!(stopped["value"]["applied"], false);
+        lease.completion().await.cleanup.unwrap();
+        assert_eq!(output_read(&f, &target, after).await, json!({"kind":"unavailable","reason":"not_retained"}));
+        let historical = query(&f, "read", target).await;
+        assert_eq!(historical["kind"], "completed");
+        assert_eq!(historical["value"]["result"]["status"], "completed");
+        assert!(historical["value"]["result"]["output"]["screen"].as_str().unwrap().contains("40 100"));
         processes::close(&f).await;
     }).await.unwrap();
 }

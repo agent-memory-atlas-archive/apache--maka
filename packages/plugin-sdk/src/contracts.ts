@@ -37010,6 +37010,234 @@ export const contracts = {
           },
           resources: {},
         },
+        readOutput: {
+          mode: 'query',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              target: {
+                $ref: '#/$defs/TerminalTarget',
+              },
+              after: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+                default: 0,
+              },
+            },
+            required: ['target'],
+            description: "Cursor belongs to this original target's ordered Data/Resize stream.",
+            title: 'TerminalOutputRequest',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalTarget: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                },
+                required: ['sessionId', 'ref'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/TerminalOutputEvent',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_TerminalOutputEvent',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalOutputEvent: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sequence: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      size: {
+                        $ref: '#/$defs/TerminalSize',
+                      },
+                      dataBase64: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 21848,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'data',
+                      },
+                    },
+                    required: ['kind', 'sequence', 'size', 'dataBase64'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sequence: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      size: {
+                        $ref: '#/$defs/TerminalSize',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resize',
+                      },
+                    },
+                    required: ['kind', 'sequence', 'size'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      after: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      firstAvailable: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'gap',
+                      },
+                    },
+                    required: ['kind', 'after', 'firstAvailable'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      after: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      size: {
+                        $ref: '#/$defs/TerminalSize',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'pending',
+                      },
+                    },
+                    required: ['kind', 'after', 'size'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      after: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      size: {
+                        $ref: '#/$defs/TerminalSize',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'closed',
+                      },
+                    },
+                    required: ['kind', 'after', 'size'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      reason: {
+                        $ref: '#/$defs/TerminalOutputUnavailable',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'unavailable',
+                      },
+                    },
+                    required: ['kind', 'reason'],
+                  },
+                ],
+                description:
+                  'Ephemeral output observation; Closed is not a process cleanup receipt.',
+              },
+              TerminalSize: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  cols: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 2,
+                    maximum: 240,
+                  },
+                  rows: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 100,
+                  },
+                },
+                required: ['cols', 'rows'],
+                description:
+                  'Shared by native PTY allocation, input validation and screen rendering.',
+              },
+              TerminalOutputUnavailable: {
+                type: 'string',
+                enum: ['not_retained'],
+              },
+            },
+          },
+          resources: {},
+        },
         release: {
           mode: 'mutation',
           input: {
@@ -38500,6 +38728,234 @@ export const contracts = {
                   },
                 },
                 required: ['x', 'y', 'visible'],
+              },
+            },
+          },
+          resources: {},
+        },
+        watchOutput: {
+          mode: 'subscription',
+          input: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              target: {
+                $ref: '#/$defs/TerminalTarget',
+              },
+              after: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+                maximum: 9007199254740991,
+                default: 0,
+              },
+            },
+            required: ['target'],
+            description: "Cursor belongs to this original target's ordered Data/Resize stream.",
+            title: 'TerminalOutputRequest',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalTarget: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  sessionId: {
+                    type: 'string',
+                  },
+                  ref: {
+                    type: 'string',
+                  },
+                },
+                required: ['sessionId', 'ref'],
+              },
+            },
+          },
+          output: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  value: {
+                    $ref: '#/$defs/TerminalOutputEvent',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'completed',
+                  },
+                },
+                required: ['kind', 'value'],
+              },
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  message: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'failed',
+                  },
+                },
+                required: ['kind', 'message'],
+              },
+            ],
+            title: 'TerminalOutcome_TerminalOutputEvent',
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            $defs: {
+              TerminalOutputEvent: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sequence: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      size: {
+                        $ref: '#/$defs/TerminalSize',
+                      },
+                      dataBase64: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 21848,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'data',
+                      },
+                    },
+                    required: ['kind', 'sequence', 'size', 'dataBase64'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      sequence: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      size: {
+                        $ref: '#/$defs/TerminalSize',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'resize',
+                      },
+                    },
+                    required: ['kind', 'sequence', 'size'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      after: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      firstAvailable: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'gap',
+                      },
+                    },
+                    required: ['kind', 'after', 'firstAvailable'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      after: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      size: {
+                        $ref: '#/$defs/TerminalSize',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'pending',
+                      },
+                    },
+                    required: ['kind', 'after', 'size'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      after: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      size: {
+                        $ref: '#/$defs/TerminalSize',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'closed',
+                      },
+                    },
+                    required: ['kind', 'after', 'size'],
+                  },
+                  {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      reason: {
+                        $ref: '#/$defs/TerminalOutputUnavailable',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'unavailable',
+                      },
+                    },
+                    required: ['kind', 'reason'],
+                  },
+                ],
+                description:
+                  'Ephemeral output observation; Closed is not a process cleanup receipt.',
+              },
+              TerminalSize: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  cols: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 2,
+                    maximum: 240,
+                  },
+                  rows: {
+                    type: 'integer',
+                    format: 'uint16',
+                    minimum: 1,
+                    maximum: 100,
+                  },
+                },
+                required: ['cols', 'rows'],
+                description:
+                  'Shared by native PTY allocation, input validation and screen rendering.',
+              },
+              TerminalOutputUnavailable: {
+                type: 'string',
+                enum: ['not_retained'],
               },
             },
           },

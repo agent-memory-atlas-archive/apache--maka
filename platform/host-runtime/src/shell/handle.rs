@@ -18,7 +18,7 @@
  */
 
 use super::control::{Control, ControlError, Input, WriteReceipt};
-use super::output::{Output, PtyReplay, PtyStream};
+use super::output::{Output, PtyStream};
 use super::{ShellError, Update};
 use maka_agent_facts::shell_run::ShellRun;
 use maka_agent_facts::terminal::TerminalSize;
@@ -72,12 +72,13 @@ impl ShellHandle {
         self.control_gate.clone()
     }
 
-    pub fn replay(&self) -> Option<PtyReplay> {
-        self.pty.as_ref().map(|pty| pty.output.replay())
-    }
-
-    pub fn attach(&self) -> Option<(PtyReplay, PtyStream)> {
-        self.pty.as_ref().map(|pty| pty.output.attach())
+    /// Attach to the original ephemeral byte source; no source means no retained
+    /// raw output, never a fabricated replay of the durable screen projection.
+    pub fn output(&self, after: u64) -> super::Result<Option<PtyStream>> {
+        self.pty
+            .as_ref()
+            .map(|pty| pty.output.stream(after))
+            .transpose()
     }
 
     pub fn latest(&self) -> Update {

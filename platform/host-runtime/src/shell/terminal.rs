@@ -50,6 +50,9 @@ impl Terminal {
     }
 
     pub fn output(&mut self, bytes: &[u8], eof: bool) -> Result<()> {
+        // Native bytes remain observable even when decoding replaces invalid
+        // text or the parser has failed and final native output is draining.
+        self.output.publish(bytes)?;
         let text = self.decoder.decode(bytes, eof);
         let Some(screen) = &mut self.screen else {
             return Ok(());
@@ -57,9 +60,6 @@ impl Terminal {
         match screen.write(&text) {
             Ok(replies) => {
                 self.snapshot = screen.snapshot()?;
-                // Observational stream, not a durable outcome. Publish only a
-                // completed parser cut, including final output during drain.
-                self.output.publish(&text)?;
                 if !replies.is_empty() {
                     let pending: usize = self
                         .writes
@@ -94,7 +94,6 @@ impl Terminal {
             .ok_or(ShellError::Rejected("terminal parser unavailable"))?;
         screen.resize(size)?;
         self.snapshot = screen.snapshot()?;
-        self.output.resize(size);
         Ok(())
     }
 
@@ -232,6 +231,59 @@ pub(super) async fn drain(
 #[cfg(test)]
 mod tests {
     use super::Decoder;
+
+    #[test]
+    fn raw_output_preserves_native_bytes_before_screen_decoding() {
+        use super::{Output, Terminal};
+        use maka_agent_facts::terminal::TerminalSize;
+
+        let size = TerminalSize::new(80, 24).unwrap();
+        let output = Output::new(size, tokio::sync::watch::channel(()).0);
+        let mut terminal = Terminal::new(size, output.clone());
+        // Exercise the actual Host decoder/parser/ring path. These supplied
+        // native-byte cuts are not a claim of OS PTY transport verification.
+        terminal.output(b"\xff\0\x1b[31m\xe4", false).unwrap();
+        terminal.output(b"\xb8\xad\x1b[0m", false).unwrap();
+        terminal.output(b"\xe2\x82", true).unwrap();
+        let mut stream = output.stream(0).unwrap();
+        let mut raw = Vec::new();
+        while let super::super::output::PtyStreamEvent::Data { bytes, .. } = stream.read() {
+            raw.extend_from_slice(&bytes);
+        }
+        assert_eq!(
+            raw.as_slice(),
+            b"\xff\0\x1b[31m\xe4\xb8\xad\x1b[0m\xe2\x82",
+            "the raw replay must preserve invalid bytes, NUL, ANSI and incomplete EOF independently of the screen decoder"
+        );
+    }
+
+    #[test]
+    fn parser_failure_and_later_drain_preserve_original_raw_bytes() {
+        use super::super::output::PtyStreamEvent;
+        use super::{Output, Terminal};
+        use maka_agent_facts::terminal::TerminalSize;
+
+        let size = TerminalSize::new(80, 24).unwrap();
+        let output = Output::new(size, tokio::sync::watch::channel(()).0);
+        let mut terminal = Terminal::new(size, output.clone());
+        terminal.output(b"\x1b]0;", false).unwrap();
+        let chunk = vec![b'x'; 16 * 1024];
+        for _ in 0..3 {
+            terminal.output(&chunk, false).unwrap();
+        }
+        assert!(terminal.output(&chunk, false).is_err());
+        assert!(terminal.screen.is_none());
+        terminal.output(b"final-drain\xff", true).unwrap();
+        let mut expected = b"\x1b]0;".to_vec();
+        expected.extend_from_slice(&chunk.repeat(4));
+        expected.extend_from_slice(b"final-drain\xff");
+        let mut stream = output.stream(0).unwrap();
+        let mut raw = Vec::new();
+        while let PtyStreamEvent::Data { bytes, .. } = stream.read() {
+            raw.extend_from_slice(&bytes);
+        }
+        assert_eq!(raw, expected);
+    }
 
     #[test]
     fn every_utf8_cut_matches_lossy_eof_without_losing_terminal_controls() {

@@ -46,6 +46,64 @@ pub struct Target {
     #[serde(rename = "ref")]
     pub reference: String,
 }
+/// Cursor belongs to this original target's ordered Data/Resize stream.
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "TerminalOutputRequest")]
+pub struct OutputRequest {
+    pub target: Target,
+    #[serde(default)]
+    #[schemars(range(max = 9007199254740991u64))]
+    pub after: u64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(rename = "TerminalOutputUnavailable")]
+pub enum OutputUnavailable {
+    NotRetained,
+}
+/// Ephemeral output observation; Closed is not a process cleanup receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[schemars(rename = "TerminalOutputEvent")]
+pub enum OutputEvent {
+    Data {
+        #[schemars(range(min = 1, max = 9007199254740991u64))]
+        sequence: u64,
+        size: TerminalSize,
+        #[schemars(length(min = 1, max = 21848))]
+        data_base64: String,
+    },
+    Resize {
+        #[schemars(range(min = 1, max = 9007199254740991u64))]
+        sequence: u64,
+        size: TerminalSize,
+    },
+    Gap {
+        #[schemars(range(max = 9007199254740991u64))]
+        after: u64,
+        #[schemars(range(min = 1, max = 9007199254740991u64))]
+        first_available: u64,
+    },
+    Pending {
+        #[schemars(range(max = 9007199254740991u64))]
+        after: u64,
+        size: TerminalSize,
+    },
+    Closed {
+        #[schemars(range(max = 9007199254740991u64))]
+        after: u64,
+        size: TerminalSize,
+    },
+    Unavailable {
+        reason: OutputUnavailable,
+    },
+}
 #[derive(Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "TerminalStart")]
@@ -151,6 +209,14 @@ pub fn contract() -> Contract {
                 (
                     "watch".into(),
                     method::<Target, ResourceUpdate>(MethodMode::Subscription),
+                ),
+                (
+                    "readOutput".into(),
+                    method::<OutputRequest, OutputEvent>(MethodMode::Query),
+                ),
+                (
+                    "watchOutput".into(),
+                    method::<OutputRequest, OutputEvent>(MethodMode::Subscription),
                 ),
                 (
                     "start".into(),

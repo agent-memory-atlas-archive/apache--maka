@@ -288,6 +288,10 @@ export type RuntimeProtocol =
   | WorkspaceProcessConfiguration
   | TerminalList
   | TerminalTarget
+  | TerminalOutputRequest
+  | TerminalOutputEvent
+  | TerminalOutputUnavailable
+  | TerminalOutcome_TerminalOutputEvent
   | TerminalStart
   | TerminalController
   | TerminalControl
@@ -4392,6 +4396,50 @@ export type FormResult =
     };
 export type QuestionRejection = 'invalid_input' | 'unavailable';
 export type WorkspaceProcessSessionKind = 'agent' | 'workhub';
+/**
+ * Ephemeral output observation; Closed is not a process cleanup receipt.
+ */
+export type TerminalOutputEvent =
+  | {
+      sequence: number;
+      size: TerminalSize;
+      dataBase64: string;
+      kind: 'data';
+    }
+  | {
+      sequence: number;
+      size: TerminalSize;
+      kind: 'resize';
+    }
+  | {
+      after: number;
+      firstAvailable: number;
+      kind: 'gap';
+    }
+  | {
+      after: number;
+      size: TerminalSize;
+      kind: 'pending';
+    }
+  | {
+      after: number;
+      size: TerminalSize;
+      kind: 'closed';
+    }
+  | {
+      reason: TerminalOutputUnavailable;
+      kind: 'unavailable';
+    };
+export type TerminalOutputUnavailable = 'not_retained';
+export type TerminalOutcome_TerminalOutputEvent =
+  | {
+      value: TerminalOutputEvent;
+      kind: 'completed';
+    }
+  | {
+      message: string;
+      kind: 'failed';
+    };
 export type Ownership =
   | {
       kind: 'local';
@@ -9968,6 +10016,13 @@ export interface TerminalList {
 export interface TerminalTarget {
   sessionId: string;
   ref: string;
+}
+/**
+ * Cursor belongs to this original target's ordered Data/Resize stream.
+ */
+export interface TerminalOutputRequest {
+  target: TerminalTarget;
+  after?: number;
 }
 export interface TerminalStart {
   sessionId: string;

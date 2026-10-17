@@ -29,7 +29,7 @@ mod worker;
 pub use control::Input as ControlInput;
 pub use control::{ControlError, ControlErrorKind, WriteReceipt};
 pub use handle::{ShellHandle, StopReceipt};
-pub use output::{PtyData, PtyReplay, PtyStream, PtyStreamEvent};
+pub use output::{PtyStream, PtyStreamEvent};
 
 use maka_agent_facts::shell_run::ShellRun;
 use maka_agent_facts::terminal::TerminalSize;

@@ -70,12 +70,16 @@ impl Worker {
         if let Some(size) = control.size {
             let result = async {
                 if size != terminal.snapshot.size {
+                    // This sole worker owns publication: preflight the bounded
+                    // event counter before accepting an irreversible OS resize.
+                    self.output.check_resize(size)?;
                     child.resize(size).await?;
+                    resized = true;
                     resize_changed = true;
-                }
-                resized = true;
-                if resize_changed {
+                    self.output.resize(size)?;
                     terminal.resize(size)?;
+                } else {
+                    resized = true;
                 }
                 self.persist(terminal, None).await
             }

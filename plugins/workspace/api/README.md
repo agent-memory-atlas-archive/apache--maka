@@ -23,4 +23,6 @@
 
 Defines the shared contracts for workspace files, processes, terminals, protocol processes and Jev. Native providers and authoring tools use the same declarations. Request paths and workspace identifiers describe a selection; the provider still checks the actual bound directory and call authority.
 
+The Terminal contract also exposes `readOutput` and `watchOutput` for ordered raw PTY bytes (Base64) and resize events. Each read returns one event from a ring of at most eight events, with up to 16 KiB of bytes per data event. Keep each `after` cursor with its original target. `Gap` ends the watch and reports the first retained event; resume explicitly from `firstAvailable - 1`. A retained suffix cannot restore complete terminal state. Raw output is ephemeral: a new attachment after exit or restart reports `Unavailable`, while screen/history reads remain available. `Closed` means output ended, not that process cleanup was confirmed. Output observation requires explicit method grants and does not require a controller.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

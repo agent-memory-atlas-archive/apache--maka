@@ -309,6 +309,12 @@ pub fn catalog() -> Value {
         root::<maka_workspace_api::processes::Configuration>(&mut g),
         root::<maka_workspace_api::terminal::List>(&mut g),
         root::<maka_workspace_api::terminal::Target>(&mut g),
+        root::<maka_workspace_api::terminal::OutputRequest>(&mut g),
+        root::<maka_workspace_api::terminal::OutputEvent>(&mut g),
+        root::<maka_workspace_api::terminal::OutputUnavailable>(&mut g),
+        root::<maka_workspace_api::terminal::Outcome<maka_workspace_api::terminal::OutputEvent>>(
+            &mut g,
+        ),
         root::<maka_workspace_api::terminal::Start>(&mut g),
         root::<maka_workspace_api::terminal::Controller>(&mut g),
         root::<maka_workspace_api::terminal::Control>(&mut g),

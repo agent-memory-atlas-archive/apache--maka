@@ -20,6 +20,7 @@
 //! Explicit user terminal operations on the original Processes resource owner.
 mod controller;
 mod launch;
+mod output;
 use super::{Processes, SessionConfiguration, cancelled, failed, persistence, worker_error};
 pub(super) use controller::Lease;
 use futures_util::future::BoxFuture;
@@ -92,6 +93,10 @@ impl Processes {
             }
             "read" | "watch" => {
                 self.terminal_read(decode(value)?, name == "watch", context)
+                    .await
+            }
+            "readOutput" | "watchOutput" => {
+                self.terminal_output(decode(value)?, name == "watchOutput", context)
                     .await
             }
             "start" => self
