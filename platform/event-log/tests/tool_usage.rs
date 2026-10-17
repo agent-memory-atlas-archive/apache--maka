@@ -66,7 +66,7 @@ async fn tool_accounting_preserves_dispatch_truth_and_snapshot_without_private_b
             operation_id: "refusal".into(),
             call: ToolCallIdentity::standalone("refusal".into()),
             name: "Shell".into(),
-            input: json!({"command": private}),
+            input: json!({"command": private}).into(),
             reason: ToolRejection::PolicyDenied {
                 message: private.clone(),
             },
@@ -79,7 +79,7 @@ async fn tool_accounting_preserves_dispatch_truth_and_snapshot_without_private_b
             operation_id: "cancelled".into(),
             call: ToolCallIdentity::standalone("cancelled".into()),
             name: "Shell".into(),
-            input: json!({}),
+            input: json!({}).into(),
             reason: ToolRejection::Cancelled,
         },
         1500,

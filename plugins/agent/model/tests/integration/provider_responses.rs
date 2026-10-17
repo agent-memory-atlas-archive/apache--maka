@@ -194,7 +194,7 @@ async fn responses_http_preserves_reasoning_and_raw_tool_identity_across_steps()
             let call = step.tool_calls().next().unwrap();
             assert_eq!(call.id, "call_raw_1");
             assert_eq!(call.name, "tool_search");
-            assert_eq!(call.input, json!({"text":"你好😀"}));
+            assert_eq!(call.input, maka_agent_facts::model::ToolInput::Json(json!({"text":"你好😀"})));
             assert!(!call.provider_executed);
             assert_eq!(call.provider_options.as_ref().unwrap()["openai"]["itemId"], "fc_item_1");
             // Project accepted parts into the next SDK request. Engine persistence

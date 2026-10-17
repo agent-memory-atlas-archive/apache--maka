@@ -32,6 +32,73 @@ mod fixtures;
 use fixtures::{opening, step, stored};
 #[path = "tools/payloads.rs"]
 mod payloads;
+
+#[test]
+fn malformed_arguments_display_exact_raw_and_cannot_alias_a_parsed_dispatch() {
+    use maka_agent_facts::model::{ModelEvent, ModelPart, ToolInput};
+    let raw = "  {\"code\":\n";
+    let input = ToolInput::from_json(raw.into());
+    let mut facts = vec![opening()];
+    step(&mut facts, "step", false, false);
+    for fact in &mut facts {
+        match fact {
+            Fact::ModelObserved {
+                event: ModelEvent::ToolCall(call),
+                ..
+            } => call.input = input.clone(),
+            Fact::ModelCompleted { output, .. } => {
+                for part in &mut output.parts {
+                    if let ModelPart::ToolCall { call } = part {
+                        call.input = input.clone();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut forged = facts.clone();
+    forged.push(Fact::ToolDispatched {
+        operation_id: "step:raw".into(),
+        call: ToolCallIdentity::provider("step".into(), "raw".into()),
+        name: "exec".into(),
+        input: json!({}),
+        title: None,
+        presentation: None,
+    });
+    let mut view = InvocationView::new(16_384).unwrap();
+    let events = stored(forged);
+    for event in &events[..events.len() - 1] {
+        view.push(event).unwrap();
+    }
+    assert!(view.push(events.last().unwrap()).is_err());
+
+    facts.push(Fact::ToolRejected {
+        operation_id: "step:raw".into(),
+        call: ToolCallIdentity::provider("step".into(), "raw".into()),
+        name: "exec".into(),
+        input,
+        reason: ToolRejection::InvalidInput {
+            message: "arguments are not valid JSON".into(),
+        },
+    });
+    let mut view = InvocationView::new(16_384).unwrap();
+    let rows: Vec<_> = stored(facts)
+        .iter()
+        .flat_map(|event| view.push(event).unwrap())
+        .collect();
+    let calls: Vec<_> = rows
+        .iter()
+        .filter_map(|row| match &row.message.content {
+            maka_presentation::Content::ToolCall { args, .. } => Some(args),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls, [&json!(raw)]);
+    assert!(rows.iter().any(|row| matches!(&row.message.content,
+        maka_presentation::Content::ToolResult { is_error: true, content: maka_presentation::ToolContent::Text { text }, .. }
+        if text == "invalid tool input: arguments are not valid JSON")));
+}
+
 #[test]
 fn accepted_tools_replay_with_distinct_ids_parentage_rejections() {
     let mut facts = vec![opening()];
@@ -73,7 +140,7 @@ fn accepted_tools_replay_with_distinct_ids_parentage_rejections() {
         operation_id: "second:raw".into(),
         call: ToolCallIdentity::provider("second".into(), "raw".into()),
         name: "exec".into(),
-        input: json!({"code":"Read()"}),
+        input: json!({"code":"Read()"}).into(),
         reason: ToolRejection::Unavailable,
     });
     step(&mut facts, "native", false, true);

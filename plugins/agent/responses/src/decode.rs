@@ -26,6 +26,7 @@ use maka_agent_facts::model::ModelUsage;
 use maka_agent_facts::model::PlaintextReasoningReplay;
 use maka_agent_facts::model::PlaintextResponses;
 use maka_agent_facts::model::TextKind;
+use maka_agent_facts::model::ToolInput;
 use maka_agent_facts::tools::ToolDefinition;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -308,7 +309,7 @@ impl Decoder {
                 out.push(ModelEvent::ToolCall(ModelToolCall {
                     id: id.into(),
                     name,
-                    input: json!({}),
+                    input: ToolInput::Json(json!({})),
                     provider_executed: true,
                     provider_options: Some(json!({"openai":{"itemId":id}})),
                 }));
@@ -511,8 +512,7 @@ impl Decoder {
                 self.tool_calls = true;
                 self.observed_output = true;
                 self.replay_safe = false; // The emitted call includes opaque provider metadata.
-                let input = serde_json::from_str(&arguments)
-                    .map_err(|_| Self::invalid("invalid Responses function arguments"))?;
+                let input = ToolInput::from_json(arguments);
                 out.push(ModelEvent::ToolCall(ModelToolCall {
                     id: call_id,
                     name: crate::request::local_name(&name).into(),
@@ -538,7 +538,7 @@ impl Decoder {
                 out.push(ModelEvent::ToolCall(ModelToolCall {
                     id: call_id,
                     name: crate::request::local_name(&name).into(),
-                    input: json!(input),
+                    input: ToolInput::Json(json!(input)),
                     provider_executed: false,
                     provider_options: Some(json!({"openai":{"itemId":id,"toolKind":"custom"}})),
                 }));
@@ -785,7 +785,7 @@ mod tests {
         let ModelEvent::ToolCall(call) = &events[0] else {
             panic!("missing tool call")
         };
-        assert_eq!(call.input, source);
+        assert_eq!(call.input, ToolInput::Json(json!(source)));
         let prompt = [
             Message::Assistant {
                 content: vec![AssistantPart::ToolCall {
@@ -797,7 +797,13 @@ mod tests {
                 }],
                 provider_options: None,
             },
-            Message::tool("call", "exec", ToolOutput::Text("done".into())),
+            {
+                let mut result = Message::tool("call", "exec", ToolOutput::Text("done".into()));
+                if let Message::Tool { content, .. } = &mut result {
+                    content[0].provider_options = Some(json!({"openai":{"toolKind":"custom"}}));
+                }
+                result
+            },
         ];
         let replay = crate::request::Request {
             prompt: &prompt,
@@ -838,6 +844,230 @@ mod tests {
             "custom"
         );
     }
+    #[test]
+    fn function_argument_strings_are_classified_without_relaxing_the_envelope() {
+        for (raw, expected) in [
+            ("null", ToolInput::Json(json!(null))),
+            ("7", ToolInput::Json(json!(7))),
+            ("\"abc\"", ToolInput::Json(json!("abc"))),
+            (
+                r#"{"kind":"invalid_json","data":{"raw":"x"}}"#,
+                ToolInput::Json(json!({"kind":"invalid_json","data":{"raw":"x"}})),
+            ),
+        ] {
+            let mut decoder = Decoder::new(None, &[]);
+            let events = decoder.push(json!({"type":"response.output_item.done","item":{
+                "type":"function_call","id":"item","call_id":"call","name":"echo","arguments":raw
+            }})).unwrap();
+            let ModelEvent::ToolCall(call) = &events[0] else {
+                panic!("expected call")
+            };
+            assert_eq!(call.input, expected);
+            assert_eq!(call.id, "call");
+            assert_eq!(call.name, "echo");
+            assert_eq!(
+                call.provider_options,
+                Some(json!({"openai":{"itemId":"item"}}))
+            );
+        }
+        for arguments in [json!(null), json!(7), json!({}), json!([])] {
+            let mut decoder = Decoder::new(None, &[]);
+            assert!(decoder.push(json!({"type":"response.output_item.done","item":{
+                "type":"function_call","id":"item","call_id":"call","name":"echo","arguments":arguments
+            }})).is_err());
+        }
+        let mut decoder = Decoder::new(None, &[]);
+        assert!(
+            decoder
+                .push(json!({"type":"response.output_item.done","item":{
+                    "type":"function_call","id":"item","call_id":"call","name":"echo"
+                }}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn function_arguments_and_true_custom_calls_keep_their_historical_kind() {
+        use maka_agent_facts::model::prompt::{AssistantPart, Message, ToolOutput};
+        let source = "text('same source');";
+        let raw = " {\"n\":\n";
+        let definitions = [ToolDefinition {
+            name: "exec".into(),
+            description: "JavaScript".into(),
+            provider: None,
+            input_schema: json!({"type":"object"}),
+            output_schema: None,
+            freeform: Some(maka_agent_facts::tools::FreeformGrammar::Lark {
+                definition: "start: /[\\s\\S]+/".into(),
+            }),
+        }];
+        let items = [
+            json!({"type":"function_call","id":"f","call_id":"function","name":"exec","arguments":json!(source).to_string()}),
+            json!({"type":"custom_tool_call","id":"c","call_id":"custom","name":"exec","input":source}),
+            json!({"type":"function_call","id":"b","call_id":"broken","name":"exec","arguments":raw}),
+            json!({"type":"function_call","id":"s","call_id":"string","name":"echo","arguments":"\"abc\""}),
+        ];
+        let mut decoder = Decoder::new(None, &definitions);
+        let mut prompt = Vec::new();
+        let mut calls = Vec::new();
+        for item in items {
+            let events = decoder
+                .push(json!({"type":"response.output_item.done","item":item}))
+                .unwrap();
+            let ModelEvent::ToolCall(call) = &events[0] else {
+                panic!("expected call")
+            };
+            calls.push(call.clone());
+            prompt.push(Message::Assistant {
+                content: vec![AssistantPart::ToolCall {
+                    tool_call_id: call.id.clone(),
+                    tool_name: call.name.clone(),
+                    input: call.input.clone(),
+                    provider_executed: None,
+                    provider_options: call.provider_options.clone(),
+                }],
+                provider_options: None,
+            });
+            let mut result = Message::tool(
+                &call.id,
+                &call.name,
+                ToolOutput::ErrorText("refused".into()),
+            );
+            if call
+                .provider_options
+                .as_ref()
+                .is_some_and(|options| options["openai"]["toolKind"] == "custom")
+                && let Message::Tool { content, .. } = &mut result
+            {
+                content[0].provider_options = Some(json!({"openai":{"toolKind":"custom"}}));
+            }
+            prompt.push(result);
+        }
+        assert_eq!(calls[0].input, ToolInput::Json(json!(source)));
+        assert_eq!(calls[1].input, ToolInput::Json(json!(source)));
+        assert_eq!(calls[2].input, ToolInput::InvalidJson { raw: raw.into() });
+        assert_eq!(calls[3].input, ToolInput::Json(json!("abc")));
+        let options = json!({"openai":{"store":false}});
+        let request = crate::request::Request {
+            model: "fixture",
+            prompt: &prompt,
+            tools: &definitions,
+            options: &options,
+            max_output_tokens: None,
+            plaintext: None,
+        };
+        let encoded = request.encode().unwrap();
+        assert_eq!(
+            encoded["input"],
+            json!([
+                {"type":"function_call","call_id":"function","name":"exec","arguments":json!(source).to_string()},
+                {"type":"function_call_output","call_id":"function","output":"refused"},
+                {"type":"custom_tool_call","call_id":"custom","name":"exec","input":source},
+                {"type":"custom_tool_call_output","call_id":"custom","output":"refused"},
+                {"type":"function_call","call_id":"broken","name":"exec","arguments":raw},
+                {"type":"function_call_output","call_id":"broken","output":"refused"},
+                {"type":"function_call","call_id":"string","name":"echo","arguments":"\"abc\""},
+                {"type":"function_call_output","call_id":"string","output":"refused"}
+            ])
+        );
+        let fallback = crate::request::Request {
+            plaintext: Some(maka_agent_facts::model::PlaintextResponses {
+                reasoning_replay:
+                    maka_agent_facts::model::PlaintextReasoningReplay::PlaintextContent,
+                compatibility: None,
+            }),
+            ..request
+        }
+        .encode()
+        .unwrap();
+        assert_eq!(fallback["input"][0]["arguments"], json!(source).to_string());
+        assert_eq!(
+            fallback["input"][2]["arguments"],
+            json!({"code":source}).to_string()
+        );
+        assert_eq!(fallback["input"][4]["arguments"], raw);
+        assert_eq!(fallback["input"][6]["arguments"], "\"abc\"");
+    }
+
+    #[test]
+    fn repeated_call_ids_keep_each_historical_call_and_result_kind() {
+        use maka_agent_facts::model::prompt::{AssistantPart, Message, ToolOutput};
+        let raw = " {\"n\":\n";
+        let source = "text('custom');";
+        for custom_first in [true, false] {
+            let mut prompt = Vec::new();
+            let mut expected = Vec::new();
+            for custom in [custom_first, !custom_first] {
+                let item = if custom {
+                    json!({"type":"custom_tool_call","id":"custom-item","call_id":"call","name":"exec","input":source})
+                } else {
+                    json!({"type":"function_call","id":"function-item","call_id":"call","name":"exec","arguments":raw})
+                };
+                // IDs are scoped to a model step, so each step has its own decoder.
+                let events = Decoder::new(None, &[])
+                    .push(json!({"type":"response.output_item.done","item":item}))
+                    .unwrap();
+                let ModelEvent::ToolCall(call) = &events[0] else {
+                    panic!("expected call")
+                };
+                prompt.push(Message::Assistant {
+                    content: vec![AssistantPart::ToolCall {
+                        tool_call_id: call.id.clone(),
+                        tool_name: call.name.clone(),
+                        input: call.input.clone(),
+                        provider_executed: None,
+                        provider_options: call.provider_options.clone(),
+                    }],
+                    provider_options: None,
+                });
+                let mut result =
+                    Message::tool("call", "exec", ToolOutput::ErrorText("refused".into()));
+                if custom && let Message::Tool { content, .. } = &mut result {
+                    content[0].provider_options = Some(json!({"openai":{"toolKind":"custom"}}));
+                }
+                prompt.push(result);
+                expected.extend(if custom {
+                    vec![json!({"type":"custom_tool_call","call_id":"call","name":"exec","input":source}),
+                        json!({"type":"custom_tool_call_output","call_id":"call","output":"refused"})]
+                } else {
+                    vec![json!({"type":"function_call","call_id":"call","name":"exec","arguments":raw}),
+                        json!({"type":"function_call_output","call_id":"call","output":"refused"})]
+                });
+            }
+            let options = json!({"openai":{"store":false}});
+            let request = crate::request::Request {
+                model: "fixture",
+                prompt: &prompt,
+                tools: &[],
+                options: &options,
+                max_output_tokens: None,
+                plaintext: None,
+            };
+            assert_eq!(request.encode().unwrap()["input"], json!(expected));
+            let fallback = crate::request::Request {
+                plaintext: Some(maka_agent_facts::model::PlaintextResponses {
+                    reasoning_replay:
+                        maka_agent_facts::model::PlaintextReasoningReplay::PlaintextContent,
+                    compatibility: None,
+                }),
+                ..request
+            }
+            .encode()
+            .unwrap();
+            for (index, custom) in [custom_first, !custom_first].into_iter().enumerate() {
+                assert_eq!(
+                    fallback["input"][index * 2],
+                    json!({"type":"function_call","call_id":"call","name":"exec",
+                    "arguments":if custom {json!({"code":source}).to_string()} else {raw.into()}})
+                );
+                assert_eq!(
+                    fallback["input"][index * 2 + 1],
+                    json!({"type":"function_call_output","call_id":"call","output":"refused"})
+                );
+            }
+        }
+    }
+
     fn function(id: &str, call: &str) -> Value {
         json!({"type":"function_call", "id":id, "call_id":call, "name":"Read", "arguments":"{}"})
     }

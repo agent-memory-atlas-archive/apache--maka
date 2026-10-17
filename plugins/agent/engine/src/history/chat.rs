@@ -115,14 +115,14 @@ mod tests {
         let second = result("two", json!([file("second-image")]));
         let messages = vec![
             json!({"role":"assistant","content":[
-                {"type":"tool-call","toolCallId":"one","toolName":"tool-one","input":{}},
-                {"type":"tool-call","toolCallId":"two","toolName":"tool-two","input":{}}
+                {"type":"tool-call","toolCallId":"one","toolName":"tool-one","input":{"kind":"json","data":{}}},
+                {"type":"tool-call","toolCallId":"two","toolName":"tool-two","input":{"kind":"json","data":{}}}
             ]}),
             json!({"role":"tool","providerOptions":{"test":"message"},"content":[first]}),
             json!({"role":"tool","content":[second]}),
             json!({"role":"assistant","content":[
-                {"type":"tool-call","toolCallId":"three","toolName":"tool-three","input":{}},
-                {"type":"tool-call","toolCallId":"four","toolName":"tool-four","input":{}}
+                {"type":"tool-call","toolCallId":"three","toolName":"tool-three","input":{"kind":"json","data":{}}},
+                {"type":"tool-call","toolCallId":"four","toolName":"tool-four","input":{"kind":"json","data":{}}}
             ]}),
             json!({"role":"tool","content":[
                 result("three", json!([file("third-image")])),

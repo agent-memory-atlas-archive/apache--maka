@@ -84,7 +84,7 @@ pub(super) async fn output(
         step_id: step.into(),
         event: maka_agent_facts::model::ModelEvent::ToolCall(
             serde_json::from_value(json!({
-                    "id":step,"name":"Read","input":{"path":"file"},"provider_executed":false
+                    "id":step,"name":"Read","input":{"kind":"json","data":{"path":"file"}},"provider_executed":false
             }))
             .unwrap(),
         ),
@@ -95,7 +95,7 @@ pub(super) async fn output(
         step_id: step.into(),
         output: serde_json::from_value(json!({
             "parts":[{"kind":"tool_call","call":{
-                "id":step,"name":"Read","input":{"path":"file"},"provider_executed":false
+                "id":step,"name":"Read","input":{"kind":"json","data":{"path":"file"}},"provider_executed":false
             }}],"finish_reason":"tool-calls","usage":{}
         }))
         .unwrap(),

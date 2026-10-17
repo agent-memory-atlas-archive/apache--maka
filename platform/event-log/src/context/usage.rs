@@ -26,6 +26,7 @@ use maka_agent_facts::event::ToolOutcome;
 use maka_agent_facts::input::InvocationInput;
 use maka_agent_facts::input::MessageInput;
 use maka_agent_facts::model::ModelEvent;
+use maka_agent_facts::model::ToolInput;
 use maka_agent_facts::tool_output::DurableToolProjection;
 use maka_agent_facts::tool_output::ProjectionPart;
 use sqlx::{Connection, Row, SqliteConnection};
@@ -255,7 +256,11 @@ fn increment(fact: &Fact, basis: &AcceptedMainContext) -> Option<u64> {
             ModelEvent::PartStarted { .. } => 12,
             ModelEvent::PartDelta { text, .. } => text_units(text),
             ModelEvent::ToolCall(call) => {
-                text_units(&call.name) + text_units(&call.input.to_string()) + 12
+                let input_units = match &call.input {
+                    ToolInput::Json(value) => text_units(&value.to_string()),
+                    ToolInput::InvalidJson { raw } => text_units(raw),
+                };
+                text_units(&call.name) + input_units + 12
             }
             ModelEvent::ProviderToolResult { output, .. } => text_units(&output.to_string()) + 12,
             _ => 0,
@@ -271,7 +276,13 @@ fn increment(fact: &Fact, basis: &AcceptedMainContext) -> Option<u64> {
             }
         }
         Fact::ToolNotified { model_text, .. } => 12 + text_units(model_text),
-        Fact::ToolRejected { reason, .. } => 12 + text_units(&reason.to_string()),
+        Fact::ToolRejected { reason, input, .. } => {
+            12 + text_units(&reason.to_string())
+                + input
+                    .invalid_json_diagnostic()
+                    .as_deref()
+                    .map_or(0, text_units)
+        }
         Fact::ExecutorCompleted { .. } => return None,
         _ => 0,
     })

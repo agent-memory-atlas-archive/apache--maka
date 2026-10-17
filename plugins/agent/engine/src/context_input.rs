@@ -20,6 +20,7 @@
 //! Fit only a provider's summary input. Canonical history is never shortened.
 use crate::RunInput;
 use maka_agent_facts::context::ModelPurpose;
+use maka_agent_facts::model::ToolInput;
 use maka_model::prompt::{AssistantPart, ContentPart, Message, ToolOutput};
 
 /// A preflight estimate, never measured provider usage. Attachment encodings
@@ -38,7 +39,13 @@ pub(super) fn estimate(prompt: &[Message]) -> u64 {
                         | AssistantPart::Reasoning { text, .. } => text_tokens(text),
                         AssistantPart::ToolCall {
                             tool_name, input, ..
-                        } => 16 + text_tokens(tool_name) + json_tokens(input),
+                        } => {
+                            16 + text_tokens(tool_name)
+                                + match input {
+                                    ToolInput::Json(value) => json_tokens(value),
+                                    ToolInput::InvalidJson { raw } => text_tokens(raw),
+                                }
+                        }
                         AssistantPart::ToolResult {
                             tool_name, output, ..
                         } => 16 + text_tokens(tool_name) + output_tokens(output),

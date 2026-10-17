@@ -65,7 +65,7 @@ impl ToolJournal {
         operation_id: String,
         call: ToolCallIdentity,
         name: String,
-        input: Value,
+        input: crate::model::ToolInput,
         reason: ToolRejection,
     ) -> ToolFuture {
         let sink = self.sink.clone();

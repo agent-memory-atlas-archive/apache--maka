@@ -33,6 +33,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 mod chat;
+mod prompt;
 
 fn serialize_tools<S: serde::Serializer>(
     tools: &[ToolDefinition],
@@ -84,6 +85,7 @@ pub(super) async fn stream(
     #[serde(rename_all = "camelCase")]
     struct SdkRequest {
         provider: maka_agent_facts::model::request::Provider,
+        #[serde(serialize_with = "prompt::serialize")]
         prompt: Vec<crate::prompt::Message>,
         #[serde(serialize_with = "serialize_tools")]
         tools: Vec<ToolDefinition>,

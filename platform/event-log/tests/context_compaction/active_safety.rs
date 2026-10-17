@@ -43,7 +43,7 @@ async fn active_cuts_require_settled_effects_or_explicit_retry_safety() {
         if provider {
             log.append(&event("active", Fact::ModelCompleted { step_id: "main".into(),
                 output: serde_json::from_value(json!({
-                    "parts":[{"kind":"tool_call","call":{"id":"remote","name":"search","input":{},"provider_executed":true}}],
+                    "parts":[{"kind":"tool_call","call":{"id":"remote","name":"search","input":{"kind":"json","data":{}},"provider_executed":true}}],
                     "finish_reason":"stop","usage":{}
                 })).unwrap()
             })).await.unwrap();
@@ -142,7 +142,7 @@ async fn private_summary_failure_allows_main_progress_only_without_provider_effe
             ModelEvent::ToolCall(maka_agent_facts::model::ModelToolCall {
                 id: "remote".into(),
                 name: "search".into(),
-                input: json!({}),
+                input: json!({}).into(),
                 provider_executed: true,
                 provider_options: None,
             })

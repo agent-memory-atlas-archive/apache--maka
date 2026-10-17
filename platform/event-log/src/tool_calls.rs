@@ -126,14 +126,12 @@ pub(crate) async fn validate(
             operation_id,
             call,
             name,
-            input,
             ..
         }
         | Fact::ToolRejected {
             operation_id,
             call,
             name,
-            input,
             ..
         } => {
             identity(operation_id)?;
@@ -256,7 +254,15 @@ pub(crate) async fn validate(
                             .fetch_optional(&mut *tx).await?;
                         accepted.map(|json| serde_json::from_str::<ModelToolCall>(&json)).transpose()?
                     }.ok_or_else(|| invalid("provider tool requires an accepted local model call"))?;
-                    if accepted.name != *name || accepted.input != *input {
+                    let same_input = match &event.fact {
+                        Fact::ToolDispatched { input, .. } => matches!(
+                            &accepted.input,
+                            maka_agent_facts::model::ToolInput::Json(value) if value == input
+                        ),
+                        Fact::ToolRejected { input, .. } => accepted.input == *input,
+                        _ => unreachable!("tool admission fact"),
+                    };
+                    if accepted.name != *name || !same_input {
                         return Err(invalid("provider tool differs from accepted name or input"));
                     }
                 }

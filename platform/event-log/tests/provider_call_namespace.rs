@@ -84,7 +84,7 @@ async fn accepted(log: &EventLog, step: &str) {
                         call: ModelToolCall {
                             id: "call-1".into(),
                             name: "tool".into(),
-                            input: json!({}),
+                            input: json!({}).into(),
                             provider_options: None,
                             provider_executed: false,
                         },

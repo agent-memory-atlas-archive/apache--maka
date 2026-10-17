@@ -45,7 +45,7 @@ async fn legacy(log: &EventLog, id: &str, repeats: usize) {
             step_id: step.clone(), model_id: "test".into(), source_scope: LogScope::Session { id: "session".into() },
             source_high_water: 1, source_digest: "legacy".into(), input_digest: "legacy".into(), route_identity: "legacy".into() },
         Fact::ModelCompleted { step_id: step.clone(), output: serde_json::from_value(json!({
-            "parts":[{"kind":"tool_call","call":{"id":format!("call-{id}"),"name":"Read","input":{"path":id},"provider_executed":false}}],
+            "parts":[{"kind":"tool_call","call":{"id":format!("call-{id}"),"name":"Read","input":{"kind":"json","data":{"path":id}},"provider_executed":false}}],
             "finish_reason":"tool-calls","usage":{}
         })).unwrap() },
         Fact::ToolDispatched { presentation: None,

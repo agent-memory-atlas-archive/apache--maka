@@ -22,7 +22,7 @@ pub use startup::{RecoveryError, recover_invocations};
 
 use futures_util::TryStreamExt;
 use maka_agent_facts::event::Invocation;
-use serde_json::Value;
+use maka_agent_facts::model::ToolInput;
 use sqlx::{Connection, Row, SqliteConnection};
 
 use crate::{EventLog, StoreError};
@@ -96,7 +96,7 @@ pub struct UndispatchedCall {
     pub operation_id: String,
     pub identity: maka_agent_facts::tool_call::ToolCallIdentity,
     pub name: String,
-    pub input: Value,
+    pub input: ToolInput,
 }
 
 impl EventLog {

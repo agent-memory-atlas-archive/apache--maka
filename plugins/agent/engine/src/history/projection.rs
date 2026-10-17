@@ -509,8 +509,8 @@ pub(super) fn build<'a>(
                 operation_id: operation,
                 call,
                 name,
+                input,
                 reason,
-                ..
             } => match &call.origin {
                 ToolOrigin::Provider { step_id } => {
                     if operation_id(step_id, &call.tool_call_id) != *operation
@@ -525,7 +525,10 @@ pub(super) fn build<'a>(
                     messages.push(tool_message(
                         id,
                         name,
-                        ToolOutput::ErrorText(reason.to_string()),
+                        ToolOutput::ErrorText(match input.invalid_json_diagnostic() {
+                            Some(diagnostic) => format!("{reason}\n{diagnostic}"),
+                            None => reason.to_string(),
+                        }),
                         custom_operations.contains(operation),
                     ));
                 }

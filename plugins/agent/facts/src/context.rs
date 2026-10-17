@@ -239,7 +239,7 @@ mod tests {
         step.finish_reason = ModelFinishReason::Stop;
         step.parts.push(ModelPart::ToolCall {
             call: serde_json::from_value(serde_json::json!({
-                "id":"call", "name":"Read", "input":{}, "provider_executed":false
+                "id":"call", "name":"Read", "input":{"kind":"json","data":{}}, "provider_executed":false
             }))
             .unwrap(),
         });

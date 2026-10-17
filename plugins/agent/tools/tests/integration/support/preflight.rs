@@ -90,11 +90,15 @@ pub fn invocation(id: &str) -> Invocation {
         invocation_id: format!("invocation-{id}"),
     }
 }
-pub fn call(id: &str, name: &str, input: Value) -> ModelToolCall {
+pub fn call(
+    id: &str,
+    name: &str,
+    input: impl Into<maka_agent_facts::model::ToolInput>,
+) -> ModelToolCall {
     ModelToolCall {
         id: id.into(),
         name: name.into(),
-        input,
+        input: input.into(),
         provider_options: None,
         provider_executed: false,
     }

@@ -59,7 +59,7 @@ async fn reopened_images_do_not_starve_current_images_and_each_artifact_read_is_
                 source_scope: maka_agent_facts::event::LogScope::Session { id: "session".into() },
                 source_high_water: 1, source_digest: "fixture".into(), input_digest: "fixture".into(), route_identity: "fixture".into() },
             Fact::ModelCompleted { step_id: "prior-step".into(), output: serde_json::from_value(json!({
-                "parts":[{"kind":"tool_call","call":{"id":"read","name":"Read","input":{},"provider_executed":false}}],
+                "parts":[{"kind":"tool_call","call":{"id":"read","name":"Read","input":{"kind":"json","data":{}},"provider_executed":false}}],
                 "finish_reason":"tool-calls", "usage":{}})).unwrap() },
             Fact::ToolDispatched { presentation: None,
         title: None, operation_id: "prior-step:read".into(), call: ToolCallIdentity::provider("prior-step".into(), "read".into()), name: "Read".into(), input: json!({}) },

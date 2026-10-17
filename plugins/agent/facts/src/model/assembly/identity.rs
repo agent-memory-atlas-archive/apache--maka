@@ -65,7 +65,7 @@ mod tests {
             id,
             name,
             provider_executed,
-            input: json!({}),
+            input: json!({}).into(),
             provider_options: None,
         })
     }

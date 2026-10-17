@@ -205,7 +205,8 @@ async fn check_boundary(boundary: Boundary) {
     let call = ModelToolCall {
         id: "parent".into(),
         name: "exec".into(),
-        input: json!({"code": "try { await tools.effect({}); } catch (_) {} text('caught');"}),
+        input: json!({"code": "try { await tools.effect({}); } catch (_) {} text('caught');"})
+            .into(),
         provider_options: None,
         provider_executed: false,
     };
@@ -351,7 +352,7 @@ async fn notification_commit_failure_cancels_the_cell_without_fabricating_succes
         let directory = tempfile::tempdir().unwrap();
         let log = Arc::new(EventLog::open(&directory.path().join("events.sqlite")).await.unwrap());
         let invocation = Invocation { session_id:"session".into(), turn_id:"turn".into(), run_id:"run".into(), invocation_id:"invocation".into() };
-        let call = ModelToolCall { id:"parent".into(), name:"exec".into(), input:json!({"code":"notify('progress'); await new Promise(resolve => setTimeout(resolve, 60000));"}), provider_options:None, provider_executed:false };
+        let call = ModelToolCall { id:"parent".into(), name:"exec".into(), input:json!({"code":"notify('progress'); await new Promise(resolve => setTimeout(resolve, 60000));"}).into(), provider_options:None, provider_executed:false };
         seed(&log, &invocation, &call).await;
         let sink = Arc::new(FaultSink { log:log.clone(), boundary:Boundary::Notification, attempts:Mutex::new(Vec::new()), faults:AtomicUsize::new(0) });
         let run = RunTools::new(sink.clone(), invocation, ToolCatalog::default(), ToolMode::CodeMode, CodeExecutor::new(CellLimits::default()).unwrap(), Default::default());

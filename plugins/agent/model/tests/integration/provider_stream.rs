@@ -230,7 +230,7 @@ async fn sdk_text_and_tool_streams_cross_real_http_before_response_finishes() {
             let tool = step.tool_calls().next().expect("tool call");
             assert_eq!(tool.id, "tool-1");
             assert_eq!(tool.name, "echo");
-            assert_eq!(tool.input, json!({}));
+            assert_eq!(tool.input, maka_agent_facts::model::ToolInput::Json(json!({})));
 assert_eq!(step.finish_reason, maka_agent_facts::model::ModelFinishReason::ToolCalls);
             assert_eq!(step.usage.input_tokens, Some(2));
             assert_eq!(step.usage.output_tokens, Some(3));
@@ -273,7 +273,7 @@ async fn chat_tool_media_follow_the_complete_parallel_result_group_on_the_wire()
             let mut input = request(kind, base);
             input.prompt.push(Message::Assistant {
                 content: ["first", "second"].into_iter().map(|id| AssistantPart::ToolCall {
-                    tool_call_id: id.into(), tool_name: "echo".into(), input: json!({}),
+                    tool_call_id: id.into(), tool_name: "echo".into(), input: maka_agent_facts::model::ToolInput::Json(json!({})),
                     provider_executed: None, provider_options: None,
                 }).collect(),
                 provider_options: None,
@@ -364,7 +364,7 @@ async fn chat_tool_deltas_keep_arguments_separate_when_gateways_omit_or_reuse_id
                 assert_eq!(calls.len(), 2, "{kind:?}: {deltas:?}");
                 assert_ne!(calls[0].id, calls[1].id);
                 assert!(calls.iter().all(|call| !call.id.trim().is_empty() && call.name == "echo"));
-                let mut values: Vec<_> = calls.iter().map(|call| call.input["value"].as_str().unwrap()).collect();
+                let mut values: Vec<_> = calls.iter().map(|call| call.input.as_json().unwrap()["value"].as_str().unwrap()).collect();
                 values.sort_unstable();
                 assert_eq!(values, ["first", "second"], "{kind:?}: {deltas:?}");
                 assert_eq!(step.finish_reason, maka_agent_facts::model::ModelFinishReason::ToolCalls);
@@ -584,4 +584,55 @@ async fn customization_cannot_replace_generated_headers_or_body_fields() {
         }
         assert!(tokio::time::timeout(Duration::from_millis(100), listener.accept()).await.is_err());
     }).await.expect("customization conflicts must fail promptly");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sdk_tool_history_projects_invalid_json_and_unwraps_valid_arguments_on_the_wire() {
+    use maka_agent_facts::model::ToolInput;
+    use maka_model::prompt::{AssistantPart, Message, ToolOutput};
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let executor = ModelExecutor::new(Duration::from_secs(10)).unwrap();
+        for kind in [ProviderKind::OpenaiChat, ProviderKind::OpenaiCompatible { name: "fixture".into() }, ProviderKind::Anthropic] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/v1", listener.local_addr().unwrap());
+            let response_kind = if matches!(kind, ProviderKind::Anthropic) { ProviderKind::Anthropic } else { ProviderKind::OpenaiChat };
+            let (first, last) = fixtures(response_kind, "done");
+            let body = first + &last;
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let wire = read_request(&mut socket).await;
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                serde_json::from_str::<Value>(wire.split_once("\r\n\r\n").unwrap().1).unwrap()
+            });
+            let raw = " {\"n\":\n";
+            let diagnostic = format!("Invalid JSON tool arguments: EOF while parsing a value; original arguments: {}", json!(raw));
+            let mut input = request(kind.clone(), base);
+            input.prompt.push(Message::Assistant { content: vec![
+                AssistantPart::ToolCall { tool_call_id:"broken".into(), tool_name:"echo".into(), input:ToolInput::InvalidJson {raw:raw.into()}, provider_executed:Some(false), provider_options:None },
+                AssistantPart::ToolCall { tool_call_id:"normal".into(), tool_name:"echo".into(), input:ToolInput::Json(json!({"text":"original","n":7})), provider_executed:None, provider_options:None },
+            ], provider_options:None });
+            input.prompt.push(Message::tool("broken", "echo", ToolOutput::ErrorText(diagnostic.clone())));
+            input.prompt.push(Message::tool("normal", "echo", ToolOutput::Json(json!({"text":"original","n":7}))));
+            let mut stream = executor.stream(input, CancellationToken::new()).await.unwrap();
+            let mut builder = StepBuilder::default();
+            while let Some(event) = stream.next().await { builder.push(event.unwrap().event).unwrap(); }
+            stream.cancel_and_wait().await.unwrap();
+            assert_eq!(builder.finish().unwrap().finish_reason, maka_agent_facts::model::ModelFinishReason::ToolCalls);
+            let wire = server.await.unwrap();
+            let messages = wire["messages"].as_array().unwrap();
+            if matches!(kind, ProviderKind::Anthropic) {
+                assert_eq!(messages[1]["content"][0], json!({"type":"tool_use","id":"broken","name":"echo","input":{}}));
+                assert_eq!(messages[1]["content"][1], json!({"type":"tool_use","id":"normal","name":"echo","input":{"text":"original","n":7}}));
+                assert_eq!(messages[2]["content"][0]["tool_use_id"], "broken");
+                assert_eq!(messages[2]["content"][0]["is_error"], true);
+                assert_eq!(messages[2]["content"][0]["content"], diagnostic);
+            } else {
+                assert_eq!(messages[1]["tool_calls"][0], json!({"type":"function","id":"broken","function":{"name":"echo","arguments":"{}"}}));
+                assert_eq!(messages[1]["tool_calls"][1]["id"], "normal");
+                assert_eq!(serde_json::from_str::<Value>(messages[1]["tool_calls"][1]["function"]["arguments"].as_str().unwrap()).unwrap(), json!({"text":"original","n":7}));
+                assert_eq!(messages[2]["tool_call_id"], "broken");
+                assert_eq!(messages[2]["content"], diagnostic);
+            }
+        }
+    }).await.expect("SDK wire projection must finish");
 }

@@ -120,7 +120,7 @@ async fn handoff_rejects_unresolved_provider_effects_but_accepts_effect_free_sum
             ModelEvent::ToolCall(ModelToolCall {
                 id: "remote".into(),
                 name: "search".into(),
-                input: serde_json::json!({}),
+                input: serde_json::json!({}).into(),
                 provider_options: None,
                 provider_executed: true,
             })

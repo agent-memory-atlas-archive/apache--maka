@@ -21,6 +21,7 @@ use crate::support::preflight as support;
 
 use maka_agent_facts::event::Fact;
 use maka_agent_facts::event::ToolOutcome;
+use maka_agent_facts::model::ToolInput;
 use maka_agent_facts::tool_call::ToolRejection;
 use maka_agent_facts::tools::ToolError;
 use maka_event_log::EventLog;
@@ -98,6 +99,35 @@ async fn provider_preflight_rejects_before_t1_and_exclusivity_follows_call_order
             ],
         ),
         (
+            "malformed-direct",
+            ToolMode::Direct,
+            vec![
+                (
+                    call("malformed", "echo", ToolInput::from_json("{\"n\":".into())),
+                    Some(ToolRejection::InvalidInput {
+                        message: "arguments are not valid JSON".into(),
+                    }),
+                ),
+                (call("corrected", "echo", json!({"n":7})), None),
+            ],
+        ),
+        (
+            "malformed-exclusive",
+            ToolMode::CodeMode,
+            vec![
+                (
+                    call("exec", "exec", ToolInput::from_json("{\"code\":".into())),
+                    Some(ToolRejection::InvalidInput {
+                        message: "arguments are not valid JSON".into(),
+                    }),
+                ),
+                (
+                    call("again", "exec", json!({"code":"text(4)"})),
+                    Some(ToolRejection::ExclusiveConflict),
+                ),
+            ],
+        ),
+        (
             "invalid-exclusive",
             ToolMode::CodeMode,
             vec![
@@ -117,6 +147,14 @@ async fn provider_preflight_rejects_before_t1_and_exclusivity_follows_call_order
             "cancelled",
             ToolMode::CodeMode,
             vec![
+                (
+                    call(
+                        "malformed",
+                        "exec",
+                        ToolInput::from_json("{\"code\":".into()),
+                    ),
+                    Some(ToolRejection::Cancelled),
+                ),
                 (
                     call("echo", "echo", json!({"n":1})),
                     Some(ToolRejection::Cancelled),
@@ -181,8 +219,8 @@ async fn provider_preflight_rejects_before_t1_and_exclusivity_follows_call_order
                     "{id}: {result:?}"
                 );
                 assert!(matches!(facts.last().unwrap(),
-                    Fact::ToolRejected { operation_id, call: identity, reason: actual, .. }
-                    if operation_id == &format!("{step_id}:{}", call.id)
+                    Fact::ToolRejected { operation_id, call: identity, input, reason: actual, .. }
+                    if input == &call.input && operation_id == &format!("{step_id}:{}", call.id)
                         && identity.tool_call_id == call.id && actual == &reason));
                 assert!(!facts.iter().any(|fact| matches!(fact,
                     Fact::ToolDispatched { operation_id, .. } | Fact::ToolSettled { operation_id, .. }
@@ -192,7 +230,7 @@ async fn provider_preflight_rejects_before_t1_and_exclusivity_follows_call_order
                 let expected = if call.name == "exec" {
                     json!({"ok":true,"value":null,"toolCalls":[]})
                 } else {
-                    call.input
+                    call.input.as_json().unwrap().clone()
                 };
                 if call.name == "exec" {
                     assert_eq!(value["state"], "completed");
@@ -226,7 +264,7 @@ async fn provider_preflight_rejects_before_t1_and_exclusivity_follows_call_order
                 .is_empty()
         );
     }
-    assert_eq!(effect.0.load(Ordering::SeqCst), 3);
+    assert_eq!(effect.0.load(Ordering::SeqCst), 4);
     let before = log.prefix(200, 1024 * 1024).await.unwrap();
     close(log).await;
     let reopened = EventLog::open(&path).await.unwrap();

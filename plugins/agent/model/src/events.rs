@@ -23,6 +23,7 @@ use maka_agent_facts::model::ModelFinishReason;
 use maka_agent_facts::model::ModelToolCall;
 use maka_agent_facts::model::ModelUsage;
 use maka_agent_facts::model::TextKind;
+use maka_agent_facts::model::ToolInput;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -138,8 +139,7 @@ impl Normalizer {
                 ModelEvent::ToolCall(ModelToolCall {
                     id,
                     name: string(&value, "toolName")?,
-                    input: serde_json::from_str(&string(&value, "input")?)
-                        .map_err(|_| invalid("invalid tool call JSON"))?,
+                    input: ToolInput::from_json(string(&value, "input")?),
                     provider_options,
                     provider_executed,
                 })
@@ -286,6 +286,54 @@ mod tests {
     fn tool(kind: &str) -> Value {
         json!({"type": kind, "toolCallId": "call", "toolName": "tool",
             "input": "{}", "result": {}})
+    }
+
+    #[test]
+    fn complete_tool_arguments_preserve_json_classification_and_raw_evidence() {
+        for (raw, expected) in [
+            (
+                " {\"n\":\n",
+                ToolInput::InvalidJson {
+                    raw: " {\"n\":\n".into(),
+                },
+            ),
+            ("null", ToolInput::Json(json!(null))),
+            ("7", ToolInput::Json(json!(7))),
+            ("\"abc\"", ToolInput::Json(json!("abc"))),
+            (
+                r#"{"kind":"invalid_json","data":{"raw":"x"}}"#,
+                ToolInput::Json(json!({"kind":"invalid_json","data":{"raw":"x"}})),
+            ),
+        ] {
+            let mut event = tool("tool-call");
+            event["input"] = json!(raw);
+            event["providerMetadata"] = json!({"openai":{"itemId":"item"}});
+            let Some(ModelEvent::ToolCall(call)) = Normalizer::default().push(event).unwrap()
+            else {
+                panic!("expected call")
+            };
+            assert_eq!(call.id, "call");
+            assert_eq!(call.name, "tool");
+            assert_eq!(call.input, expected);
+            assert_eq!(
+                call.provider_options,
+                Some(json!({"openai":{"itemId":"item"}}))
+            );
+        }
+        for value in [json!(null), json!(7), json!({}), json!([])] {
+            let mut event = tool("tool-call");
+            event["input"] = value;
+            assert!(matches!(
+                Normalizer::default().push(event),
+                Err(ModelError::Adapter(_))
+            ));
+        }
+        let mut event = tool("tool-call");
+        event.as_object_mut().unwrap().remove("input");
+        assert!(matches!(
+            Normalizer::default().push(event),
+            Err(ModelError::Adapter(_))
+        ));
     }
 
     #[test]

@@ -133,7 +133,7 @@ pub enum AssistantPart {
         tool_call_id: String,
         #[serde(rename = "toolName")]
         tool_name: String,
-        input: Value,
+        input: super::ToolInput,
         #[serde(rename = "providerExecuted", skip_serializing_if = "Option::is_none")]
         provider_executed: Option<bool>,
         #[serde(rename = "providerOptions", skip_serializing_if = "Option::is_none")]

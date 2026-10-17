@@ -90,7 +90,7 @@ pub(super) fn step(facts: &mut Vec<Fact>, id: &str, text: bool, native: bool) {
     let call = ModelToolCall {
         id: "raw".into(),
         name: "exec".into(),
-        input: json!({"code":"Read()"}),
+        input: json!({"code":"Read()"}).into(),
         provider_options: Some(json!({"vendor":{"signature":"proof"}})),
         provider_executed: native,
     };

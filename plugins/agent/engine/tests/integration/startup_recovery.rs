@@ -64,7 +64,7 @@ async fn tool_call(log: &EventLog) {
                     call: ModelToolCall {
                         id: "call".into(),
                         name: "write_file".into(),
-                        input: json!({"path":"effect.txt"}),
+                        input: json!({"path":"effect.txt"}).into(),
                         provider_options: None,
                         provider_executed: false,
                     },
@@ -256,7 +256,7 @@ async fn reopened_committed_call_without_dispatch_is_durably_known_not_executed(
     assert_eq!(prefix.events.len(), 5);
     assert!(matches!(&prefix.events[3].event.fact, Fact::ToolRejected {
         operation_id, call, name, input, reason: maka_agent_facts::tool_call::ToolRejection::Cancelled
-    } if operation_id == "step:call" && call == &maka_agent_facts::tool_call::ToolCallIdentity::provider("step".into(), "call".into()) && name == "write_file" && input == &json!({"path":"effect.txt"})));
+    } if operation_id == "step:call" && call == &maka_agent_facts::tool_call::ToolCallIdentity::provider("step".into(), "call".into()) && name == "write_file" && input.as_json() == Some(&json!({"path":"effect.txt"}))));
     assert!(!prefix.events.iter().any(|stored| matches!(
         stored.event.fact,
         Fact::ToolDispatched { .. } | Fact::ToolSettled { .. }
@@ -408,7 +408,7 @@ async fn explicit_new_message_after_unknown_dispatch_informs_model_without_repla
                         call: ModelToolCall {
                             id: id.into(),
                             name: "write_file".into(),
-                            input: json!({"path": if id == "call" { "effect.txt" } else { "never.txt" }}),
+                            input: json!({"path": if id == "call" { "effect.txt" } else { "never.txt" }}).into(),
                             provider_options: None,
                             provider_executed: false,
                         },
@@ -488,7 +488,7 @@ async fn item_acceptance_survives_crashes_before_dispatch_before_settlement_and_
         let call = ModelToolCall {
             id: "call".into(),
             name: "write_file".into(),
-            input: json!({"path":"effect.txt"}),
+            input: json!({"path":"effect.txt"}).into(),
             provider_options: Some(json!({"openai":{"itemId":"opaque"}})),
             provider_executed: false,
         };
@@ -502,7 +502,7 @@ async fn item_acceptance_survives_crashes_before_dispatch_before_settlement_and_
         };
         let attempt = |fact| EventWrite::plain(RuntimeEvent::new(invocation(), fact)).unwrap();
         assert!(
-            log.append(&attempt(dispatch(call.input.clone())))
+            log.append(&attempt(dispatch(call.input.as_json().unwrap().clone())))
                 .await
                 .is_err(),
             "an unaccepted call cannot acquire execution"
@@ -522,7 +522,7 @@ async fn item_acceptance_survives_crashes_before_dispatch_before_settlement_and_
             "accepted arguments cannot change"
         );
         if cut > 0 {
-            append(&log, dispatch(call.input.clone())).await;
+            append(&log, dispatch(call.input.as_json().unwrap().clone())).await;
         }
         if cut > 1 {
             append(

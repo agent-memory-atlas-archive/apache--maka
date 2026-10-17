@@ -23,6 +23,6 @@
 
 Coordinates Agent runs, model steps, tools, handoffs and recovery. `Engine` consumes explicit business ports and authorized resources; `RunInput` and `RunWork` describe admitted work. Model history projection is separate from UI presentation. The native Agent service owns activation and delegates execution here; platform Host and UI crates do not depend on this engine.
 
-Continuation and handoff checks derive replay evidence from canonical history and registered tool definitions. Each model step captures live tool state only after invocation admission; its recorded request digest includes those live bindings.
+Resuming a run preserves its original input and settled history. New model steps use the current authorized tool state.
 
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

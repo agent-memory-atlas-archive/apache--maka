@@ -70,10 +70,10 @@ impl ToolExecutor for Effect {
                                 Fact::ModelObserved {
                                     event: maka_agent_facts::model::ModelEvent::ToolCall(call),
                                     ..
-                                } => call.name == "echo" && call.input == input,
-                                Fact::ModelCompleted { output, .. } => output
-                                    .tool_calls()
-                                    .any(|call| call.name == "echo" && call.input == input),
+                                } => call.name == "echo" && call.input.as_json() == Some(&input),
+                                Fact::ModelCompleted { output, .. } =>
+                                    output.tool_calls().any(|call| call.name == "echo"
+                                        && call.input.as_json() == Some(&input)),
                                 _ => false,
                             }),
                 "complete call must commit before its effect"

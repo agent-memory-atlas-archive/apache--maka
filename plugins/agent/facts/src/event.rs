@@ -203,7 +203,7 @@ pub enum Fact {
         operation_id: String,
         call: crate::tool_call::ToolCallIdentity,
         name: String,
-        input: Value,
+        input: crate::model::ToolInput,
         reason: crate::tool_call::ToolRejection,
     },
     InvocationEnded {

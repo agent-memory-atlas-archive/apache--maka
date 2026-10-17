@@ -20,6 +20,8 @@
 use super::*;
 use maka_agent_facts::model::ModelPart;
 use maka_agent_facts::model::TextKind;
+const MALFORMED_ARGUMENTS: &str = " {\"n\":\n";
+const REJECTION: &str = "Invalid JSON arguments: EOF; original arguments: \" {\\\"n\\\":\\n\"";
 const CONFIRMATION_CASES: [&str; 7] = [
     "confirmed",
     "properties",
@@ -181,7 +183,7 @@ fn sparse_events() -> Vec<Value> {
 
 fn call_events() -> Vec<Value> {
     let item = json!({"type":"function_call","id":"fc_1","call_id":"call_1",
-        "name":"read","arguments":"{}","status":"completed"});
+        "name":"read","arguments":MALFORMED_ARGUMENTS,"status":"completed"});
     vec![
         json!({"type":"response.created","response":{"id":"resp_1","created_at":1,"model":"test-responses"}}),
         json!({"type":"response.output_item.added","output_index":0,"item":item}),
@@ -193,9 +195,9 @@ fn call_events() -> Vec<Value> {
 fn replay(base: &str) -> ModelRequest {
     let mut request = request(base, "first");
     request.prompt.extend(serde_json::from_value::<Vec<maka_model::prompt::Message>>(json!([
-        {"role":"assistant","content":[{"type":"tool-call","toolCallId":"call_1","toolName":"read","input":{},
+        {"role":"assistant","content":[{"type":"tool-call","toolCallId":"call_1","toolName":"read","input":{"kind":"invalid_json","data":{"raw":MALFORMED_ARGUMENTS}},
             "providerOptions":{"openai":{"itemId":"fc_1"}}}]},
-        {"role":"tool","content":[{"type":"tool-result","toolCallId":"call_1","toolName":"read","output":{"type":"text","value":"result"}}]},
+        {"role":"tool","content":[{"type":"tool-result","toolCallId":"call_1","toolName":"read","output":{"type":"error-text","value":REJECTION}}]},
     ])).unwrap());
     request
 }
@@ -220,7 +222,7 @@ async fn canonical_tool_confirmation_and_changed_properties_restore_full_input()
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             let result =
-                json!({"type":"function_call_output","call_id":"call_1","output":"result"});
+                json!({"type":"function_call_output","call_id":"call_1","output":REJECTION});
             for mode in CONFIRMATION_CASES {
                 let mut socket = accept(&listener).await;
                 wire(&mut socket, "first").await;
@@ -245,6 +247,7 @@ async fn canonical_tool_confirmation_and_changed_properties_restore_full_input()
                         next["input"][1].get("id").is_none(),
                         "full SDK projection, not raw cache"
                     );
+                    assert_eq!(next["input"][1]["arguments"], MALFORMED_ARGUMENTS);
                     assert_eq!(next["input"][2], result);
                 }
                 finish(&mut socket, "resp_2").await;
@@ -256,6 +259,12 @@ async fn canonical_tool_confirmation_and_changed_properties_restore_full_input()
             let lane = Conversation::default();
             let step = generate_step(&executor, &lane, request(&base, "first")).await;
             assert_eq!(step.tool_calls().next().unwrap().id, "call_1");
+            assert_eq!(
+                step.tool_calls().next().unwrap().input,
+                maka_agent_facts::model::ToolInput::InvalidJson {
+                    raw: MALFORMED_ARGUMENTS.into()
+                }
+            );
             let mut next = replay(&base);
             match mode {
                 "unconfirmed" => {}

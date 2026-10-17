@@ -59,7 +59,7 @@ async fn canonical_images_use_original_agent_grants_and_bounded_base64() {
     let call = ModelToolCall {
         id: "image".into(),
         name: "Read".into(),
-        input: json!({}),
+        input: json!({}).into(),
         provider_options: None,
         provider_executed: false,
     };

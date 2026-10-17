@@ -23,4 +23,8 @@
 
 Defines the shared Agent, Session and Run facts used by persistence and execution: events, messages, model selections, tool calls, accounting and continuation records. These are data types, without an engine or SQLite dependency. Keep execution policy in the owning service rather than adding it to a persisted fact.
 
+Malformed tool arguments are preserved and returned to the model for correction without executing the tool. Cancellation and recovery retain the same evidence.
+
+Histories and bundles written with the earlier tool-input format cannot be replayed. Initialize a separate empty Root with `maka host init --root NEW_EMPTY_DIRECTORY`; existing data is not automatically migrated or deleted.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

@@ -78,7 +78,7 @@ async fn tool_delivery_excludes_payloads_and_preserves_factual_order_time_and_fe
             operation_id: "rejected".into(),
             call: ToolCallIdentity::standalone("call-rejected".into()),
             name: "Write".into(),
-            input: json!({"privateInput":payload}),
+            input: json!({"privateInput":payload}).into(),
             reason: ToolRejection::PolicyDenied {
                 message: payload.clone(),
             },

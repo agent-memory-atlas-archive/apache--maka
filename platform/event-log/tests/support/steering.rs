@@ -60,7 +60,7 @@ pub async fn provider_completion(log: &EventLog, session: &str, event_id: &str) 
     let call = ModelToolCall {
         id: "provider-call".into(),
         name: "remote".into(),
-        input: serde_json::json!({}),
+        input: serde_json::json!({}).into(),
         provider_options: None,
         provider_executed: true,
     };

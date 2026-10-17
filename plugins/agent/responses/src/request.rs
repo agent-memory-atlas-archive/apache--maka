@@ -20,6 +20,7 @@
 use crate::{Error, Result};
 use maka_agent_facts::model::PlaintextReasoningReplay;
 use maka_agent_facts::model::PlaintextResponses;
+use maka_agent_facts::model::ToolInput;
 use maka_agent_facts::model::prompt::AssistantPart;
 use maka_agent_facts::model::prompt::ContentPart;
 use maka_agent_facts::model::prompt::FileData;
@@ -179,36 +180,6 @@ impl Request<'_> {
         if !options.is_object() {
             return Err(Error::Invalid("Responses options must be an object".into()));
         }
-        // Call kind belongs to historical calls, even if the current catalog changed.
-        let custom_calls: std::collections::HashSet<&str> = self
-            .prompt
-            .iter()
-            .flat_map(|message| match message {
-                Message::Assistant { content, .. } => content.as_slice(),
-                _ => &[],
-            })
-            .filter_map(|part| match part {
-                AssistantPart::ToolCall {
-                    tool_call_id,
-                    tool_name,
-                    input,
-                    provider_options,
-                    ..
-                } if input.is_string()
-                    && (metadata(provider_options, "openai", "toolKind").as_deref()
-                        == Some("custom")
-                        || metadata(provider_options, "openResponses", "toolKind").as_deref()
-                            == Some("custom")
-                        || self
-                            .tools
-                            .iter()
-                            .any(|tool| tool.name == *tool_name && tool.freeform.is_some())) =>
-                {
-                    Some(tool_call_id.as_str())
-                }
-                _ => None,
-            })
-            .collect();
         let mut input = Vec::new();
         for message in self.prompt {
             match message {
@@ -294,6 +265,24 @@ impl Request<'_> {
                                 provider_executed,
                                 provider_options,
                             } => {
+                                // A call ID may recur in another step; kind belongs to this call.
+                                let custom_source = match args {
+                                    ToolInput::Json(Value::String(source))
+                                        if metadata(provider_options, "openai", "toolKind")
+                                            .as_deref()
+                                            == Some("custom")
+                                            || metadata(
+                                                provider_options,
+                                                "openResponses",
+                                                "toolKind",
+                                            )
+                                            .as_deref()
+                                                == Some("custom") =>
+                                    {
+                                        Some(source)
+                                    }
+                                    _ => None,
+                                };
                                 if *provider_executed == Some(true) {
                                     if options["store"] != false
                                         && let Some(id) =
@@ -302,23 +291,25 @@ impl Request<'_> {
                                         input.push(Input::Item(Item::Reference { id }));
                                     }
                                 } else if self.plaintext.is_none()
-                                    && custom_calls.contains(tool_call_id.as_str())
+                                    && let Some(source) = custom_source
                                 {
                                     input.push(Input::Item(Item::CustomToolCall {
                                         call_id: tool_call_id.clone(),
                                         name: wire_name(tool_name).into(),
-                                        input: args.as_str().unwrap().into(),
+                                        input: source.clone(),
                                     }));
                                 } else {
                                     input.push(Input::Item(Item::FunctionCall {
                                         call_id: tool_call_id.clone(),
                                         name: wire_name(tool_name).into(),
-                                        arguments: if tool_name == "exec"
-                                            && custom_calls.contains(tool_call_id.as_str())
-                                        {
-                                            json!({"code":args}).to_string()
-                                        } else {
-                                            args.to_string()
+                                        arguments: match custom_source {
+                                            Some(source) if tool_name == "exec" => {
+                                                json!({"code":source}).to_string()
+                                            }
+                                            _ => match args {
+                                                ToolInput::Json(value) => value.to_string(),
+                                                ToolInput::InvalidJson { raw } => raw.clone(),
+                                            },
                                         },
                                     }));
                                 }
@@ -329,8 +320,7 @@ impl Request<'_> {
                 }
                 Message::Tool { content, .. } => {
                     for result in content {
-                        let custom = result.is_custom()
-                            || custom_calls.contains(result.tool_call_id.as_str());
+                        let custom = result.is_custom();
                         if result.is_notification() && (self.plaintext.is_some() || !custom) {
                             if let ToolOutput::Text(text) = &result.output {
                                 input.push(Input::Message {

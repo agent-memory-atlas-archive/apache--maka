@@ -71,7 +71,7 @@ async fn accepted(log: &EventLog, step: &str, name: &str) -> u64 {
     let call = ModelToolCall {
         id: "reused-provider-id".into(),
         name: name.into(),
-        input: json!({}),
+        input: json!({}).into(),
         provider_options: None,
         provider_executed: false,
     };
@@ -196,7 +196,7 @@ async fn tool_boundaries_page_independently_and_rebuild_exact_ids_without_readin
         operation_id: "second:reused-provider-id".into(),
         call: ToolCallIdentity::provider("second".into(), "reused-provider-id".into()),
         name: "Read".into(),
-        input: json!({}),
+        input: json!({}).into(),
         reason: ToolRejection::InvalidInput {
             message: "path required".into(),
         },

@@ -41,7 +41,7 @@ async fn prune_verifies_streaming_accepted_call_and_rejects_corrupt_proof() {
     let call = ModelToolCall {
         id: "call".into(),
         name: "Read".into(),
-        input: json!({"path":"file"}),
+        input: json!({"path":"file"}).into(),
         provider_options: None,
         provider_executed: false,
     };

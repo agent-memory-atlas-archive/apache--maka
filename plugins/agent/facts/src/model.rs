@@ -23,7 +23,9 @@ pub mod budget;
 pub mod error;
 pub mod prompt;
 pub mod request;
+mod tool_input;
 use serde_json::Value;
+pub use tool_input::ToolInput;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -119,7 +121,7 @@ pub enum TextKind {
 pub struct ModelToolCall {
     pub id: String,
     pub name: String,
-    pub input: Value,
+    pub input: ToolInput,
     pub provider_options: Option<Value>,
     pub provider_executed: bool,
 }

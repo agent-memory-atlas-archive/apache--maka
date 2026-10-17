@@ -335,7 +335,9 @@ async fn provider_dispatch_requires_the_exact_accepted_local_call() {
                         call: ModelToolCall {
                             id: if native { "native" } else { "call" }.into(),
                             name: "composite".into(),
-                            input: serde_json::from_str("{\"b\":2,\"a\":1}").unwrap(),
+                            input: serde_json::from_str::<serde_json::Value>("{\"b\":2,\"a\":1}")
+                                .unwrap()
+                                .into(),
                             provider_options: None,
                             provider_executed: native,
                         },

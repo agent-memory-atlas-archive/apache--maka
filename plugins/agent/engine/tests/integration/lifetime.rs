@@ -253,7 +253,7 @@ async fn aborted_caller_cancels_worker_but_retains_admission_until_effect_is_dur
                 operation_id: format!("{step_id}:call-2"),
                 call: ToolCallIdentity::provider(step_id.clone(), "call-2".into()),
                 name: "echo".into(),
-                input: json!({"value":43}),
+                input: json!({"value":43}).into(),
                 reason: ToolRejection::Cancelled,
             });
             assert_eq!(

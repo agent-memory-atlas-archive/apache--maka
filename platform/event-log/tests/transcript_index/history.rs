@@ -38,7 +38,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
     let call = maka_agent_facts::model::ModelToolCall {
         id: "read".into(),
         name: "Read".into(),
-        input: serde_json::json!({"path": "source.rs", "intent": "Inspect source"}),
+        input: serde_json::json!({"path": "source.rs", "intent": "Inspect source"}).into(),
         provider_options: None,
         provider_executed: false,
     };
@@ -378,7 +378,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
         let call = maka_agent_facts::model::ModelToolCall {
             id: "count".into(),
             name: "Count".into(),
-            input: serde_json::json!({"count": 42}),
+            input: serde_json::json!({"count": 42}).into(),
             provider_options: None,
             provider_executed: false,
         };
@@ -418,7 +418,7 @@ async fn tool_metadata_preserves_empty_calls_and_non_text_results_through_frozen
                             "count".into(),
                         ),
                         name: "Count".into(),
-                        input: serde_json::json!({"count": 42}),
+                        input: serde_json::json!({"count": 42}).into(),
                         reason: maka_agent_facts::tool_call::ToolRejection::Unavailable,
                     }
                 } else {

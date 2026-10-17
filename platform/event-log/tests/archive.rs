@@ -78,7 +78,7 @@ async fn retirement_fences_new_effects_without_rejecting_accepted_results_or_exa
         .unwrap();
     assert_eq!(log.append(&accepted).await.unwrap(), sequence);
     let output = serde_json::from_value(json!({
-        "parts":[{"kind":"tool_call","call":{"id":"call","name":"Read","input":{"path":"file"},"provider_executed":false}}],
+        "parts":[{"kind":"tool_call","call":{"id":"call","name":"Read","input":{"kind":"json","data":{"path":"file"}},"provider_executed":false}}],
         "finish_reason":"tool-calls","usage":{}
     })).unwrap();
     log.append(&event(

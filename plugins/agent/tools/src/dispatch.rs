@@ -301,15 +301,21 @@ impl<'a> StepTools<'a> {
             } else {
                 &request.catalog
             };
-            let preparation: Result<PreparedEffect, ToolRejection> = async {
+            let preparation: Result<(PreparedEffect, Value), ToolRejection> = async {
                 if cancellation.is_cancelled() {
                     return Err(ToolRejection::Cancelled);
                 }
                 admission?;
-                if call.name == "exec" && run.mode == ToolMode::CodeMode {
+                let input = call
+                    .input
+                    .as_json()
+                    .ok_or_else(|| ToolRejection::InvalidInput {
+                        message: "arguments are not valid JSON".into(),
+                    })?;
+                let effect = if call.name == "exec" && run.mode == ToolMode::CodeMode {
                     let executor = cell::CellTool::new(
                         run.cells.clone(),
-                        cell::source(&call.input)?,
+                        cell::source(input)?,
                         request.catalog.clone(),
                         run.journal.clone(),
                         operation_id.clone(),
@@ -325,7 +331,7 @@ impl<'a> StepTools<'a> {
                         "執行工具",
                     )))
                 } else if call.name == "wait" && run.mode == ToolMode::CodeMode {
-                    let input = cell::wait_input(&call.input)?;
+                    let input = cell::wait_input(input)?;
                     let code = run.code.clone();
                     Ok(PreparedEffect::new(move |cancellation| {
                         Box::pin(async move { code.observe(input, cancellation).await })
@@ -334,12 +340,12 @@ impl<'a> StepTools<'a> {
                     && call.name == SEARCH
                     && request.availability.enabled()
                 {
-                    request.availability.prepare_search(&call.input)
+                    request.availability.prepare_search(input)
                 } else {
                     catalog
                         .prepare(
                             call.name.clone(),
-                            call.input.clone(),
+                            input.clone(),
                             ToolCallContext {
                                 invocation: run.journal.invocation().clone(),
                                 operation_id: operation_id.clone(),
@@ -347,10 +353,11 @@ impl<'a> StepTools<'a> {
                             cancellation.clone(),
                         )
                         .await
-                }
+                }?;
+                Ok((effect, input.clone()))
             }
             .await;
-            let effect = match preparation {
+            let (effect, input) = match preparation {
                 Ok(effect) => effect,
                 Err(reason) => {
                     return run
@@ -371,7 +378,7 @@ impl<'a> StepTools<'a> {
                     operation_id,
                     identity,
                     call.name.clone(),
-                    call.input.clone(),
+                    input,
                     cancellation,
                     effect,
                 )

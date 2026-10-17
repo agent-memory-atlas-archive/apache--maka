@@ -144,7 +144,7 @@ async fn early_tool_results_and_retained_interrupted_items_invalidate_stale_usag
                 ModelEvent::ToolCall(ModelToolCall {
                     id: "call".into(),
                     name: "read".into(),
-                    input: json!({}),
+                    input: json!({}).into(),
                     provider_options: None,
                     provider_executed: false,
                 }),

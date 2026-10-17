@@ -76,7 +76,7 @@ async fn seed(
                 json!({
                     "kind":"tool_call", "call":{
                         "id":format!("call-{turn}-{call}"), "name":"Read",
-                        "input":{"path":format!("file-{turn}-{call}")}, "provider_executed":false
+                        "input":{"kind":"json","data":{"path":format!("file-{turn}-{call}")}}, "provider_executed":false
                     }
                 })
             })

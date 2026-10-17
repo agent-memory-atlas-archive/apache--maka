@@ -114,7 +114,7 @@ async fn lineage_model_cut_allows_only_independent_cell_progress_not_compaction_
                 },
             },
             name: "unavailable".into(),
-            input: json!({}),
+            input: json!({}).into(),
             reason: maka_agent_facts::tool_call::ToolRejection::Unavailable,
         },
     ))

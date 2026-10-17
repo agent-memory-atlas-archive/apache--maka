@@ -126,7 +126,7 @@ mod tests {
             operation_id: operation.into(),
             call,
             name: "exec".into(),
-            input: json!({"code":"return 1"}),
+            input: json!({"code":"return 1"}).into(),
             reason: ToolRejection::ExclusiveConflict,
         };
         let facts = [
@@ -156,7 +156,7 @@ mod tests {
                 step_id: "step".into(),
                 output: serde_json::from_value(json!({
                     "parts":[{"kind":"tool_call","call":{
-                        "id":"call","name":"exec","input":{"code":"return 1"},
+                        "id":"call","name":"exec","input":{"kind":"json","data":{"code":"return 1"}},
                         "provider_executed":false
                     }}],
                     "finish_reason":"tool-calls","usage":{}

@@ -24,7 +24,7 @@ fn provider_call() -> ModelEvent {
     ModelEvent::ToolCall(ModelToolCall {
         id: "same-call".into(),
         name: "remote-search".into(),
-        input: json!({}),
+        input: json!({}).into(),
         provider_options: None,
         provider_executed: true,
     })
@@ -73,7 +73,7 @@ async fn interrupted_history_preserves_provider_effect_uncertainty_without_rejec
             log.append(&event("old", Fact::ModelCompleted { step_id:"prior".into(),
                 output:serde_json::from_value(json!({
                     "parts":[
-                        {"kind":"tool_call","call":{"id":"same-call","name":"remote-search","input":{},"provider_executed":true}},
+                        {"kind":"tool_call","call":{"id":"same-call","name":"remote-search","input":{"kind":"json","data":{}},"provider_executed":true}},
                         {"kind":"tool_result","id":"same-call","name":"remote-search","output":{"done":true},"is_error":false}
                     ],"finish_reason":"stop","usage":{}
                 })).unwrap()

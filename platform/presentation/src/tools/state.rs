@@ -19,15 +19,15 @@
 
 use crate::{ProjectionError, ToolMetadata};
 use maka_agent_facts::event::RuntimeEvent;
+use maka_agent_facts::model::ToolInput;
 use maka_agent_facts::tool_call::ToolCallIdentity;
 use maka_agent_facts::tool_call::ToolOrigin;
-use serde_json::Value;
 use std::collections::HashMap;
 
 pub(super) struct Pending {
     pub(super) identity: ToolCallIdentity,
     pub(super) name: String,
-    pub(super) input: Value,
+    pub(super) input: ToolInput,
     pub(super) metadata: ToolMetadata,
     pub(super) state: CallState,
     pub(super) bytes: usize,
@@ -56,7 +56,7 @@ impl Tools {
         operation: &str,
         identity: ToolCallIdentity,
         name: &str,
-        input: &Value,
+        input: ToolInput,
         state: CallState,
         event: &RuntimeEvent,
     ) -> Result<ToolMetadata, ProjectionError> {
@@ -84,7 +84,7 @@ impl Tools {
         }
         let metadata =
             ToolMetadata::from_origin(&identity.origin, &event.invocation.invocation_id)?;
-        let bytes = serde_json::to_vec(&(operation, &identity, name, input))
+        let bytes = serde_json::to_vec(&(operation, &identity, name, &input))
             .map_err(|_| ProjectionError::TooLarge)?
             .len();
         if self.pending.len() >= 256 || bytes > self.limit.saturating_sub(self.bytes) {
@@ -96,7 +96,7 @@ impl Tools {
             Pending {
                 identity,
                 name: name.into(),
-                input: input.clone(),
+                input,
                 metadata: metadata.clone(),
                 state,
                 bytes,

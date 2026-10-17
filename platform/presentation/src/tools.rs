@@ -24,6 +24,7 @@ use maka_agent_facts::event::Fact;
 use maka_agent_facts::event::RuntimeEvent;
 use maka_agent_facts::model::ModelPart;
 use maka_agent_facts::model::ModelStep;
+use maka_agent_facts::model::ToolInput;
 use maka_agent_facts::tool_call::ToolCallIdentity;
 use maka_agent_facts::tool_call::ToolOrigin;
 use maka_agent_facts::tool_output::ToolOutput;
@@ -32,6 +33,13 @@ mod limits;
 mod state;
 use state::CallState;
 pub(super) use state::Tools;
+
+fn display_input(input: &ToolInput) -> serde_json::Value {
+    match input {
+        ToolInput::Json(value) => value.clone(),
+        ToolInput::InvalidJson { raw } => serde_json::Value::String(raw.clone()),
+    }
+}
 
 impl Tools {
     pub fn accept(
@@ -110,7 +118,7 @@ impl Tools {
                     &operation,
                     identity,
                     &call.name,
-                    &call.input,
+                    call.input.clone(),
                     if call.provider_executed {
                         CallState::ProviderExecuted
                     } else {
@@ -124,7 +132,7 @@ impl Tools {
                     tool_message_id(&event.invocation.invocation_id, &operation),
                     Content::ToolCall {
                         tool_name: call.name.clone(),
-                        args: call.input.clone(),
+                        args: display_input(&call.input),
                         step_id: anchor.map(str::to_owned),
                         provider_options: call.provider_options.clone(),
                         provider_executed: Some(call.provider_executed),
@@ -172,14 +180,12 @@ impl Tools {
                 operation_id,
                 call,
                 name,
-                input,
                 ..
             }
             | Fact::ToolRejected {
                 operation_id,
                 call,
                 name,
-                input,
                 ..
             } => {
                 let rejected = matches!(event.fact, Fact::ToolRejected { .. });
@@ -191,9 +197,16 @@ impl Tools {
                             .ok_or(ProjectionError::Invalid(
                                 "provider dispatch without accepted call",
                             ))?;
+                    let same_input = match &event.fact {
+                        Fact::ToolDispatched { input, .. } => {
+                            pending.input.as_json() == Some(input)
+                        }
+                        Fact::ToolRejected { input, .. } => pending.input == *input,
+                        _ => unreachable!("tool admission fact"),
+                    };
                     if pending.identity != *call
                         || pending.name != *name
-                        || pending.input != *input
+                        || !same_input
                         || pending.state != CallState::AwaitingDispatch
                     {
                         return Err(ProjectionError::Invalid(
@@ -206,6 +219,12 @@ impl Tools {
                         CallState::Dispatched
                     };
                 } else {
+                    let input = match &event.fact {
+                        Fact::ToolDispatched { input, .. } => ToolInput::Json(input.clone()),
+                        Fact::ToolRejected { input, .. } => input.clone(),
+                        _ => unreachable!("tool admission fact"),
+                    };
+                    let args = display_input(&input);
                     let metadata = self.insert(
                         operation_id,
                         call.clone(),
@@ -224,7 +243,7 @@ impl Tools {
                         tool_message_id(&event.invocation.invocation_id, operation_id),
                         Content::ToolCall {
                             tool_name: name.clone(),
-                            args: input.clone(),
+                            args,
                             step_id: None,
                             provider_options: None,
                             provider_executed: None,

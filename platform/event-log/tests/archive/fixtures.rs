@@ -94,7 +94,7 @@ pub(super) fn request(id: &str, step: &str, source: Option<&ModelContextSource>)
 }
 pub(super) async fn tool(log: &EventLog, id: &str, step: &str, text: String) -> EventWrite {
     log.append(&request(id, step, None)).await.unwrap();
-    let output:ModelStep=serde_json::from_value(json!({"parts":[{"kind":"tool_call","call":{"id":step,"name":"Read","input":{"path":"file"},"provider_executed":false}}],"finish_reason":"tool-calls","usage":{}})).unwrap();
+    let output:ModelStep=serde_json::from_value(json!({"parts":[{"kind":"tool_call","call":{"id":step,"name":"Read","input":{"kind":"json","data":{"path":"file"}},"provider_executed":false}}],"finish_reason":"tool-calls","usage":{}})).unwrap();
     log.append(&event(
         id,
         Fact::ModelCompleted {

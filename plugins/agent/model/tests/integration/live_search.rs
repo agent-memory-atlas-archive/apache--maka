@@ -126,7 +126,10 @@ async fn sglang_protocols_preserve_reasoning_tools_and_replay() {
                 assert_eq!(calls.len(), 1, "{protocol}: expected one tool call");
                 let call = calls[0];
                 assert_eq!(call.name, "echo");
-                assert_eq!(call.input, json!({"token":"amber-native-42"}));
+                assert_eq!(
+                    call.input,
+                    maka_agent_facts::model::ToolInput::Json(json!({"token":"amber-native-42"}))
+                );
                 let content = step
                     .parts
                     .iter()

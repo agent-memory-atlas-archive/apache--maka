@@ -90,7 +90,7 @@ async fn steering_is_exact_once_session_scoped_and_atomic_with_rebuildable_user_
     let call = ModelToolCall {
         id: "call".into(),
         name: "effect".into(),
-        input: json!({}),
+        input: json!({}).into(),
         provider_executed: false,
         provider_options: None,
     };

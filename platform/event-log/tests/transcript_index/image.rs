@@ -43,7 +43,7 @@ async fn actual_tool_images_are_immutable_scoped_and_reconstructed_without_paths
     let call = maka_agent_facts::model::ModelToolCall {
         id: "image-call".into(),
         name: "Read".into(),
-        input: Value::Null,
+        input: Value::Null.into(),
         provider_options: None,
         provider_executed: false,
     };
@@ -424,7 +424,7 @@ async fn borrowed_upload_is_frozen_at_settlement_before_any_history_copy() {
     let call = maka_agent_facts::model::ModelToolCall {
         id: "image".into(),
         name: "Read".into(),
-        input: Value::Null,
+        input: Value::Null.into(),
         provider_options: None,
         provider_executed: false,
     };
