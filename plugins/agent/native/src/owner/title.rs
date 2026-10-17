@@ -29,6 +29,12 @@ use maka_agent_ports::session::title::Policy;
 use maka_event_log::usage::AuxiliarySource;
 use maka_model::{ModelRequest, prompt::Message};
 
+#[cfg(test)]
+pub(super) struct WriteGate {
+    pub(super) entered: tokio::sync::Semaphore,
+    pub(super) release: tokio::sync::Semaphore,
+}
+
 impl Owner {
     // Called under the original run admission gate; its TaskTracker owns the work through cleanup.
     pub(super) fn title_after_message(
@@ -190,52 +196,65 @@ impl Owner {
         let Some(title) = maka_session_title::normalize(&generated.text) else {
             return Ok(());
         };
-        // Main execution and read markers also move the public revision. A manual rename always wins.
-        let runs = self.runs.lock().await;
-        if runs.closing {
-            return Ok(());
-        }
-        let Some(current) = self
-            .store
-            .get_session::<SessionConfiguration>(&invocation.session_id)
-            .await
-            .map_err(persistence)?
-        else {
-            return Ok(());
-        };
-        if current.archived
-            || current.configuration.title_is_manual
-            || current.configuration.title != session.configuration.title
-            || self
+        // Main execution also moves the public revision. Retry metadata only;
+        // each attempt gives queued manual changes and shutdown a turn at the gate.
+        loop {
+            let runs = self.runs.lock().await;
+            if runs.closing || self.stop.is_cancelled() {
+                return Ok(());
+            }
+            let Some(current) = self
                 .store
-                .session_manager(&invocation.session_id)
+                .get_session::<SessionConfiguration>(&invocation.session_id)
                 .await
                 .map_err(persistence)?
-                .is_some()
-        {
-            return Ok(());
-        }
-        match self
-            .store
-            .update_session_metadata(
-                &invocation.session_id,
-                current.revision,
-                move |configuration: &mut SessionConfiguration| {
-                    if !configuration.title_is_manual {
-                        configuration.title = title;
-                    }
-                    Ok(())
-                },
-            )
-            .await
-        {
-            Ok(_)
-            | Err(
-                maka_event_log::StoreError::SessionNotFound
-                | maka_event_log::StoreError::SessionRetired
-                | maka_event_log::StoreError::SessionBusy,
-            ) => Ok(()),
-            Err(error) => Err(persistence(error)),
+            else {
+                return Ok(());
+            };
+            if current.archived
+                || current.configuration.title_is_manual
+                || current.configuration.title != session.configuration.title
+                || self
+                    .store
+                    .session_manager(&invocation.session_id)
+                    .await
+                    .map_err(persistence)?
+                    .is_some()
+            {
+                return Ok(());
+            }
+            #[cfg(test)]
+            {
+                let gate = self.title_write_gate.lock().unwrap().take();
+                if let Some(gate) = gate {
+                    gate.entered.add_permits(1);
+                    gate.release.acquire().await.unwrap().forget();
+                }
+            }
+            let title = title.clone();
+            match self
+                .store
+                .update_session_metadata(
+                    &invocation.session_id,
+                    current.revision,
+                    move |configuration: &mut SessionConfiguration| {
+                        if !configuration.title_is_manual {
+                            configuration.title = title;
+                        }
+                        Ok(())
+                    },
+                )
+                .await
+            {
+                Ok(maka_event_log::sessions::SessionMutation::Committed(_)) => return Ok(()),
+                Ok(maka_event_log::sessions::SessionMutation::RevisionConflict { .. }) => continue,
+                Err(
+                    maka_event_log::StoreError::SessionNotFound
+                    | maka_event_log::StoreError::SessionRetired
+                    | maka_event_log::StoreError::SessionBusy,
+                ) => return Ok(()),
+                Err(error) => return Err(persistence(error)),
+            }
         }
     }
 }

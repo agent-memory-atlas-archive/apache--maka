@@ -73,6 +73,109 @@ async fn attempts(f: &Fixture, session: &str) -> Vec<maka_agent_facts::accountin
         .unwrap()
         .attempts
 }
+
+#[tokio::test]
+async fn title_survives_main_completion_between_metadata_read_and_write() {
+    verify_title_metadata_conflict(false).await;
+}
+
+#[tokio::test]
+async fn title_retry_preserves_manual_placeholder_after_metadata_read() {
+    verify_title_metadata_conflict(true).await;
+}
+
+async fn verify_title_metadata_conflict(manual_rename: bool) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let f = fixture(&format!("http://{}/v1", listener.local_addr().unwrap())).await;
+        let session = automatic(&f).await;
+        let sent = f.send(&session).await.unwrap();
+        let ((_, mut main), (_, mut title)) = pair(&listener).await;
+        let gate = Arc::new(super::super::title::WriteGate {
+            entered: tokio::sync::Semaphore::new(0),
+            release: tokio::sync::Semaphore::new(0),
+        });
+        *f.owner.title_write_gate.lock().unwrap() = Some(gate.clone());
+        response_with_text(&mut title, "A title preserved across main completion").await;
+        gate.entered.acquire().await.unwrap().forget();
+        let before = f.owner.session(&session).await.unwrap();
+        let observed_revision = before.revision;
+        let mut expected = before.configuration;
+        let mut commits = f.store.subscribe_commits();
+        response(&mut main).await;
+        let completed = loop {
+            commits.borrow_and_update();
+            let boundary = f
+                .store
+                .invocation_boundary(&session, sent["invocationId"].as_str().unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .0;
+            if matches!(
+                boundary.state,
+                maka_event_log::turns::InvocationState::Ended { .. }
+            ) {
+                break boundary;
+            }
+            commits.changed().await.unwrap();
+        };
+        let completed_revision = f.owner.session(&session).await.unwrap().revision;
+        if manual_rename {
+            // An external metadata writer can commit while this Owner holds its gate.
+            let changed = f
+                .store
+                .update_session_metadata(
+                    &session,
+                    completed_revision,
+                    |configuration: &mut SessionConfiguration| {
+                        configuration.title_is_manual = true;
+                        configuration.labels = vec!["Preserved label".into()];
+                        Ok(())
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(matches!(
+                changed,
+                maka_event_log::sessions::SessionMutation::Committed(_)
+            ));
+            expected.title_is_manual = true;
+            expected.labels = vec!["Preserved label".into()];
+        } else {
+            expected.title = "A title preserved across main completion".into();
+        }
+        gate.release.add_permits(1);
+        f.drained().await;
+        let record = f.owner.session(&session).await.unwrap();
+        let attempts = attempts(&f, &session).await;
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+        assert!(completed_revision > observed_revision);
+        assert!(matches!(
+            completed.state,
+            maka_event_log::turns::InvocationState::Ended {
+                outcome: maka_agent_facts::event::InvocationOutcome::Completed,
+                ..
+            }
+        ));
+        assert!(
+            record.configuration == expected,
+            "title update must preserve the expected session configuration"
+        );
+        let auxiliary: Vec<_> = attempts
+            .iter()
+            .filter(|attempt| matches!(attempt.origin, Origin::Auxiliary { .. }))
+            .collect();
+        assert_eq!(auxiliary.len(), 1);
+        assert_eq!(auxiliary[0].outcome, Outcome::Success);
+        assert_eq!(auxiliary[0].usage.input_tokens, Some(1));
+        assert_eq!(auxiliary[0].usage.output_tokens, Some(2));
+    })
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn title_first_message_is_bounded_accounted_and_not_reissued_after_retry_or_restart() {
     tokio::time::timeout(Duration::from_secs(60), async {

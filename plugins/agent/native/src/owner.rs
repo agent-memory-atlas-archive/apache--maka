@@ -182,6 +182,8 @@ pub(crate) struct Owner {
     workers: TaskTracker,
     producers: TaskTracker,
     producer_gate: Arc<Mutex<()>>,
+    #[cfg(test)]
+    title_write_gate: std::sync::Mutex<Option<Arc<title::WriteGate>>>,
     stop: CancellationToken,
 }
 impl Owner {
@@ -442,6 +444,8 @@ impl Owner {
             workers,
             producers: TaskTracker::new(),
             producer_gate: Arc::default(),
+            #[cfg(test)]
+            title_write_gate: std::sync::Mutex::default(),
             stop,
         }))
     }
