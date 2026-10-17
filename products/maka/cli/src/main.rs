@@ -36,6 +36,8 @@ mod sandbox;
 mod serve;
 mod signals;
 mod startup;
+#[cfg(test)]
+mod tests;
 #[cfg(windows)]
 mod windows;
 

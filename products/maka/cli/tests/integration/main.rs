@@ -24,3 +24,5 @@ mod code_command;
 mod desktop;
 mod sandbox;
 mod terminal;
+#[path = "../../src/tests.rs"]
+mod unwind;

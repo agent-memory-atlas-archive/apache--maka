@@ -436,7 +436,7 @@
     "products/maka/bundle/src/composition.ts": "c3ef908bb77fd6a65aeb38635709dec650c6b0a84840910df0b90433d342cfeb",
     "products/maka/bundle/src/installation.ts": "614e9ed4ee41c26f9a398da21b1c5a4b41d91a22080a472d64207c5826e491fc",
     "products/maka/cli/Cargo.toml": "2a41d9dd434d08bb62cfe784e32b9e9facd41c58bbe9eb1b809b3fde3a2ed446",
-    "products/maka/cli/build.rs": "98452274bb0f20fa55fda5a20313f81740e759652aa4227fba0b0de5e3f4cc29",
+    "products/maka/cli/build.rs": "852960c81f7f6ee03e882eabfa07603bcb8727b98f22a3e6e2552e6e375668cd",
     "products/maka/cli/build/product.rs": "6302eefa7c818dbd73e75f7796d331542315b79032a62727fa43f53413c25766",
     "products/maka/desktop/Cargo.toml": "6c1bdac5c0eb0d3f205005af94837fac3abb904441d9e8fa2096469ab606ac8e",
     "products/maka/native/Cargo.toml": "4a3c69dfe3d7e5773316dbd0f703ec376cbaef0a7b9915fce395b8460c633d76",
