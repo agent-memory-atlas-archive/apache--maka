@@ -19,6 +19,17 @@
 
 use super::*;
 
+fn graph_tool_response(socket: &mut TcpStream, name: &str, input: serde_json::Value) {
+    let input = if matches!(
+        name,
+        "agent_list" | "view_agent_graph" | "update_agent_graph" | "workhub_tasks"
+    ) {
+        json!({"request": input})
+    } else {
+        input
+    };
+    code_mode::tool_response(socket, name, input);
+}
 fn command(tui: &mut Pty, name: &str) {
     tui.send(b"\x0b");
     tui.wait_for("Close commands");
@@ -90,13 +101,13 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     let (sent, mut socket) = next_request(&mut tui, &received);
     assert!(sent.to_string().contains("Agent Swarm supervisor"));
     assert!(sent["tools"].to_string().contains("agent_list"));
-    code_mode::tool_response(&mut socket, "agent_list", json!({"operation":"workers"}));
+    graph_tool_response(&mut socket, "agent_list", json!({"operation":"workers"}));
     let (sent, mut socket) = next_request(&mut tui, &received);
     let catalog = value(&sent);
     assert_eq!(catalog["workers"][0]["name"], "worker");
     let model = catalog["supervisorModel"]["model"].clone();
     assert_eq!(model["modelId"], "fixture-model");
-    code_mode::tool_response(
+    graph_tool_response(
         &mut socket,
         "agent_list",
         json!({"operation":"directories","worker":"worker","location":{"kind":"roots"}}),
@@ -105,7 +116,7 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     let directories = value(&sent);
     let workspace = directories["roots"][0]["selection"].clone();
     assert!(workspace.is_object(), "{directories}");
-    code_mode::tool_response(
+    graph_tool_response(
         &mut socket,
         "update_agent_graph",
         json!({"operation":"add_work","work":[{"target":{"kind":"worker","worker":"worker","title":"Original graph child","workspace":workspace,"tools":[],"model":model},"instruction":"Produce the original delegated graph result."}]}),
@@ -136,7 +147,7 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
             let graph = value(&sent);
             assert_eq!(graph["work"][0]["status"], "completed", "{graph}");
             let result = graph["work"][0]["resultId"].clone();
-            code_mode::tool_response(
+            graph_tool_response(
                 &mut socket,
                 "update_agent_graph",
                 json!({"operation":"finish","resultIds":[result],"reason":"Verified original worker result"}),
@@ -146,7 +157,7 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
             .to_string()
             .contains("has new durable worker observations")
         {
-            code_mode::tool_response(
+            graph_tool_response(
                 &mut socket,
                 "view_agent_graph",
                 json!({"operation":"status"}),
@@ -154,7 +165,7 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
             read_result = true;
         } else {
             assert_eq!(value(&sent)["revision"], 1, "{sent}");
-            code_mode::tool_response(&mut socket, "yield_agent_graph", json!({}));
+            graph_tool_response(&mut socket, "yield_agent_graph", json!({}));
         }
     }
     assert_eq!(workers, 1);

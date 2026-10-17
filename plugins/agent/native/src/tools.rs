@@ -55,6 +55,13 @@ use std::{panic::AssertUnwindSafe, sync::Arc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+/// Keep model tool schemas object-rooted while preserving each typed request.
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ToolRequest<T> {
+    pub(crate) request: T,
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SelectedTool {

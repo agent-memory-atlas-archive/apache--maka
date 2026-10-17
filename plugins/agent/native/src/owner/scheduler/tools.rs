@@ -18,10 +18,10 @@
  */
 
 use super::*;
+use crate::tools::ToolRequest;
 use maka_agent_facts::tool_call::ToolRejection;
 use maka_agent_facts::tools::*;
 #[derive(Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(extend("type" = "object"))]
 #[serde(
     tag = "mode",
     rename_all = "snake_case",
@@ -68,7 +68,7 @@ impl Scheduler {
         vec![ToolRegistration {
             definition: ToolDefinition { provider: None, name: "ScheduledTask".into(),
                 description: "Propose and manage scheduled tasks owned by this conversation. Create saves a paused proposal; the user must approve its exact background execution in Scheduled tasks. Model calls cannot grant background access. Session and agent_run targets use this conversation's actual workspace and model. Times are Unix milliseconds; timezone is an IANA name. List returns this conversation's tasks and revisions. Resume requires an existing user approval.".into(),
-                input_schema: serde_json::to_value(schemars::schema_for!(Input)).expect("task tool schema"),
+                input_schema: serde_json::to_value(schemars::schema_for!(ToolRequest<Input>)).expect("task tool schema"),
                 output_schema: None, freeform: None },
             nesting: ToolNesting::DirectOnly, semantics: ToolSemantics::ExclusiveStep,
             handler: ToolHandler::Prepared(self.clone()),
@@ -94,10 +94,11 @@ impl ToolPreparer for Scheduler {
             if cancellation.is_cancelled() {
                 return Err(ToolRejection::Cancelled);
             }
-            let input: Input =
-                serde_json::from_value(input).map_err(|error| ToolRejection::InvalidInput {
+            let input = serde_json::from_value::<ToolRequest<Input>>(input)
+                .map_err(|error| ToolRejection::InvalidInput {
                     message: error.to_string(),
-                })?;
+                })?
+                .request;
             let owner = owner.expect("checked owner");
             Ok(PreparedEffect::new(move |cancellation| {
                 Box::pin(async move {

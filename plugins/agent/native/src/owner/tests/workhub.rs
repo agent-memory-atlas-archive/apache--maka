@@ -25,7 +25,12 @@ use maka_host_runtime::application::{Handler, NativeOwner};
 pub(super) async fn activate(fixture: &mut Fixture, install: bool) {
     activate_workers(fixture, install, false, false).await
 }
-async fn activate_workers(fixture: &mut Fixture, install: bool, workers: bool, granted: bool) {
+pub(super) async fn activate_workers(
+    fixture: &mut Fixture,
+    install: bool,
+    workers: bool,
+    granted: bool,
+) {
     activate_worker_mode(fixture, install, workers, granted, WorkerBehavior::Returned).await
 }
 async fn activate_worker_mode(
@@ -736,6 +741,7 @@ async fn worker_session(fixture: &Fixture) -> String {
     worker_mutation(fixture,"create",json!({"title":"Worker","labels":[],"workspace":{"kind":"directory","selection":roots["roots"][0]["selection"]}})).await["session"]["id"].as_str().unwrap().into()
 }
 async fn task_response(socket: &mut TcpStream, input: Value) {
+    let input = json!({"request": input});
     let delta = json!({"id":"task-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":Uuid::new_v4().to_string(),"type":"function","function":{"name":"workhub_tasks","arguments":input.to_string()}}]},"finish_reason":null}]});
     let body = format!(
         "data: {delta}\n\ndata: {{\"id\":\"task-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"

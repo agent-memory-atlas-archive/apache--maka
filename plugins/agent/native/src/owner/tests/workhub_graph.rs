@@ -61,6 +61,21 @@ async fn graph(fixture: &Fixture, session: &str) -> Value {
     query_import(fixture, hub::EXPORT, "graph", json!({"sessionId": session})).await
 }
 async fn graph_tool(socket: &mut TcpStream, name: &str, input: Value) {
+    let input = if matches!(
+        name,
+        "workhub_tasks"
+            | "agent_list"
+            | "view_agent_graph"
+            | "update_agent_graph"
+            | "ScheduledTask"
+    ) {
+        json!({"request": input})
+    } else {
+        input
+    };
+    graph_tool_arguments(socket, name, input).await;
+}
+async fn graph_tool_arguments(socket: &mut TcpStream, name: &str, input: Value) {
     let delta = json!({"id":"graph-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":Uuid::new_v4().to_string(),"type":"function","function":{"name":name,"arguments":input.to_string()}}]},"finish_reason":null}]});
     let body = format!(
         "data: {delta}\n\ndata: {{\"id\":\"graph-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
@@ -375,4 +390,145 @@ async fn graph_operator_and_selected_history_preserve_large_original_results_wit
         assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err());
         fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn model_tool_envelopes_reject_invalid_branches_before_dispatch_and_allow_correction() {
+    use maka_agent_facts::tool_call::ToolRejection;
+
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut fixture = Fixture::configured(
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+            None,
+            None,
+            None,
+            |settings| settings.scheduled_tasks = true,
+        )
+        .await;
+        activate_workers(&mut fixture, true, true, true).await;
+        let ready = resolve(&fixture, selection(&fixture).await, Uuid::new_v4()).await;
+        let session = ready["session"]["id"].as_str().unwrap();
+        assert_eq!(
+            change(
+                &fixture,
+                json!({"sessionId":session,
+            "action":{"kind":"start","mode":"graph"}})
+            )
+            .await["kind"],
+            "committed"
+        );
+        let directory = query_import(&fixture, "worker", "directories", json!({"kind":"roots"}))
+            .await["roots"][0]["selection"]
+            .clone();
+        let invalid = [
+            (
+                "workhub_tasks",
+                json!({"request":{"operation":"workers"},"unexpected":true}),
+            ),
+            ("workhub_tasks", json!({"operation":"workers"})),
+            // The catalog also enforces constraints serde cannot express.
+            (
+                "workhub_tasks",
+                json!({"request":{"operation":"route_preset",
+                "dependencies":["same","same"],"preset":"unused","title":"Never routed",
+                "workspace":directory,"note":"Must fail before any preparation or effect"}}),
+            ),
+            ("agent_list", json!({"request":{"operation":"tools"}})),
+            (
+                "agent_list",
+                json!({"request":{"operation":"workers","worker":"worker"}}),
+            ),
+            (
+                "view_agent_graph",
+                json!({"request":{"operation":"work","workId":"missing"}}),
+            ),
+            (
+                "update_agent_graph",
+                json!({"request":{"operation":"add_work","work":[]}}),
+            ),
+            ("ScheduledTask", json!({"mode":"list"})),
+        ];
+        fixture.send(session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        for (index, (name, input)) in invalid.iter().enumerate() {
+            graph_tool_arguments(&mut socket, name, input.clone()).await;
+            let (mut next, _) = listener.accept().await.unwrap();
+            let sent = request(&mut next).await;
+            assert!(
+                sent["messages"]
+                    .to_string()
+                    .contains("arguments do not match the declared schema"),
+                "{name} must reach the next model step as a normal schema rejection: {sent}"
+            );
+            let prefix = fixture.store.prefix(1000, 2 * 1024 * 1024).await.unwrap();
+            let rejected: Vec<_> = prefix
+                .events
+                .iter()
+                .filter_map(|stored| {
+                    if let Fact::ToolRejected {
+                        name,
+                        input,
+                        reason,
+                        ..
+                    } = &stored.event.fact
+                    {
+                        Some((name, input, reason))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(rejected.len(), index + 1);
+            let actual = rejected.last().unwrap();
+            assert_eq!(actual.0.as_str(), *name);
+            assert_eq!(actual.1.as_json(), Some(input));
+            assert!(matches!(actual.2, ToolRejection::InvalidInput { message }
+                if message == "arguments do not match the declared schema"));
+            assert!(
+                !prefix
+                    .events
+                    .iter()
+                    .any(|stored| matches!(stored.event.fact, Fact::ToolDispatched { .. })),
+                "invalid {name} must never dispatch"
+            );
+            socket = next;
+        }
+        graph_tool(&mut socket, "agent_list", json!({"operation":"workers"})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert_eq!(
+            tool_value(&request(&mut socket).await)["workers"][0]["name"],
+            "worker"
+        );
+        graph_tool(&mut socket, "ScheduledTask", json!({"mode":"list"})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert_eq!(
+            tool_value(&request(&mut socket).await),
+            json!({"tasks":[],"nextCursor":null})
+        );
+        response(&mut socket).await;
+        idle(&fixture, EXPORT, session).await;
+        assert_eq!(
+            query_import(&fixture, hub::EXPORT, "tasks", json!({})).await["entries"],
+            json!([])
+        );
+        let prefix = fixture.store.prefix(1000, 2 * 1024 * 1024).await.unwrap();
+        let dispatched: Vec<_> = prefix
+            .events
+            .iter()
+            .filter_map(|stored| {
+                if let Fact::ToolDispatched { name, .. } = &stored.event.fact {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(dispatched, ["agent_list", "ScheduledTask"]);
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    })
+    .await
+    .expect("invalid model requests must remain recoverable without effects");
 }

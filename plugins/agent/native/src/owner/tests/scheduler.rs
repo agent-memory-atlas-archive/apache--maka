@@ -87,6 +87,7 @@ async fn scheduler_tool_schema_declares_object_and_preserves_operation_constrain
         json!({"mode":"resume","taskId":"task","revision":1}),
         json!({"mode":"delete","taskId":"task","revision":1}),
     ] {
+        let input = json!({"request": input});
         assert!(
             validator.is_valid(&input),
             "valid task input rejected: {input}"
@@ -101,6 +102,7 @@ async fn scheduler_tool_schema_declares_object_and_preserves_operation_constrain
         json!({"mode":"unknown"}),
         json!([]),
     ] {
+        let input = json!({"request": input});
         assert!(
             !validator.is_valid(&input),
             "invalid task input accepted: {input}"
@@ -270,7 +272,7 @@ async fn scheduler_model_proposal_requires_user_approval_and_archived_source_blo
         let (mut socket,_) = listener.accept().await.unwrap();
         let sent = request(&mut socket).await;
         assert!(sent["tools"].as_array().unwrap().iter().any(|t| t["function"]["name"]=="ScheduledTask"));
-        recall_tests::tool(&mut socket,"ScheduledTask",json!({"mode":"create","title":"Model proposal","intentBody":"Original scheduled body","effect":"agent_run","schedule":{"kind":"interval","everySeconds":3600,"startAt":now()+3_600_000},"timezone":"UTC"})).await;
+        recall_tests::tool(&mut socket,"ScheduledTask",json!({"request":{"mode":"create","title":"Model proposal","intentBody":"Original scheduled body","effect":"agent_run","schedule":{"kind":"interval","everySeconds":3600,"startAt":now()+3_600_000},"timezone":"UTC"}})).await;
         let (mut socket,_) = listener.accept().await.unwrap();
         let sent = request(&mut socket).await;
         let output: Value = serde_json::from_str(sent["messages"].as_array().unwrap().iter().rev().find(|m| m["role"]=="tool").unwrap()["content"].as_str().unwrap()).unwrap();
@@ -279,7 +281,7 @@ async fn scheduler_model_proposal_requires_user_approval_and_archived_source_blo
         let id = page["tasks"][0]["id"].as_str().unwrap().to_owned();
         assert_eq!(page["tasks"][0]["approved"],false);
         assert_eq!(page["tasks"][0]["status"],"paused");
-        recall_tests::tool(&mut socket,"ScheduledTask",json!({"mode":"resume","taskId":id,"revision":page["tasks"][0]["revision"]})).await;
+        recall_tests::tool(&mut socket,"ScheduledTask",json!({"request":{"mode":"resume","taskId":id,"revision":page["tasks"][0]["revision"]}})).await;
         let (mut socket,_) = listener.accept().await.unwrap();
         let sent = request(&mut socket).await;
         assert!(sent.to_string().contains("scheduler_user_approval_required"),"{sent}");

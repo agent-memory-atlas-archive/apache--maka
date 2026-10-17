@@ -79,6 +79,8 @@ mod execution;
 #[path = "tests/executor.rs"]
 mod executor;
 
+#[path = "tests/tool_schemas.rs"]
+mod tool_schemas;
 #[path = "tests/workhub.rs"]
 mod workhub;
 
@@ -482,6 +484,16 @@ impl Fixture {
         tooling: Option<service_tools::Setup>,
         configure: impl FnOnce(&mut Configuration),
     ) -> Self {
+        Self::configured_provider(base, model, peer, tooling, configure, "openai-compatible").await
+    }
+    async fn configured_provider(
+        base: &str,
+        model: Option<ModelExecutor>,
+        peer: Option<Arc<maka_transport::transport::PeerPolicy>>,
+        tooling: Option<service_tools::Setup>,
+        configure: impl FnOnce(&mut Configuration),
+        provider_name: &str,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
         let workspace = dir.path().join("workspace");
@@ -495,7 +507,7 @@ impl Fixture {
         let root_owner = Arc::new(RootOwner::create(&root, &namespaces).unwrap());
         let store = Arc::new(EventLog::for_root(root_owner.clone()).await.unwrap());
         let config = Arc::new(ConfigurationStore::for_root(root_owner).await.unwrap());
-        let provider = json!({"packageId":maka_providers::api::ID,"entryId":maka_providers::api::ID,"scope":"profile","name":"openai-compatible"});
+        let provider = json!({"packageId":maka_providers::api::ID,"entryId":maka_providers::api::ID,"scope":"profile","name":provider_name});
         let create = serde_json::from_value(json!({"expectedCatalogRevision":0,"connection":{"slug":"fixture","name":"Fixture","provider":provider,"configuration":{"baseUrl":base},"enabled":true,"enabledModelIds":["fixture-model"]}})).unwrap();
         let CatalogMutationResult::Committed {
             connection: Some(basis),

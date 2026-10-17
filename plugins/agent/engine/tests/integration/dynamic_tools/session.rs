@@ -381,3 +381,103 @@ async fn continuation_admission_rejects_changed_loading_before_claiming_the_sour
     .await
     .expect("stale continuation preparation must be retryable without effects");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn settled_old_tool_arguments_survive_reopen_with_a_new_request_envelope() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("events.sqlite");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let effects = Arc::new(AtomicUsize::new(0));
+        let observed = effects.clone();
+        let server = tokio::spawn(async move {
+            let (mut socket, old) = next(&listener).await;
+            assert_eq!(old["tools"][0]["function"]["parameters"]["required"], json!(["n"]));
+            respond_tools(&mut socket, vec![call("historical-call", "echo", json!({"n":2}))], 10).await;
+            let (mut socket, settled) = next(&listener).await;
+            assert_eq!(observed.load(Ordering::SeqCst), 1);
+            let old_result = settled["messages"].as_array().unwrap().iter()
+                .find(|message| message["role"] == "tool").unwrap().clone();
+            assert_eq!(old_result["tool_call_id"], "historical-call");
+            assert_eq!(serde_json::from_str::<Value>(old_result["content"].as_str().unwrap()).unwrap(),
+                json!({"n":2}));
+            fixture::respond(&mut socket, "old completed", "stop").await;
+
+            let (mut socket, reopened) = next(&listener).await;
+            let schema = &reopened["tools"][0]["function"]["parameters"];
+            assert_eq!(schema["required"], json!(["request"]));
+            assert_eq!(schema["properties"]["request"]["required"], json!(["n"]));
+            let messages = reopened["messages"].as_array().unwrap();
+            let old_call = messages.iter().find(|message| message["role"] == "assistant"
+                && message["tool_calls"][0]["id"] == "historical-call").unwrap();
+            assert_eq!(serde_json::from_str::<Value>(old_call["tool_calls"][0]["function"]["arguments"]
+                .as_str().unwrap()).unwrap(), json!({"n":2}),
+                "historical accepted arguments must not be wrapped to match the current schema");
+            assert!(messages.contains(&old_result));
+            assert_eq!(observed.load(Ordering::SeqCst), 1,
+                "replaying old evidence must not repeat its effect");
+            respond_tools(&mut socket, vec![call("obsolete-new-call", "echo", json!({"n":3}))], 10).await;
+            let (mut socket, rejected) = next(&listener).await;
+            let result = rejected["messages"].as_array().unwrap().iter().rev()
+                .find(|message| message["role"] == "tool").unwrap();
+            assert_eq!(result["tool_call_id"], "obsolete-new-call");
+            assert!(result["content"].as_str().unwrap().contains("arguments do not match the declared schema"));
+            assert_eq!(observed.load(Ordering::SeqCst), 1);
+            respond_tools(&mut socket, vec![call("corrected-call", "echo", json!({"request":{"n":7}}))], 10).await;
+            let (mut socket, corrected) = next(&listener).await;
+            let result = corrected["messages"].as_array().unwrap().iter().rev()
+                .find(|message| message["role"] == "tool").unwrap();
+            assert_eq!(result["tool_call_id"], "corrected-call");
+            assert_eq!(serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap(),
+                json!({"request":{"n":7}}));
+            assert_eq!(observed.load(Ordering::SeqCst), 2);
+            fixture::respond(&mut socket, "new completed", "stop").await;
+        });
+        let catalog = |enveloped: bool| {
+            let schema = json!({"type":"object","properties":{"n":{"type":"integer"}},
+                "required":["n"],"additionalProperties":false});
+            ToolCatalog::new([ToolRegistration {
+                definition: ToolDefinition {
+                    name:"echo".into(), description:"Echo the supplied request".into(),
+                    input_schema: if enveloped { json!({"type":"object","properties":{"request":schema},
+                        "required":["request"],"additionalProperties":false}) } else { schema },
+                    freeform:None, output_schema:None, provider:None,
+                },
+                nesting:ToolNesting::Nestable, semantics:ToolSemantics::Parallel,
+                handler:ToolHandler::Immediate(Arc::new(Echo(effects.clone()))),
+            }]).unwrap()
+        };
+        let log = Arc::new(EventLog::open(&path).await.unwrap());
+        log.create_session("session", "session", &json!({}), 1).await.unwrap();
+        let engine = fixture::engine(log.clone());
+        engine.run(input(&base, "old-contract", ToolMode::Direct, catalog(false)),
+            CancellationToken::new()).await.unwrap();
+        engine.drain().await;
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        let original = log.prefix(100, 128 * 1024).await.unwrap();
+        drop(engine);
+        Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
+
+        let log = Arc::new(EventLog::open(&path).await.unwrap());
+        let engine = fixture::engine(log.clone());
+        engine.run(input(&base, "new-contract", ToolMode::Direct, catalog(true)),
+            CancellationToken::new()).await.unwrap();
+        engine.drain().await;
+        server.await.unwrap();
+        let prefix = log.prefix(200, 256 * 1024).await.unwrap();
+        assert_eq!(serde_json::to_value(&prefix.events[..original.events.len()]).unwrap(),
+            serde_json::to_value(&original.events).unwrap());
+        let calls: Vec<_> = prefix.events.iter().filter_map(|stored| {
+            if let Fact::ToolDispatched { call, input, .. } = &stored.event.fact {
+                Some((call.tool_call_id.as_str(), input.clone()))
+            } else { None }
+        }).collect();
+        assert_eq!(calls, [("historical-call", json!({"n":2})),
+            ("corrected-call", json!({"request":{"n":7}}))]);
+        assert_eq!(prefix.events.iter().filter(|stored| matches!(&stored.event.fact,
+            Fact::ToolRejected { call, reason:maka_agent_facts::tool_call::ToolRejection::InvalidInput { .. }, .. }
+                if call.tool_call_id == "obsolete-new-call")).count(), 1);
+        assert_eq!(effects.load(Ordering::SeqCst), 2);
+    }).await.expect("new tool envelopes must not reinterpret settled historical calls");
+}
