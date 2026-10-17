@@ -823,6 +823,50 @@ pub struct SessionRead {
     #[schemars(length(min = 1, max = 128))]
     pub session_id: String,
 }
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentDiagnostics")]
+pub struct Diagnostics {
+    #[schemars(length(min = 1, max = 128))]
+    pub session_id: String,
+    pub position: DiagnosticPosition,
+}
+#[derive(Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "AgentDiagnosticPosition")]
+pub enum DiagnosticPosition {
+    Latest,
+    Before {
+        #[schemars(range(max = 9_007_199_254_740_991u64))]
+        through: u64,
+        #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
+        sequence: u64,
+    },
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentDiagnostic")]
+pub struct Diagnostic {
+    pub sequence: u64,
+    pub event_id: String,
+    pub recorded_at: f64,
+    pub detail: maka_agent_facts::diagnostics::DiagnosticDetail,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentDiagnosticPage")]
+pub struct DiagnosticPage {
+    pub through: u64,
+    pub entries: Vec<Diagnostic>,
+    pub next_before: Option<u64>,
+}
+#[derive(Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AgentDiagnosticChange")]
+pub struct DiagnosticChange {
+    /// Latest diagnostic event sequence, independently of transcript progress.
+    pub revision: u64,
+}
 #[derive(Serialize, JsonSchema, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentObservation")]
@@ -1410,6 +1454,14 @@ pub fn contract() -> Contract {
                 (
                     "observe".into(),
                     method::<SessionRead, Observation>(MethodMode::Query),
+                ),
+                (
+                    "diagnostics".into(),
+                    method::<Diagnostics, DiagnosticPage>(MethodMode::Query),
+                ),
+                (
+                    "watchDiagnostics".into(),
+                    method::<SessionRead, DiagnosticChange>(MethodMode::Subscription),
                 ),
                 (
                     "history".into(),

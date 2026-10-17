@@ -33,6 +33,18 @@ pub(crate) async fn validate(
     connection: &mut SqliteConnection,
     event: &RuntimeEvent,
 ) -> Result<(), StoreError> {
+    let model_failure = match &event.fact {
+        Fact::ModelInterrupted { model_failure, .. }
+        | Fact::InvocationEnded {
+            outcome: InvocationOutcome::Failed { model_failure, .. },
+        } => model_failure.as_ref(),
+        _ => None,
+    };
+    if let Some(cause) = model_failure {
+        cause
+            .validate()
+            .map_err(|error| invalid(&error.to_string()))?;
+    }
     identity(connection, event).await?;
     crate::executor::validate(connection, event).await?;
     crate::model_items::validate(connection, event).await?;

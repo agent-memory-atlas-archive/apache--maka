@@ -238,6 +238,7 @@ pub(super) async fn run(args: Args) -> Result<(), maka_host_runtime::HostError> 
             }
             .into(),
             message: Some(error.message.chars().take(2048).collect()),
+            model_failure: None,
         },
         Err(CellAbort::Cancelled) => InvocationOutcome::Cancelled {
             source: "runtime_cancellation".into(),
@@ -250,6 +251,7 @@ pub(super) async fn run(args: Args) -> Result<(), maka_host_runtime::HostError> 
             }
             .into(),
             message: Some(error.to_string().chars().take(2048).collect()),
+            model_failure: None,
         },
     };
     log.append(&EventWrite::plain(RuntimeEvent::new(

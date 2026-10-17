@@ -52,6 +52,7 @@ import { toolCards } from '../../shared/tool-cards.js';
 import { readingKey } from './state.js';
 import { newGoalState, watchGoal } from './goal.js';
 import { newPlanState, watchPlan } from './plan.js';
+import { newDiagnostics, readDiagnostics } from './diagnostics.js';
 import { newGraphState, watchGraph } from './graph.js';
 import { messages } from './messages.js';
 
@@ -434,6 +435,7 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.executor = null;
   state.modelRefreshing = false;
   state.epoch++;
+  state.diagnostics = newDiagnostics(session?.id, state.epoch);
   state.graph = newGraphState(state.graph.enabled);
   if (session) watchGraph(state);
   state.plan = newPlanState();
@@ -470,7 +472,10 @@ export function select(state: State, actions: Action[], session: AgentSession | 
   state.latestKnown = state.window?.page.through ?? 0;
   state.loading = session !== null;
   state.notice = null;
-  if (session) observe(state, actions);
+  if (session) {
+    observe(state, actions);
+    if (state.inspector === 'diagnostics') readDiagnostics(state, actions);
+  }
 }
 
 export function readRecap(state: State, actions: Action[]) {
@@ -720,6 +725,13 @@ export function rootCommands(
       ? copied
       : null;
   const commands: (PaletteCommand & { kind: RootCommand })[] = [
+    {
+      kind: 'diagnostics-open',
+      id: 'diagnostics-open',
+      label: text.diagnosticsTitleLabel,
+      hint: '',
+      disabled: !route || !state.selected,
+    },
     {
       kind: 'compact-open',
       id: 'compact-open',
@@ -1089,7 +1101,11 @@ export function rootCommand(
     )
   )
     return false;
-  if (kind === 'compact-open') openCompact(state, actions);
+  if (kind === 'diagnostics-open') {
+    if (target === 'tui') state.inspector = 'diagnostics';
+    else state.dialog = 'diagnostics';
+    readDiagnostics(state, actions);
+  } else if (kind === 'compact-open') openCompact(state, actions);
   else if (kind === 'outputs-open') {
     state.inspector = 'outputs';
     const visit = state.visits.find((entry) => entry.id === state.selected?.id);

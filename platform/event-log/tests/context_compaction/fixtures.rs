@@ -188,6 +188,7 @@ pub(super) async fn prepare_trace(
             event(
                 id,
                 Fact::ModelInterrupted {
+                    model_failure: None,
                     diagnostic: None,
                     step_id: format!("{id}-summary"),
                     status: maka_agent_facts::event::ModelInterruption::Failed,
@@ -197,6 +198,7 @@ pub(super) async fn prepare_trace(
                 id,
                 Fact::InvocationEnded {
                     outcome: InvocationOutcome::Failed {
+                        model_failure: None,
                         class: "summary_failed".into(),
                         message: None,
                     },
@@ -407,6 +409,7 @@ async fn adoption_markers_are_durable_timed_and_hidden_from_recall() {
                     Fact::InvocationEnded {
                         outcome: if !adopt {
                             InvocationOutcome::Failed {
+                                model_failure: None,
                                 class: "summary_failed".into(),
                                 message: None,
                             }

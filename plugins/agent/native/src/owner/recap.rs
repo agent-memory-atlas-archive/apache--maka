@@ -308,6 +308,7 @@ impl Owner {
                     quote,
                 )
                 .await
+                .map_err(ToolError::from)
         };
         tokio::pin!(operation);
         let result = tokio::select! {

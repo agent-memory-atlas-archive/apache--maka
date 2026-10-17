@@ -716,7 +716,9 @@ async fn finish(
             let status = match error {
                 maka_model::ModelError::Cancelled => ModelInterruption::Cancelled,
                 maka_model::ModelError::TimedOut => ModelInterruption::TimedOut,
-                maka_model::ModelError::Adapter(_) => ModelInterruption::Failed,
+                maka_model::ModelError::Adapter(_) | maka_model::ModelError::Http { .. } => {
+                    ModelInterruption::Failed
+                }
                 maka_model::ModelError::ContextOverflow { .. } => ModelInterruption::Failed,
                 maka_model::ModelError::Provider(ref failure)
                     if failure.replay_safe()
@@ -738,6 +740,7 @@ async fn finish(
                     step_id: step_id.clone(),
                     status,
                     diagnostic: Some(error.to_string().chars().take(1024).collect()),
+                    model_failure: error.failure_cause(),
                 },
             )
             .await?;

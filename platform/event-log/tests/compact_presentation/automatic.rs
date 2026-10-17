@@ -140,6 +140,7 @@ async fn automatic_summary_is_hidden_without_interrupting_main_delivery_or_read_
                 &log,
                 &inv,
                 Fact::ModelInterrupted {
+                    model_failure: None,
                     diagnostic: None,
                     step_id: "summary".into(),
                     status: ModelInterruption::Failed,

@@ -9791,6 +9791,393 @@ export const contracts = {
           },
           resources: {},
         },
+        diagnostics: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentDiagnostics',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+              position: {
+                $ref: '#/$defs/AgentDiagnosticPosition',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'position'],
+            $defs: {
+              AgentDiagnosticPosition: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'latest',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      through: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                      sequence: {
+                        type: 'integer',
+                        format: 'uint64',
+                        minimum: 1,
+                        maximum: 9007199254740991,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'before',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'through', 'sequence'],
+                  },
+                ],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentDiagnosticPage',
+            type: 'object',
+            properties: {
+              through: {
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+              entries: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentDiagnostic',
+                },
+              },
+              nextBefore: {
+                type: ['integer', 'null'],
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['through', 'entries'],
+            $defs: {
+              AgentDiagnostic: {
+                type: 'object',
+                properties: {
+                  sequence: {
+                    type: 'integer',
+                    format: 'uint64',
+                    minimum: 0,
+                  },
+                  eventId: {
+                    type: 'string',
+                  },
+                  recordedAt: {
+                    type: 'number',
+                    format: 'double',
+                  },
+                  detail: {
+                    $ref: '#/$defs/DiagnosticDetail',
+                  },
+                },
+                additionalProperties: false,
+                required: ['sequence', 'eventId', 'recordedAt', 'detail'],
+              },
+              DiagnosticDetail: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/Invocation',
+                      },
+                      reason: {
+                        $ref: '#/$defs/ExecutionFailureReason',
+                      },
+                      modelFailure: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ModelFailureCause',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'execution',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'invocation', 'reason'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/Invocation',
+                      },
+                      stepId: {
+                        type: 'string',
+                      },
+                      status: {
+                        $ref: '#/$defs/ModelInterruption',
+                      },
+                      modelFailure: {
+                        anyOf: [
+                          {
+                            $ref: '#/$defs/ModelFailureCause',
+                          },
+                          {
+                            type: 'null',
+                          },
+                        ],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model_step',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'invocation', 'stepId', 'status'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      invocation: {
+                        $ref: '#/$defs/Invocation',
+                      },
+                      cause: {
+                        $ref: '#/$defs/TitleFailureCause',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'session_title',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'invocation', 'cause'],
+                  },
+                ],
+              },
+              Invocation: {
+                type: 'object',
+                properties: {
+                  session_id: {
+                    type: 'string',
+                  },
+                  turn_id: {
+                    type: 'string',
+                  },
+                  run_id: {
+                    type: 'string',
+                  },
+                  invocation_id: {
+                    type: 'string',
+                  },
+                },
+                required: ['session_id', 'turn_id', 'run_id', 'invocation_id'],
+              },
+              ExecutionFailureReason: {
+                type: 'string',
+                enum: [
+                  'session_busy',
+                  'continuation_changed',
+                  'reconciliation_required',
+                  'invalid_input',
+                  'cancelled',
+                  'model_incomplete',
+                  'event_commit',
+                  'event_store',
+                  'model_timeout',
+                  'model_http',
+                  'model_adapter',
+                  'model_provider',
+                  'context_overflow',
+                  'tool_execution',
+                  'runtime_internal',
+                  'cleanup_unconfirmed',
+                  'executor',
+                  'message_preparation_failed',
+                  'host_interrupted',
+                  'outcome_unknown',
+                  'execution_failed',
+                ],
+              },
+              ModelFailureCause: {
+                description: 'Safe failure evidence, separate from provider-owned diagnostic text.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      status: {
+                        type: 'integer',
+                        format: 'uint16',
+                        minimum: 100,
+                        maximum: 599,
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'http',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'status'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'timed_out',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'context_overflow',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      reason: {
+                        $ref: '#/$defs/ProviderFailureReason',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'provider',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'reason'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'adapter',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+              ProviderFailureReason: {
+                type: 'string',
+                enum: [
+                  'network',
+                  'timed_out',
+                  'rate_limit',
+                  'provider_unavailable',
+                  'stream_truncated',
+                ],
+              },
+              ModelInterruption: {
+                oneOf: [
+                  {
+                    type: 'string',
+                    enum: ['cancelled', 'timed_out', 'failed'],
+                  },
+                  {
+                    description:
+                      'Trusted ingress permits retry: legacy steps can discard observations;\nitem-accepting steps must retain completed items and settle their tools.\nThis records safety evidence, not an instruction to retry.',
+                    type: 'string',
+                    const: 'retryable_failure',
+                  },
+                ],
+              },
+              TitleFailureCause: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'preparation',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      cause: {
+                        $ref: '#/$defs/ModelFailureCause',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'model',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'cause'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'invalid_output',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'output_limit',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'empty_output',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
         directories: {
           mode: 'query',
           input: {
@@ -24056,6 +24443,40 @@ export const contracts = {
                 enum: ['pending', 'in_progress', 'completed'],
               },
             },
+          },
+          resources: {},
+        },
+        watchDiagnostics: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentDiagnosticChange',
+            type: 'object',
+            properties: {
+              revision: {
+                description:
+                  'Latest diagnostic event sequence, independently of transcript progress.',
+                type: 'integer',
+                format: 'uint64',
+                minimum: 0,
+              },
+            },
+            additionalProperties: false,
+            required: ['revision'],
           },
           resources: {},
         },

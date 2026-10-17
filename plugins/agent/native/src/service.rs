@@ -30,6 +30,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::sync::Arc;
 
+mod diagnostics;
+
 pub(crate) struct Agent(pub Arc<Owner>);
 impl Handler for Agent {
     fn call(
@@ -285,6 +287,8 @@ impl Handler for Agent {
                     context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.metadata(decode(input)?).await?)
                 }
+                "diagnostics" => diagnostics::query(&owner, decode(input)?, &context).await,
+                "watchDiagnostics" => diagnostics::watch(&owner, decode(input)?, &context).await,
                 "observe" => {
                     use maka_event_log::turns::InvocationState;
                     let input: SessionRead = decode(input)?;

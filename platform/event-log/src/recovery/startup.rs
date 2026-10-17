@@ -64,6 +64,7 @@ pub async fn recover_invocations(log: &EventLog) -> Result<usize, RecoveryError>
         };
         for step_id in state.unfinished_model_steps {
             append(Fact::ModelInterrupted {
+                model_failure: None,
                 step_id,
                 status: ModelInterruption::Failed,
                 diagnostic: Some("Host stopped before the model request settled.".into()),
@@ -83,6 +84,7 @@ pub async fn recover_invocations(log: &EventLog) -> Result<usize, RecoveryError>
         }
         append(Fact::InvocationEnded {
             outcome: InvocationOutcome::Failed {
+                model_failure: None,
                 class: if state.uncertain_operations.is_empty() && !state.unfinished_executor {
                     "host_interrupted"
                 } else {

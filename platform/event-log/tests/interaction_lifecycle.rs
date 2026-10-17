@@ -106,6 +106,7 @@ async fn run_closure_guards_every_terminal_and_restart_closes_even_sealed_runs()
             source: "test".into(),
         },
         InvocationOutcome::Failed {
+            model_failure: None,
             class: "test".into(),
             message: None,
         },

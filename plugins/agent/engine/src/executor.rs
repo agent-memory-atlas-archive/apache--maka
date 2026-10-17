@@ -143,10 +143,12 @@ fn outcome(result: &Result<Outcome, Error>, cancellation: &CancellationToken) ->
             source: "executor_retired".into(),
         },
         Ok(Outcome::Failed { message, .. }) => InvocationOutcome::Failed {
+            model_failure: None,
             class: "executor".into(),
             message: Some(message.chars().take(2048).collect()),
         },
         Err(error) => InvocationOutcome::Failed {
+            model_failure: None,
             class: if matches!(error, Error::CleanupUnconfirmed | Error::Unknown) {
                 "outcome_unknown"
             } else {

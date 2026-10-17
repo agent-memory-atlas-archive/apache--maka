@@ -124,6 +124,7 @@ async fn exact_run_cuts_bind_identity_and_bytes_without_admitting_unproven_repla
             first.invocation.clone(),
             Fact::InvocationEnded {
                 outcome: InvocationOutcome::Failed {
+                    model_failure: None,
                     class: "outcome_unknown".into(),
                     message: None,
                 },

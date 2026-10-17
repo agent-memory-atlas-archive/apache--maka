@@ -357,7 +357,7 @@ impl Owner {
         };
         let outcome = match outcome {
             InvocationOutcome::Completed => Settlement::Completed,
-            InvocationOutcome::Failed { class, message } => Settlement::Interrupted {
+            InvocationOutcome::Failed { class, message, .. } => Settlement::Interrupted {
                 reason: bounded(&message.unwrap_or(class)),
             },
             InvocationOutcome::Cancelled { source } => Settlement::Interrupted {

@@ -114,14 +114,29 @@ async fn responses_unexpected_http_body_preserves_diagnostics_without_replaying(
         (
             400,
             "application/json",
-            json!({"detail":"Unsupported parameter: example"}).to_string(),
-            "Unsupported parameter: example",
+            json!({"detail":"PRIVATE_PROVIDER_BODY_SENTINEL"}).to_string(),
+            "PRIVATE_PROVIDER_BODY_SENTINEL",
+        ),
+        (
+            700,
+            "application/json",
+            json!({"detail":"PRIVATE_PROVIDER_BODY_SENTINEL"}).to_string(),
+            "invalid model HTTP failure status",
         ),
     ] {
         let error = failure(ProviderKind::OpenaiResponses, status, content_type, body).await;
+        if status == 400 {
+            assert!(matches!(&error, ModelError::Http { status: 400 }));
+            assert!(!error.to_string().contains(detail));
+            continue;
+        }
         let ModelError::Adapter(message) = error else {
             panic!("unexpected response must remain a terminal protocol failure");
         };
+        if status == 700 {
+            assert_eq!(message, detail);
+            continue;
+        }
         assert!(message.contains(&format!("HTTP {status}")), "{message}");
         assert!(message.contains(detail), "{message}");
         assert!(!message.contains("private-page-content"));
@@ -149,7 +164,7 @@ async fn http_and_sse_failures_preserve_typed_evidence_across_sdk_families() {
                 ModelError::ContextOverflow { observed_output: false }));
         }
         for body in [json!({"error":{"message":"context length rejected"}}).to_string(), String::new()] {
-            assert!(matches!(failure(ProviderKind::OpenaiChat,413,"application/json",body).await,ModelError::Adapter(_)));
+            assert!(matches!(failure(ProviderKind::OpenaiChat,413,"application/json",body).await,ModelError::Http { status: 413 }));
         }
         for (status, header, reason) in [
             (503, None, Some(maka_model::ProviderFailureReason::ProviderUnavailable)),
@@ -167,7 +182,7 @@ async fn http_and_sse_failures_preserve_typed_evidence_across_sdk_families() {
                     assert!(failure.replay_safe());
                     assert_eq!(failure.retry_after(), header.filter(|h| *h == "0.01").map(|_| Duration::from_millis(10)));
                 }
-                (None, ModelError::Adapter(_)) => {}
+                (None, ModelError::Http { status: 401 }) => {}
                 (_, result) => panic!("unexpected failure classification: {result}"),
             }
         }

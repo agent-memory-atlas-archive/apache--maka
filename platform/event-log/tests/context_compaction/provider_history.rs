@@ -107,6 +107,7 @@ async fn interrupted_history_preserves_provider_effect_uncertainty_without_rejec
             event(
                 "old",
                 Fact::ModelInterrupted {
+                    model_failure: None,
                     diagnostic: None,
                     step_id: "interrupted".into(),
                     status: maka_agent_facts::event::ModelInterruption::Failed,
@@ -116,6 +117,7 @@ async fn interrupted_history_preserves_provider_effect_uncertainty_without_rejec
                 "old",
                 Fact::InvocationEnded {
                     outcome: InvocationOutcome::Failed {
+                        model_failure: None,
                         class: "stream_failed".into(),
                         message: None,
                     },

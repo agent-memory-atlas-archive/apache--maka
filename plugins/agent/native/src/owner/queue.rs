@@ -438,6 +438,7 @@ impl Owner {
                 outcome: InvocationOutcome::Failed {
                     class: "message_preparation_failed".into(),
                     message: Some(reason),
+                    model_failure: None,
                 },
             },
         ]

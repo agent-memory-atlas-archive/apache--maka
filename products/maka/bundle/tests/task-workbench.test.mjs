@@ -1666,3 +1666,125 @@ test('historical captions use recorded response models and keep requested and im
     }
   }
 });
+
+test('Diagnostics reads common failures and refreshes late background results without reloading the conversation', () => {
+  const c = client()
+    .observe(100)
+    .history(page(100, [chunk(90, 'Completed main answer')]));
+  c.raw('palette-open');
+  const command = c
+    .find('command-palette')
+    .props.commands.find((entry) => entry.id === 'diagnostics-open');
+  assert.ok(
+    command && !command.disabled,
+    'Diagnostics entry must be available after the main answer completes',
+  );
+  c.child('command-palette', 'invoked', { id: 'diagnostics-open' });
+  assert.deepEqual(c.action('diagnostics').input, {
+    sessionId: 'Task A',
+    position: { kind: 'latest' },
+  });
+  const invocation = {
+    session_id: 'Task A',
+    turn_id: 'original-turn',
+    run_id: 'original-run',
+    invocation_id: 'original-invocation',
+  };
+  const main = {
+    sequence: 90,
+    eventId: 'main-failure',
+    recordedAt: 1000,
+    detail: {
+      kind: 'execution',
+      invocation,
+      reason: 'execution_failed',
+      modelFailure: { kind: 'http', status: 400 },
+    },
+  };
+  const preparation = {
+    sequence: 80,
+    eventId: 'prepare-failure',
+    recordedAt: 900,
+    detail: {
+      kind: 'execution',
+      invocation,
+      reason: 'message_preparation_failed',
+      modelFailure: null,
+    },
+  };
+  c.reply(c.action('diagnostics'), { through: 100, entries: [main, preparation], nextBefore: 80 });
+  assert.equal(c.find('diagnostic-cause-90').text, 'HTTP 400');
+  assert.equal(c.find('diagnostic-cause-80').text, 'Message preparation failed');
+  const diagnosticWatch = c.out.subscriptions.find(
+    (subscription) => subscription.method === 'watchDiagnostics',
+  );
+  assert.ok(diagnosticWatch, 'Diagnostics must subscribe independently of transcript progress');
+  assert.deepEqual(diagnosticWatch.input, { sessionId: 'Task A' });
+  c.raw('diagnostics-refresh');
+  const olderRead = c.action('diagnostics');
+  c.event({
+    kind: 'action',
+    key: diagnosticWatch.key,
+    event: { status: 'updated', value: { revision: 120 } },
+  });
+  const latestRead = c.action('diagnostics');
+  assert.notEqual(latestRead.key, olderRead.key);
+  assert.equal(c.action('observe'), undefined);
+  assert.equal(c.action('history'), undefined);
+  const title = {
+    sequence: 120,
+    eventId: 'title-failure',
+    recordedAt: 2000,
+    detail: { kind: 'session_title', invocation, cause: { kind: 'empty_output' } },
+  };
+  c.reply(latestRead, { through: 120, entries: [title, main, preparation], nextBefore: 80 });
+  assert.equal(c.find('diagnostic-cause-120').text, 'Empty output');
+  assert.equal(c.state.run, null);
+  assert.deepEqual(
+    c.find(c.reader()).props.messages.map((message) => message.text),
+    ['Completed main answer'],
+  );
+  assert.equal(c.action('observe'), undefined);
+  assert.equal(c.action('history'), undefined);
+  c.reply(olderRead, { through: 100, entries: [], nextBefore: null });
+  assert.equal(
+    c.find('diagnostic-cause-120').text,
+    'Empty output',
+    'An older empty query cannot clear the newer diagnostic page',
+  );
+  c.raw('diagnostic-open-120');
+  assert.equal(c.find('diagnostic-detail-cause').text, 'Empty output');
+  assert.equal(c.find('diagnostic-detail-source').text, 'Automatic title');
+  c.raw('diagnostics-back').raw('diagnostics-older');
+  assert.deepEqual(c.action('diagnostics').input, {
+    sessionId: 'Task A',
+    position: { kind: 'before', through: 120, sequence: 80 },
+  });
+  c.reply(c.action('diagnostics'), {
+    through: 120,
+    entries: [
+      {
+        sequence: 70,
+        eventId: 'step-failure',
+        recordedAt: 800,
+        detail: {
+          kind: 'model_step',
+          invocation,
+          stepId: 'retryable-step',
+          status: 'retryable_failure',
+          modelFailure: { kind: 'provider', reason: 'network' },
+        },
+      },
+    ],
+    nextBefore: null,
+  });
+  assert.equal(c.find('diagnostic-cause-70').text, 'Network failure');
+  c.select('Task B')
+    .observe(130)
+    .history(page(130, [chunk(130, 'Another conversation')]));
+  assert.equal(c.find('diagnostic-cause-120'), undefined);
+  assert.deepEqual(
+    c.find(c.reader()).props.messages.map((message) => message.text),
+    ['Another conversation'],
+  );
+});

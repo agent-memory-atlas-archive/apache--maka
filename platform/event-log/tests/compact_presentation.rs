@@ -222,6 +222,7 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
                     &mut view,
                     &compact,
                     Fact::ModelInterrupted {
+                        model_failure: None,
                         diagnostic: None,
                         step_id: "summary".into(),
                         status: ModelInterruption::Cancelled,
@@ -233,6 +234,7 @@ async fn compact_attempts_preserve_visible_history_read_markers_and_rebuild() {
                 }
             }
             _ => InvocationOutcome::Failed {
+                model_failure: None,
                 class: "provider".into(),
                 message: None,
             },

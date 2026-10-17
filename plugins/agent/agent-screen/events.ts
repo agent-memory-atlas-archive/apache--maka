@@ -31,6 +31,7 @@ import type {
   Emission,
 } from '../../../packages/plugin-sdk/src/index.js';
 import { appearanceEvent, effectiveLocale } from '../../shared/appearance-editor.js';
+import { diagnosticChange } from './diagnostics.js';
 import { observeBookmark, retryBookmark } from '../../shared/bookmark.js';
 import type { AgentScreenProps, Theme } from '../../shared/contracts.js';
 import { settingsCategory } from '../../shared/settings.js';
@@ -201,7 +202,18 @@ export function handleEvent<N extends Node>(
     return frame(presentation, configuredLocale, state, values, actions);
   if (input.kind === 'action') {
     const outcome = input.event as ActionOutcome;
-    if (state.graph.watch?.key === input.key) {
+    if (state.diagnostics.watch?.key === input.key) {
+      if (outcome.status === 'updated')
+        diagnosticChange(
+          state,
+          actions,
+          outcome.value as import('../../../packages/plugin-sdk/src/index.js').AgentDiagnosticChange,
+        );
+      else if (outcome.status === 'failed' || outcome.status === 'not_accepted') {
+        state.diagnostics.watch = null;
+        state.diagnostics.failed = true;
+      }
+    } else if (state.graph.watch?.key === input.key) {
       if (outcome.status === 'updated') graphUpdate(state, outcome.value as WorkHubGraphView);
       else {
         state.graph.watch = null;

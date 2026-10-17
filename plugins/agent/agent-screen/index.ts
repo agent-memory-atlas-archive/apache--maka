@@ -23,6 +23,7 @@ import type { AgentScreenProps } from '../../shared/contracts.js';
 import { bookmark } from '../../shared/bookmark.js';
 import { type Presentation, type Node } from '../../shared/view.js';
 
+import { newDiagnostics } from './diagnostics.js';
 import { newGoalState } from './goal.js';
 import { newPlanState } from './plan.js';
 import { newGraphState } from './graph.js';
@@ -104,6 +105,7 @@ export function agentScreen<N extends Node>(
         skills,
         dialog: null,
         sessionChange: null,
+        diagnostics: newDiagnostics(),
         inspector: null,
         image: null,
         window: null,

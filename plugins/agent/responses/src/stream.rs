@@ -22,9 +22,9 @@ use crate::{
     decode::Decoder,
     transport::{Exchange, ResponsesLane, Shared},
 };
-use maka_agent_facts::model::error::ModelError;
 use maka_agent_facts::model::error::ProviderFailure;
 use maka_agent_facts::model::error::ProviderFailureReason;
+use maka_agent_facts::model::error::{ModelError, ModelFailureCause};
 use maka_agent_ports::model::Context;
 use maka_agent_ports::model::Credentials as ProviderAuth;
 use maka_agent_ports::model::Events;
@@ -64,6 +64,12 @@ pub async fn stream(
         biased;
         _ = cancellation.cancelled() => Err(ModelError::Cancelled),
         result = operation => result,
+    }
+}
+fn http_failure(status: u16) -> ModelError {
+    match (ModelFailureCause::Http { status }).validate() {
+        Ok(()) => ModelError::Http { status },
+        Err(error) => error,
     }
 }
 fn interruption(
@@ -219,6 +225,7 @@ async fn run(
                 true,
                 retry_after,
             )),
+            None if !(200..300).contains(&status) => http_failure(status),
             None => ModelError::Adapter(format!("Responses HTTP {status}: error body interrupted")),
         };
         let mut bytes = Vec::new();
@@ -262,14 +269,14 @@ async fn run(
                 retry_after,
             )));
         }
-        let message = value["error"]["message"]
-            .as_str()
-            .or_else(|| value["detail"].as_str())
-            .unwrap_or("request rejected")
-            .chars()
-            .take(4096)
-            .collect::<String>();
         if (200..300).contains(&status) {
+            let message = value["error"]["message"]
+                .as_str()
+                .or_else(|| value["detail"].as_str())
+                .unwrap_or("request rejected")
+                .chars()
+                .take(4096)
+                .collect::<String>();
             let content_type = content_type
                 .unwrap_or("missing Content-Type")
                 .chars()
@@ -279,9 +286,7 @@ async fn run(
                 "Responses HTTP {status} returned {content_type}, expected text/event-stream: {message}"
             )));
         }
-        return Err(ModelError::Adapter(format!(
-            "Responses HTTP {status}: {message}"
-        )));
+        return Err(http_failure(status));
     }
     let mut sse = crate::sse::Sse::default();
     let mut received_event = false;

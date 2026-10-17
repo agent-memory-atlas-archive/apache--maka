@@ -70,6 +70,13 @@ export function headerView<N extends Node>(
                 }),
                 ui.button('palette-open', text.paletteTitle),
                 ui.button(
+                  'diagnostics-open',
+                  text.diagnosticsTitleLabel,
+                  !rootCommands(state, locale, target).some(
+                    (command) => command.kind === 'diagnostics-open' && !command.disabled,
+                  ),
+                ),
+                ui.button(
                   'details-open',
                   text.detailsOpen,
                   !rootCommands(state, locale, target).some(
@@ -159,6 +166,7 @@ export function headerView<N extends Node>(
               'toolbar',
               [
                 ...[
+                  ['diagnostics-open', text.diagnosticsTitleLabel, '!'],
                   ['outputs-open', tuiText(locale, 'task-outputs'), theme.ascii ? '[o]' : '▧'],
                   ['details-open', text.detailsOpen, theme.ascii ? '(i)' : 'ⓘ'],
                   ['terminal-open', text.terminalTitle, '>_'],

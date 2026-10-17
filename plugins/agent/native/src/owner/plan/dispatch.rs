@@ -193,7 +193,7 @@ impl Owner {
             };
             let outcome = match outcome {
                 InvocationOutcome::Completed => Settlement::Completed,
-                InvocationOutcome::Failed { class, message } => Settlement::Interrupted { reason: bounded(&message.unwrap_or(class)) },
+                InvocationOutcome::Failed { class, message, .. } => Settlement::Interrupted { reason: bounded(&message.unwrap_or(class)) },
                 InvocationOutcome::Cancelled { source } => Settlement::Interrupted { reason: bounded(&format!("Execution cancelled: {source}")) },
                 InvocationOutcome::HandoffPaused { .. } => Settlement::Interrupted { reason: "Original execution is paused; resume the Session before approving another attempt".into() },
                 _ => Settlement::Interrupted { reason: "Execution ended without Plan completion".into() },

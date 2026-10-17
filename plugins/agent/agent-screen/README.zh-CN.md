@@ -28,6 +28,7 @@
 | `actions.ts` | 可用命令与明确的服务调用意图 |
 | `results.ts` | 查询结果、修改回执及实时事件 |
 | `messages.ts` | 有界实时文本和时间线展示投影 |
+| `diagnostics.ts` | 会话失败分页、实时刷新及原记录详情 |
 | `events.ts`、`component-events.ts`、`raw-events.ts` | 同一候选帧事务内的统一路由、子组件回调和原始命令 |
 | `frame.ts` | 根组合、对话框及订阅 |
 | `conversation-view.ts` | 对话、输入区和 footer |

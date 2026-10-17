@@ -1934,6 +1934,7 @@ async fn failed_turn_and_retry_diagnostics_are_visible_with_exact_sources_and_fe
         .append(&event(
             "failed",
             Fact::ModelInterrupted {
+                model_failure: None,
                 step_id: "step-first".into(),
                 status: ModelInterruption::RetryableFailure,
                 diagnostic: Some("Connection lost 中😀; retry permitted".into()),
@@ -1947,6 +1948,7 @@ async fn failed_turn_and_retry_diagnostics_are_visible_with_exact_sources_and_fe
     log.append(&event(
         "failed",
         Fact::ModelInterrupted {
+            model_failure: None,
             step_id: "step-second".into(),
             status: ModelInterruption::Failed,
             diagnostic: Some("Provider rejected request".into()),
@@ -1959,6 +1961,7 @@ async fn failed_turn_and_retry_diagnostics_are_visible_with_exact_sources_and_fe
         &log,
         "failed",
         InvocationOutcome::Failed {
+            model_failure: None,
             class: "provider_rejected".into(),
             message: None,
         },

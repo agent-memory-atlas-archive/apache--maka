@@ -136,6 +136,7 @@ async fn batch_rolls_back_every_fact_and_catalog_change_then_replays_exactly_aft
     // A replay mixed with a new terminal still validates and commits in order.
     let terminal = event(Fact::InvocationEnded {
         outcome: InvocationOutcome::Failed {
+            model_failure: None,
             class: "host_interrupted".into(),
             message: None,
         },

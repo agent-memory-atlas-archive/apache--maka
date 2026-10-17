@@ -276,6 +276,7 @@ async fn bounded_progress_and_session_isolation() {
 async fn terminal_without_model_interruption_seals_only_committed_partial_evidence() {
     for outcome in [
         InvocationOutcome::Failed {
+            model_failure: None,
             class: "event_commit".into(),
             message: None,
         },

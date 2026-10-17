@@ -79,6 +79,7 @@ async fn physical_attempt_usage_survives_rejection_copy_removal_and_reopen() {
         ),
         event(
             Fact::ModelInterrupted {
+                model_failure: None,
                 diagnostic: None,
                 step_id: "rejected".into(),
                 status: ModelInterruption::Failed,
@@ -88,6 +89,7 @@ async fn physical_attempt_usage_survives_rejection_copy_removal_and_reopen() {
         retry.clone(),
         event(
             Fact::ModelInterrupted {
+                model_failure: None,
                 diagnostic: None,
                 step_id: "retry".into(),
                 status: ModelInterruption::RetryableFailure,
@@ -260,6 +262,7 @@ async fn lost_request_outcome_is_unknown_not_a_success_with_zero_usage() {
     log.append(&event(
         Fact::InvocationEnded {
             outcome: InvocationOutcome::Failed {
+                model_failure: None,
                 class: "worker_lost".into(),
                 message: None,
             },

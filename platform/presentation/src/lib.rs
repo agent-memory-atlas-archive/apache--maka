@@ -354,6 +354,7 @@ impl InvocationView {
                         step_id,
                         status,
                         diagnostic,
+                        ..
                     } => {
                         let interrupted = step
                             .take()

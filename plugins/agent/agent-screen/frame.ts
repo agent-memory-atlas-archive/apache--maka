@@ -50,6 +50,7 @@ import {
   type Presentation,
 } from '../../shared/view.js';
 
+import { diagnosticsView } from './diagnostics.js';
 import { checklistView } from './checklist-view.js';
 import { goalView } from './goal.js';
 import { planView } from './plan.js';
@@ -249,6 +250,7 @@ export function frame<N extends Node>(
   const inspectorOpen =
     conversationRoute(state) && !!state.selected && (state.inspector !== null || inlineInteraction);
   const inspectorSlots = [
+    diagnosticsView(presentation, state, theme, locale),
     graphView(presentation, state, theme, locale),
     planView(presentation, state, theme, locale),
     goalView(presentation, state, theme, locale),
@@ -520,11 +522,13 @@ export function frame<N extends Node>(
                                   ? text.checklistTitle
                                   : state.dialog === 'details'
                                     ? text.detailsTitle
-                                    : state.dialog === 'queue'
-                                      ? text.queueEdit
-                                      : state.dialog === 'help'
-                                        ? text.helpTitle
-                                        : text.paletteTitle,
+                                    : state.dialog === 'diagnostics'
+                                      ? text.diagnosticsTitleLabel
+                                      : state.dialog === 'queue'
+                                        ? text.queueEdit
+                                        : state.dialog === 'help'
+                                          ? text.helpTitle
+                                          : text.paletteTitle,
       background,
       ui.box(
         'dialog-content',
@@ -702,6 +706,17 @@ export function frame<N extends Node>(
   out.actions = actions;
   out.events = events;
   out.subscriptions = [
+    ...(state.diagnostics.watch
+      ? [
+          {
+            ...state.diagnostics.watch,
+            binding: 'agent',
+            member: 0,
+            method: 'watchDiagnostics',
+            resources: {},
+          },
+        ]
+      : []),
     ...(state.graph.watch
       ? [
           {

@@ -147,6 +147,7 @@ async fn handoff_rejects_unresolved_provider_effects_but_accepts_effect_free_sum
             &RuntimeEvent::new(
                 source.invocation.clone(),
                 Fact::ModelInterrupted {
+                    model_failure: None,
                     diagnostic: None,
                     step_id: "step".into(),
                     status: ModelInterruption::Failed,

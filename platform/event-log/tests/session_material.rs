@@ -92,6 +92,11 @@ async fn collection_waits_for_the_last_history_owner_and_preserves_frozen_accoun
     .unwrap();
     log.append(&event(
         Fact::ModelInterrupted {
+            model_failure: Some(
+                maka_agent_facts::model::error::ModelFailureCause::Provider {
+                    reason: maka_agent_facts::model::error::ProviderFailureReason::Network,
+                },
+            ),
             diagnostic: None,
             step_id: "observed".into(),
             status: maka_agent_facts::event::ModelInterruption::Failed,
@@ -104,6 +109,11 @@ async fn collection_waits_for_the_last_history_owner_and_preserves_frozen_accoun
     log.append(&event(
         Fact::InvocationEnded {
             outcome: InvocationOutcome::Failed {
+                model_failure: Some(
+                    maka_agent_facts::model::error::ModelFailureCause::Provider {
+                        reason: maka_agent_facts::model::error::ProviderFailureReason::Network,
+                    },
+                ),
                 class: "connection_lost".into(),
                 message: None,
             },
@@ -198,6 +208,21 @@ async fn collection_waits_for_the_last_history_owner_and_preserves_frozen_accoun
         )
         .unwrap();
     assert_eq!((bodies, leaked), (0, 0));
+    let retained: Vec<String> = inspect.prepare(
+        "SELECT json_extract(retained_json, CASE kind WHEN 'model_interrupted' THEN '$.fact.model_failure' ELSE '$.fact.outcome.model_failure' END)
+         FROM event_log WHERE kind IN ('model_interrupted','invocation_ended') ORDER BY sequence"
+    ).unwrap().query_map([], |row| row.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
+    assert_eq!(
+        retained
+            .iter()
+            .map(|value| serde_json::from_str::<Value>(value).unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            json!({"kind":"provider","reason":"network"}),
+            json!({"kind":"provider","reason":"network"})
+        ]
+    );
+
     let pages_after: i64 = inspect
         .query_row("PRAGMA page_count", [], |row| row.get(0))
         .unwrap();

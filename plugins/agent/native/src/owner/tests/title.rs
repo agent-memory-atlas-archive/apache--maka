@@ -434,3 +434,174 @@ async fn title_settlement_fault_fences_owner_and_preserves_original_usage_for_re
         f.config.shutdown().await.unwrap();
     }).await.unwrap();
 }
+
+#[derive(Clone, Copy)]
+enum VisibleTitleFailure {
+    Http,
+    OutputLimit,
+    EmptyOutput,
+}
+
+#[tokio::test]
+async fn title_http_failure_is_public_sanitized_and_survives_restart() {
+    verify_visible_title_failure(VisibleTitleFailure::Http).await;
+}
+
+#[tokio::test]
+async fn title_output_limit_is_public_without_changing_successful_physical_accounting() {
+    verify_visible_title_failure(VisibleTitleFailure::OutputLimit).await;
+}
+
+#[tokio::test]
+async fn title_empty_output_is_public_without_changing_successful_physical_accounting() {
+    verify_visible_title_failure(VisibleTitleFailure::EmptyOutput).await;
+}
+
+async fn verify_visible_title_failure(case: VisibleTitleFailure) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        const SECRET: &str = "SECRET_TITLE_PROVIDER_BODY_SENTINEL";
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut f = fixture(&format!("http://{}/v1", listener.local_addr().unwrap())).await;
+        let session = automatic(&f).await;
+        let other = f.create("Unaffected session").await;
+        let sent = f.send(&session).await.unwrap();
+        let ((_,mut main),(_,mut title)) = pair(&listener).await;
+        response(&mut main).await;
+        let completed = loop {
+            let boundary = f.store.invocation_boundary(&session,sent["invocationId"].as_str().unwrap()).await.unwrap().unwrap().0;
+            if matches!(boundary.state,maka_event_log::turns::InvocationState::Ended {..}) {break boundary;}
+            tokio::task::yield_now().await;
+        };
+        let diagnostic_watch = if matches!(case,VisibleTitleFailure::Http) {
+            let mut watch=f.app.client().subscribe(f.binding(2).await,"watchDiagnostics".into(),json!({"sessionId":session}),
+                scope(&f.issuer,true),Attachments::default().into()).await.unwrap();
+            let initial=watch.recv().await.unwrap();
+            Some((watch,initial))
+        } else {None};
+        let before_failure = now();
+        let (status,content_type,body,cause,physical_outcome) = match case {
+            VisibleTitleFailure::Http => (
+                "400 Bad Request", "application/json",
+                json!({"error":{"type":"invalid_request_error","message":SECRET}}).to_string(),
+                json!({"kind":"model","cause":{"kind":"http","status":400}}), Outcome::Error,
+            ),
+            VisibleTitleFailure::OutputLimit | VisibleTitleFailure::EmptyOutput => {
+                let limited = matches!(case,VisibleTitleFailure::OutputLimit);
+                let text = if limited {"A partial title"} else {" \n\t\u{0000}\u{202e} "};
+                let delta = json!({"id":"title-failure","choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
+                let end = json!({"id":"title-failure","choices":[{"index":0,"delta":{},"finish_reason":if limited {"length"} else {"stop"}}],"usage":{"prompt_tokens":7,"completion_tokens":9,"total_tokens":16}});
+                ("200 OK","text/event-stream",format!("data: {delta}\n\ndata: {end}\n\ndata: [DONE]\n\n"),
+                    json!({"kind":if limited {"output_limit"} else {"empty_output"}}),Outcome::Success)
+            }
+        };
+        title.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+        f.drained().await;
+        let after_failure = now();
+        let watched = if let Some((mut watch,initial))=diagnostic_watch {
+            let late=watch.recv().await.unwrap();
+            let revision=f.owner.session(&other).await.unwrap().revision;
+            f.mutation(2,"metadata",json!({"sessionId":other,"expectedRevision":revision,"title":"Unrelated metadata commit","labels":[]}),Uuid::new_v4()).await.unwrap();
+            let unrelated_update=tokio::time::timeout(Duration::from_millis(30),watch.recv()).await.is_ok();
+            drop(watch);
+            Some((initial,late,unrelated_update))
+        } else {None};
+        let observed = f.query("observe",json!({"sessionId":session})).await.unwrap();
+        let record = f.owner.session(&session).await.unwrap();
+        let original_attempts = attempts(&f,&session).await;
+        let diagnostics = f.query("diagnostics",json!({"sessionId":session,"position":{"kind":"latest"}})).await;
+        let scoped = f.query("diagnostics",json!({"sessionId":other,"position":{"kind":"latest"}})).await;
+        let foreign = f.query("diagnostics",json!({"sessionId":"foreign_session","position":{"kind":"latest"}})).await;
+        todo_tests::reopen(&mut f).await;
+        let restored = f.query("diagnostics",json!({"sessionId":session,"position":{"kind":"latest"}})).await;
+        let restored_attempts = attempts(&f,&session).await;
+        let reconnected = if matches!(case,VisibleTitleFailure::Http) {
+            let mut watch=f.app.client().subscribe(f.binding(2).await,"watchDiagnostics".into(),json!({"sessionId":session}),
+                scope(&f.issuer,true),Attachments::default().into()).await.unwrap();
+            let initial=watch.recv().await.unwrap();
+            drop(watch);
+            Some(initial)
+        } else {None};
+        let redispatched = tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_ok();
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+        assert!(matches!(completed.state,maka_event_log::turns::InvocationState::Ended {
+            outcome:maka_agent_facts::event::InvocationOutcome::Completed,..}));
+        assert!(observed["run"].is_null());
+        assert_eq!(record.configuration.title,"Untitled");
+        assert!(!record.configuration.title_is_manual);
+        assert_eq!(original_attempts.len(),2);
+        let auxiliary = original_attempts.iter().find(|attempt|matches!(attempt.origin,Origin::Auxiliary {..})).unwrap();
+        assert_eq!(auxiliary.outcome,physical_outcome);
+        if !matches!(case,VisibleTitleFailure::Http) {
+            assert_eq!(auxiliary.usage.input_tokens,Some(7));
+            assert_eq!(auxiliary.usage.output_tokens,Some(9));
+        }
+        assert_eq!(restored_attempts,original_attempts);
+        assert!(!redispatched);
+        let diagnostics = diagnostics.expect("public diagnostics must expose the actual title failure");
+        let restored = restored.expect("public diagnostics must persist across restart");
+        let scoped = scoped.expect("owned-session diagnostics must be readable");
+        assert_eq!(diagnostics["entries"].as_array().unwrap().len(),1);
+        let failure = &diagnostics["entries"][0];
+        let sequence = failure["sequence"].as_u64().expect("diagnostic must identify its durable sequence");
+        assert!(sequence > 0);
+        let event_id = failure["eventId"].as_str().expect("diagnostic must identify its actual event");
+        assert!(!event_id.is_empty());
+        let recorded_at = failure["recordedAt"].as_f64().expect("diagnostic must include its Host capture time");
+        assert!((before_failure as f64..=(after_failure+1) as f64).contains(&recorded_at));
+        assert_eq!(*failure,json!({"sequence":sequence,"eventId":event_id,"recordedAt":recorded_at,
+            "detail":{"kind":"session_title","invocation":completed.invocation,"cause":cause}}));
+        assert_eq!(restored["entries"],diagnostics["entries"]);
+        if let Some((initial,late,unrelated_update))=watched {
+            assert_eq!(initial,json!({"revision":0}));
+            assert_eq!(late,json!({"revision":sequence}),"late title completion must notify after the main invocation ends");
+            assert!(!unrelated_update,"another session's metadata commit must not emit a diagnostic revision");
+            assert_eq!(reconnected,Some(json!({"revision":sequence})),"reconnect must begin with the latest diagnostic independent of transcript progress");
+        }
+        assert_eq!(scoped["entries"],json!([]),"failure must not leak into another owned session");
+        assert!(foreign.is_err(),"foreign-session diagnostics must remain unauthorized");
+        assert!(!diagnostics.to_string().contains(SECRET));
+        assert!(!restored.to_string().contains(SECRET));
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn title_preparation_failure_is_public_without_a_physical_title_attempt() {
+    tokio::time::timeout(Duration::from_secs(30),async {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        // Automatic dispatch is disabled; this test calls generation once from
+        // the actual first opening's frozen source after its connection changes.
+        let f=Fixture::new(&format!("http://{}/v1",listener.local_addr().unwrap()),None).await;
+        let session=automatic(&f).await;
+        let sent=f.send(&session).await.unwrap();
+        let (mut socket,_)=listener.accept().await.unwrap();
+        request(&mut socket).await;
+        let accepted=f.owner.runs.lock().await.controls.get(&session).unwrap().basis.model.clone().unwrap();
+        response(&mut socket).await;
+        f.drained().await;
+        let opening=f.store.invocation_boundary(&session,sent["invocationId"].as_str().unwrap()).await.unwrap().unwrap().0;
+        selection::edit(&f,|changes| changes.enabled=Some(false)).await;
+        f.owner.generate_title(opening.invocation.clone(),accepted).await.unwrap();
+        let diagnostics=f.query("diagnostics",json!({"sessionId":session,"position":{"kind":"latest"}})).await;
+        let actual_attempts=attempts(&f,&session).await;
+        let record=f.owner.session(&session).await.unwrap();
+        let dispatched=tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_ok();
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+        assert!(matches!(opening.state,maka_event_log::turns::InvocationState::Ended {
+            outcome:maka_agent_facts::event::InvocationOutcome::Completed,..}));
+        assert_eq!(actual_attempts.len(),1);
+        assert!(matches!(actual_attempts[0].origin,Origin::Agent {..}));
+        assert_eq!(actual_attempts[0].outcome,Outcome::Success);
+        assert!(!dispatched,"capture failure must not invent a physical request or title attempt");
+        assert_eq!(record.configuration.title,"Untitled");
+        assert!(!record.configuration.title_is_manual);
+        let diagnostics=diagnostics.expect("actual pre-capture title failure must be public");
+        let entries=diagnostics["entries"].as_array().unwrap();
+        assert_eq!(entries.len(),1);
+        assert_eq!(entries[0]["detail"],json!({"kind":"session_title","invocation":opening.invocation,"cause":{"kind":"preparation"}}));
+        assert!(entries[0]["sequence"].as_u64().is_some_and(|sequence|sequence>0));
+        assert!(entries[0]["eventId"].as_str().is_some_and(|id|!id.is_empty()));
+        assert!(entries[0]["recordedAt"].as_f64().is_some());
+    }).await.unwrap();
+}

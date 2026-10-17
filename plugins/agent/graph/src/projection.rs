@@ -197,7 +197,7 @@ impl Execution {
                 };
                 let mut text = self.last_answer.clone();
                 let mut truncated = self.answer_truncated;
-                if let InvocationOutcome::Failed { class, message } = outcome {
+                if let InvocationOutcome::Failed { class, message, .. } = outcome {
                     append(
                         &mut text,
                         &format!(

@@ -19,8 +19,7 @@
 
 use deno_core::JsRuntime;
 
-#[tokio::test(flavor = "current_thread")]
-async fn provider_evidence_is_bounded_and_output_survives_normalization() {
+fn provider_runtime() -> JsRuntime {
     let mut runtime = JsRuntime::new(Default::default());
     runtime
         .execute_script(
@@ -40,6 +39,12 @@ async fn provider_evidence_is_bounded_and_output_survives_normalization() {
                 .replace("export ", ""),
         )
         .unwrap();
+    runtime
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_evidence_is_bounded_and_output_survives_normalization() {
+    let mut runtime = provider_runtime();
     let promise = runtime.execute_script("overflow-contract", r#"
       (async () => {
         const assert = (ok, message) => { if (!ok) throw Error(message); };
@@ -96,6 +101,66 @@ async fn provider_evidence_is_bounded_and_output_survives_normalization() {
         try { await forwardProviderStream(open({type:'text-start'}),part=>part,async()=>{throw local},'openai_chat'); }
         catch (error) { escaped = error; }
         assert(escaped === local,'local emit failure was classified');
+      })()
+    "#).unwrap();
+    let resolving = runtime.resolve(promise);
+    runtime
+        .with_event_loop_promise(resolving, Default::default())
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn nontransient_sdk_http_failures_preserve_only_status_across_provider_boundaries() {
+    let mut runtime = provider_runtime();
+    let promise = runtime.execute_script("http-failure-contract", r#"
+      (async () => {
+        const assert = (ok, message) => { if (!ok) throw Error(message); };
+        const secret = 'PRIVATE_PROVIDER_BODY_SENTINEL';
+        const api = (statusCode, fields = {}) => Object.assign(new Error(secret), {
+          name: 'AI_APICallError', statusCode, responseBody: secret,
+          data: {error: {message: secret}}, ...fields,
+        });
+        const errorPart = error => async () => ({stream: (async function* () {
+          yield {type: 'error', error};
+        })()});
+        const throwing = error => async () => { throw error; };
+        const collect = async open => {
+          const emitted = [];
+          let escaped;
+          try {
+            await forwardProviderStream(open, part => part, async part => emitted.push(part), 'openai_chat');
+          } catch (error) { escaped = error; }
+          return {emitted, escaped};
+        };
+        for (const open of [throwing(api(400)), errorPart(api(400))]) {
+          const {emitted, escaped} = await collect(open);
+          assert(escaped === undefined, 'nontransient SDK HTTP failure escaped typed boundary');
+          assert(JSON.stringify(emitted) === '[{"type":"error","error":{"kind":"http","status":400}}]',
+            'HTTP envelope lost status or exposed provider details');
+        }
+        // Non-2xx is the HTTP contract, rather than a hand-picked 4xx allowlist.
+        for (const status of [100, 300]) {
+          const {emitted, escaped} = await collect(throwing(api(status)));
+          assert(escaped === undefined && JSON.stringify(emitted) ===
+            JSON.stringify([{type:'error',error:{kind:'http',status}}]), 'valid non-2xx status lost');
+        }
+        const overflow = await collect(throwing(api(400, {data:{error:{code:'context_length_exceeded'}}})));
+        assert(JSON.stringify(overflow.emitted) === '[{"type":"error","error":{"kind":"context_overflow","observedOutput":false}}]',
+          'HTTP classification overrode context overflow');
+        const transient = await collect(errorPart(Object.assign(new Error('rate limited'), {
+          name:'AI_APICallError',statusCode:429,
+        })));
+        assert(transient.escaped === undefined && transient.emitted.length === 1 &&
+          transient.emitted[0].error.kind === 'provider' && transient.emitted[0].error.reason === 'rate_limit',
+          'HTTP classification overrode retry evidence');
+        for (const error of [api(200), api(400.5), api(600),
+          {name:'AI_APICallError',statusCode:400}, Object.assign(new Error(secret),{statusCode:400}),
+          api(400,{cause:Object.assign(new Error('cancelled'),{name:'AbortError'})}),
+          api(400,{cause:Object.assign(new Error('limit'),{name:'ProviderResponseLimitError'})})]) {
+          const {emitted, escaped} = await collect(throwing(error));
+          assert(escaped === error && emitted.length === 0, 'unrecognized failure became HTTP evidence');
+        }
       })()
     "#).unwrap();
     let resolving = runtime.resolve(promise);

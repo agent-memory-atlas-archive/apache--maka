@@ -19,6 +19,128 @@
 
 import type { Message } from './locale.js';
 
+export const msg_diagnosticsSessionBusy: Message = ['Session busy', '会话正忙', '對話忙碌中'];
+export const msg_diagnosticsContinuationChanged: Message = [
+  'Continuation changed',
+  '续跑来源已变化',
+  '續跑來源已變更',
+];
+export const msg_diagnosticsReconciliationRequired: Message = [
+  'Original outcome needs reconciliation',
+  '需要核对原操作结果',
+  '需要核對原操作結果',
+];
+export const msg_diagnosticsInvalidInput: Message = ['Invalid input', '输入无效', '輸入無效'];
+export const msg_diagnosticsCancelled: Message = ['Cancelled', '已取消', '已取消'];
+export const msg_diagnosticsIncomplete: Message = [
+  'Model response incomplete',
+  '模型响应不完整',
+  '模型回應不完整',
+];
+export const msg_diagnosticsPersistence: Message = [
+  'Event commit failed',
+  '事件提交失败',
+  '事件提交失敗',
+];
+export const msg_diagnosticsStorage: Message = [
+  'Event storage failed',
+  '事件存储失败',
+  '事件儲存失敗',
+];
+export const msg_diagnosticsProviderRejected: Message = [
+  'Provider rejected the request',
+  '提供方拒绝了请求',
+  '供應方拒絕了請求',
+];
+export const msg_diagnosticsProviderFailed: Message = [
+  'Model provider failed',
+  '模型提供方失败',
+  '模型供應方失敗',
+];
+export const msg_diagnosticsToolFailed: Message = [
+  'Tool execution failed',
+  '工具执行失败',
+  '工具執行失敗',
+];
+export const msg_diagnosticsRuntimeFailed: Message = [
+  'Runtime failed',
+  '运行时失败',
+  '執行環境失敗',
+];
+export const msg_diagnosticsCleanup: Message = [
+  'Cleanup unconfirmed',
+  '清理尚未确认',
+  '清理尚未確認',
+];
+export const msg_diagnosticsExecutorFailed: Message = [
+  'Executor failed',
+  '执行器失败',
+  '執行器失敗',
+];
+export const msg_diagnosticsHostInterrupted: Message = [
+  'Host interrupted the execution',
+  '主机中断了执行',
+  '主機中斷了執行',
+];
+export const msg_diagnosticsOutcomeUnknown: Message = ['Outcome unknown', '结果未知', '結果未知'];
+export const msg_diagnosticsTitlePreparationFailed: Message = [
+  'Title preparation failed',
+  '标题准备失败',
+  '標題準備失敗',
+];
+
+export const msg_diagnosticsTitleLabel: Message = ['Diagnostics', '诊断', '診斷'];
+export const msg_diagnosticsAnswer: Message = ['Answer', '回答', '回答'];
+export const msg_diagnosticsPreparation: Message = ['Message preparation', '消息准备', '訊息準備'];
+export const msg_diagnosticsModelStep: Message = ['Model step', '模型步骤', '模型步驟'];
+export const msg_diagnosticsTitle: Message = ['Automatic title', '自动标题', '自動標題'];
+export const msg_diagnosticsEmpty: Message = [
+  'No recorded failures',
+  '没有已记录的失败',
+  '沒有已記錄的失敗',
+];
+export const msg_diagnosticsPreparationFailed: Message = [
+  'Message preparation failed',
+  '消息准备失败',
+  '訊息準備失敗',
+];
+export const msg_diagnosticsExecutionFailed: Message = ['Execution failed', '执行失败', '執行失敗'];
+export const msg_diagnosticsStepFailed: Message = [
+  'Model step failed',
+  '模型步骤失败',
+  '模型步驟失敗',
+];
+export const msg_diagnosticsTimedOut: Message = ['Timed out', '请求超时', '請求逾時'];
+export const msg_diagnosticsContextOverflow: Message = [
+  'Context limit exceeded',
+  '超过上下文限制',
+  '超過上下文限制',
+];
+export const msg_diagnosticsAdapter: Message = [
+  'Model adapter failed',
+  '模型适配器失败',
+  '模型配接器失敗',
+];
+export const msg_diagnosticsNetwork: Message = ['Network failure', '网络失败', '網路失敗'];
+export const msg_diagnosticsRateLimit: Message = ['Rate limited', '请求被限流', '請求受到速率限制'];
+export const msg_diagnosticsProviderUnavailable: Message = [
+  'Provider unavailable',
+  '提供方不可用',
+  '供應方無法使用',
+];
+export const msg_diagnosticsStreamTruncated: Message = [
+  'Response stream interrupted',
+  '响应流中断',
+  '回應串流中斷',
+];
+export const msg_diagnosticsInvalidOutput: Message = ['Invalid output', '输出无效', '輸出無效'];
+export const msg_diagnosticsOutputLimit: Message = [
+  'Output limit reached',
+  '达到输出限制',
+  '達到輸出限制',
+];
+export const msg_diagnosticsEmptyOutput: Message = ['Empty output', '输出为空', '輸出為空'];
+
 export const msg_historyModel: Message = ['Model', '模型', '模型'];
 export const msg_historyRequestedModel: Message = ['Requested model', '请求模型', '請求模型'];
 export const msg_historyImportedModel: Message = ['Imported model', '导入来源模型', '匯入來源模型'];

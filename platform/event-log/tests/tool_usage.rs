@@ -148,6 +148,7 @@ async fn tool_accounting_preserves_dispatch_truth_and_snapshot_without_private_b
         request("model-step", 6000),
         event(
             Fact::ModelInterrupted {
+                model_failure: None,
                 diagnostic: None,
                 step_id: "model-step".into(),
                 status: maka_agent_facts::event::ModelInterruption::RetryableFailure,

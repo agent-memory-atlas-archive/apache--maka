@@ -240,23 +240,9 @@ async fn binding(
                 return Err(invalid("Session title was already attempted"));
             }
 
-            let opening =
-                crate::message_sources::first_message_opening(connection, &invocation.session_id)
-                    .await?
-                    .ok_or_else(|| invalid("Session title has no committed user opening"))?;
-            if opening.event.invocation != *invocation {
-                return Err(invalid("Session title must use its first user opening"));
-            }
-            match opening.event.fact {
-                maka_agent_facts::event::Fact::InvocationOpened {
-                    configuration: Some(config),
-                    ..
-                } => config
-                    .model
-                    .map(|binding| (binding, Some(invocation.session_id.clone())))
-                    .ok_or_else(|| invalid("Session title has no frozen model binding")),
-                _ => Err(invalid("Session title has no frozen configuration")),
-            }
+            crate::title::original_title_binding(connection, invocation)
+                .await
+                .map(|binding| (binding, Some(invocation.session_id.clone())))
         }
         Source::Agent {
             invocation,

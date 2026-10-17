@@ -251,6 +251,7 @@ async fn a_closed_frozen_boundary_does_not_prove_that_tool_effects_are_settled()
         "live",
         Fact::InvocationEnded {
             outcome: InvocationOutcome::Failed {
+                model_failure: None,
                 class: "outcome_unknown".into(),
                 message: None,
             },

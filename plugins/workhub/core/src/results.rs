@@ -242,6 +242,7 @@ mod tests {
                 progress: Box::new(Progress::Ended {
                     outcome: if failed {
                         InvocationOutcome::Failed {
+                            model_failure: None,
                             class: "provider".into(),
                             message: Some("error".repeat(20_000)),
                         }

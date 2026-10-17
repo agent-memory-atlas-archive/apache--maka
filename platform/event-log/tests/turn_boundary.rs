@@ -144,6 +144,7 @@ async fn turn_control_reads_survive_history_budget_exhaustion_and_reopen() {
         log.append(
             &EventWrite::plain(
                 (event(Fact::ModelInterrupted {
+                    model_failure: None,
                     diagnostic: None,
                     step_id: "step".into(),
                     status: ModelInterruption::Cancelled,

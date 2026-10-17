@@ -20,12 +20,33 @@
 //! Auxiliary requests retain their physical worker and original usage journal.
 use super::*;
 use maka_agent_facts::{
-    model::{ModelEvent, ModelFinishReason, ModelGeneration, ModelPart, TextKind},
+    model::{
+        ModelEvent, ModelFinishReason, ModelGeneration, ModelPart, TextKind, error::ModelError,
+    },
     tools::ToolError,
 };
 use maka_capabilities::call::Resources;
 use maka_event_log::usage::{AuxiliarySource, Outcome};
 use maka_model::{ModelRequest, ModelStream, StepBuilder};
+
+pub(super) enum Error {
+    Model(ModelError),
+    Admission(ToolError),
+    Tool(ToolError),
+}
+impl From<ToolError> for Error {
+    fn from(error: ToolError) -> Self {
+        Self::Tool(error)
+    }
+}
+impl From<Error> for ToolError {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::Model(error) => failed(error),
+            Error::Admission(error) | Error::Tool(error) => error,
+        }
+    }
+}
 
 pub(super) enum Admission {
     Source(AuxiliarySource),
@@ -54,9 +75,9 @@ impl Auxiliary {
         log: &EventLog,
         admission: Admission,
         quote: maka_agent_facts::pricing::Quote,
-    ) -> Result<ModelGeneration, ToolError> {
+    ) -> Result<ModelGeneration, Error> {
         if cancellation.is_cancelled() {
-            return Err(failed("Auxiliary generation cancelled before dispatch"));
+            return Err(Error::Model(ModelError::Cancelled));
         }
         let id = match admission {
             Admission::Operation {
@@ -69,8 +90,8 @@ impl Auxiliary {
                 .map_err(|error| match error {
                     maka_event_log::StoreError::SessionNotFound
                     | maka_event_log::StoreError::SessionRetired
-                    | maka_event_log::StoreError::SessionBusy => failed(error),
-                    other => persistence(other),
+                    | maka_event_log::StoreError::SessionBusy => Error::Admission(failed(error)),
+                    other => Error::Tool(persistence(other)),
                 })?,
             Admission::Source(source) => log
                 .begin_auxiliary_model(source, Some(quote))
@@ -80,8 +101,8 @@ impl Auxiliary {
                     | maka_event_log::StoreError::SessionNotFound
                     | maka_event_log::StoreError::SessionRetired
                     | maka_event_log::StoreError::SessionBusy
-                    | maka_event_log::StoreError::PrefixTooLarge => failed(error),
-                    _ => persistence(error),
+                    | maka_event_log::StoreError::PrefixTooLarge => Error::Admission(failed(error)),
+                    _ => Error::Tool(persistence(error)),
                 })?,
         };
         let model_id = request.provider.model.clone();
@@ -90,10 +111,10 @@ impl Auxiliary {
                 .models
                 .stream(request, cancellation.clone())
                 .await
-                .map_err(failed)?;
+                .map_err(Error::Model)?;
             let step = receive(stream, log, id).await?;
             if step.finish_reason == ModelFinishReason::ToolCalls {
-                return Err(failed("Auxiliary generation cannot finish with tool calls"));
+                return Err(failed("Auxiliary generation cannot finish with tool calls").into());
             }
             Ok(ModelGeneration {
                 text: step
@@ -117,7 +138,9 @@ impl Auxiliary {
         // Neither an uncertain commit nor lost physical custody permits a success/failure replacement.
         if matches!(
             result,
-            Err(ToolError::Persistence(_) | ToolError::CleanupUnconfirmed(_))
+            Err(Error::Tool(
+                ToolError::Persistence(_) | ToolError::CleanupUnconfirmed(_)
+            ))
         ) {
             return result;
         }
@@ -136,7 +159,7 @@ async fn receive(
     mut stream: ModelStream,
     log: &EventLog,
     id: Uuid,
-) -> Result<maka_agent_facts::model::ModelStep, ToolError> {
+) -> Result<maka_agent_facts::model::ModelStep, Error> {
     let result = async {
         let mut builder = StepBuilder::default();
         let mut bytes = 0usize;
@@ -145,7 +168,7 @@ async fn receive(
             let maka_model::Emission {
                 event,
                 reservation: _reservation,
-            } = event.map_err(failed)?;
+            } = event.map_err(Error::Model)?;
             if let ModelEvent::Finished { usage, .. } = &event
                 && !observed_usage
             {
@@ -159,17 +182,17 @@ async fn receive(
                     .map_err(failed)? as usize,
             );
             if bytes > 2 * 1024 * 1024 {
-                return Err(failed("Auxiliary generation exceeds 2 MiB stream limit"));
+                return Err(failed("Auxiliary generation exceeds 2 MiB stream limit").into());
             }
             if matches!(
                 event,
                 ModelEvent::ToolCall(_) | ModelEvent::ProviderToolResult { .. }
             ) {
-                return Err(failed("Auxiliary generation cannot call tools"));
+                return Err(failed("Auxiliary generation cannot call tools").into());
             }
-            builder.push(event).map_err(failed)?;
+            builder.push(event).map_err(Error::Model)?;
         }
-        builder.finish().map_err(failed)
+        builder.finish().map_err(Error::Model)
     }
     .await;
     stream

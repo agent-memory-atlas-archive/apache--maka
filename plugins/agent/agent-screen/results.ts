@@ -18,6 +18,7 @@
  */
 
 import { compactQuery, compactSettled } from './compact.js';
+import { diagnosticResult } from './diagnostics.js';
 import type {
   Action,
   AgentRecapReceipt,
@@ -305,6 +306,10 @@ export function receipt(state: State, actions: Action[], request: Mutation, repl
 }
 
 export function queryFailed(state: State, request: Request) {
+  if (request.kind === 'diagnostics') {
+    diagnosticResult(state, request, null);
+    return;
+  }
   if (
     request.kind === 'compactPrompt' ||
     request.kind === 'compactField' ||
@@ -436,6 +441,13 @@ export function queryFailed(state: State, request: Request) {
 
 export function querySucceeded(state: State, actions: Action[], request: Request, value: unknown) {
   switch (request.kind) {
+    case 'diagnostics':
+      diagnosticResult(
+        state,
+        request,
+        value as import('../../../packages/plugin-sdk/src/index.js').AgentDiagnosticPage,
+      );
+      break;
     case 'compactPrompt':
     case 'compactField':
       compactQuery(state, actions, request, value);

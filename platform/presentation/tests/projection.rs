@@ -132,6 +132,7 @@ fn events(outcome: InvocationOutcome) -> Vec<StoredEvent> {
         ]);
     } else {
         facts.push(Fact::ModelInterrupted {
+            model_failure: None,
             diagnostic: None,
             step_id: "step".into(),
             status: if matches!(outcome, InvocationOutcome::Cancelled { .. }) {
@@ -165,6 +166,7 @@ fn completed_and_interrupted_rows_keep_overlay_identity_time() {
             source: "user".into(),
         },
         InvocationOutcome::Failed {
+            model_failure: None,
             class: "provider".into(),
             message: Some("factual failure".into()),
         },
@@ -303,6 +305,7 @@ fn completed_and_interrupted_rows_keep_overlay_identity_time() {
     ] {
         for kind in [TextKind::Text, TextKind::Thinking] {
             let mut facts = events(InvocationOutcome::Failed {
+                model_failure: None,
                 class: "provider".into(),
                 message: None,
             });
@@ -394,6 +397,7 @@ fn interrupted_request_without_output_has_a_durable_diagnostic_not_an_assistant_
         event: RuntimeEvent::new(
             source[0].event.invocation.clone(),
             Fact::ModelInterrupted {
+                model_failure: None,
                 step_id: "step".into(),
                 status: ModelInterruption::RetryableFailure,
                 diagnostic: Some("Responses WebSocket closed: fixture diagnostic".into()),

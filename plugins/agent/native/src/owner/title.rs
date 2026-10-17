@@ -21,8 +21,9 @@ use super::*;
 use auxiliary::{failed, persistence};
 use futures_util::FutureExt;
 use maka_agent_facts::{
+    diagnostics::TitleFailureCause,
     event::{Fact, InvocationInput},
-    model::ModelFinishReason,
+    model::{ModelFinishReason, error::ModelFailureCause},
     tools::ToolError,
 };
 use maka_agent_ports::session::title::Policy;
@@ -33,6 +34,33 @@ use maka_model::{ModelRequest, prompt::Message};
 pub(super) struct WriteGate {
     pub(super) entered: tokio::sync::Semaphore,
     pub(super) release: tokio::sync::Semaphore,
+}
+
+enum GenerationError {
+    Failure(TitleFailureCause),
+    Operation(ToolError),
+    Skipped,
+}
+impl From<ToolError> for GenerationError {
+    fn from(error: ToolError) -> Self {
+        Self::Operation(error)
+    }
+}
+impl From<auxiliary::Error> for GenerationError {
+    fn from(error: auxiliary::Error) -> Self {
+        match error {
+            auxiliary::Error::Model(error) => {
+                error.failure_cause().map_or(Self::Skipped, |cause| {
+                    Self::Failure(TitleFailureCause::Model { cause })
+                })
+            }
+            auxiliary::Error::Admission(_) => Self::Skipped,
+            auxiliary::Error::Tool(ToolError::Failed(_)) => {
+                Self::Failure(TitleFailureCause::InvalidOutput)
+            }
+            auxiliary::Error::Tool(error) => Self::Operation(error),
+        }
+    }
 }
 
 impl Owner {
@@ -73,7 +101,7 @@ impl Owner {
             }
         });
     }
-    async fn generate_title(
+    pub(super) async fn generate_title(
         &self,
         invocation: Invocation,
         model: crate::model::AcceptedModel,
@@ -135,10 +163,12 @@ impl Owner {
         let Some(input) = maka_session_title::Title.prepare(text) else {
             return Ok(());
         };
-        input.validate().map_err(failed)?;
         let cancellation = self.stop.child_token();
         let _cancel = cancellation.clone().drop_guard();
         let operation = async {
+            input
+                .validate()
+                .map_err(|_| GenerationError::Failure(TitleFailureCause::Preparation))?;
             let source = crate::model::Source::restore(
                 self.configuration.clone(),
                 self.credentials.clone(),
@@ -146,8 +176,11 @@ impl Owner {
                 invocation.session_id.clone(),
                 self.revision.clone(),
             )
-            .map_err(failed)?;
-            let prepared = source.capture_auxiliary().await.map_err(failed)?;
+            .map_err(|_| GenerationError::Failure(TitleFailureCause::Preparation))?;
+            let prepared = source
+                .capture_auxiliary()
+                .await
+                .map_err(|_| GenerationError::Failure(TitleFailureCause::Preparation))?;
             let requested = input.max_output_tokens.unwrap_or(2048).min(2048);
             let quote = self
                 .configuration
@@ -183,18 +216,42 @@ impl Owner {
                     quote,
                 )
                 .await
+                .map_err(GenerationError::from)
         };
         tokio::pin!(operation);
-        let generated = tokio::select! {
+        let (result, timed_out) = tokio::select! {
             biased;
-            _ = tokio::time::sleep(Duration::from_secs(30)) => { cancellation.cancel(); operation.await },
-            result = &mut operation => result,
-        }?;
-        if cancellation.is_cancelled() || generated.finish_reason != ModelFinishReason::Stop {
-            return Ok(());
-        }
-        let Some(title) = maka_session_title::normalize(&generated.text) else {
-            return Ok(());
+            _ = tokio::time::sleep(Duration::from_secs(30)) => { cancellation.cancel(); (operation.await, true) },
+            result = &mut operation => (result, false),
+        };
+        // Uncertain persistence or physical cleanup outranks the logical deadline.
+        let result = match result {
+            Err(GenerationError::Operation(error)) => return Err(error),
+            _ if self.stop.is_cancelled() => return Ok(()),
+            _ if timed_out => Err(TitleFailureCause::Model {
+                cause: ModelFailureCause::TimedOut,
+            }),
+            Err(GenerationError::Skipped) => return Ok(()),
+            Err(GenerationError::Failure(cause)) => Err(cause),
+            Ok(generated) if generated.finish_reason == ModelFinishReason::Length => {
+                Err(TitleFailureCause::OutputLimit)
+            }
+            Ok(generated) if generated.finish_reason != ModelFinishReason::Stop => {
+                Err(TitleFailureCause::InvalidOutput)
+            }
+            Ok(generated) => {
+                maka_session_title::normalize(&generated.text).ok_or(TitleFailureCause::EmptyOutput)
+            }
+        };
+        let title = match result {
+            Ok(title) => title,
+            Err(cause) => {
+                self.store
+                    .record_title_failure(invocation.clone(), cause)
+                    .await
+                    .map_err(persistence)?;
+                return Ok(());
+            }
         };
         // Main execution also moves the public revision. Retry metadata only;
         // each attempt gives queued manual changes and shutdown a turn at the gate.

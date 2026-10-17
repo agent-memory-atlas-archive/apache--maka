@@ -92,6 +92,7 @@ async fn stopping_summary_drains_attempt_without_checkpoint_or_retry() {
         event.event.fact,
         Fact::ModelInterrupted {
             status: ModelInterruption::Cancelled,
+            model_failure: None,
             ..
         }
     )));

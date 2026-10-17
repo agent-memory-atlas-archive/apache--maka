@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { diagnosticEvent } from './diagnostics.js';
 import { compactConfirm } from './compact.js';
 import type {
   Action,
@@ -75,6 +76,8 @@ export function handleRaw<N extends Node>(
   locale: string,
 ) {
   const target = presentation.target;
+  if (diagnosticEvent(state, actions, input.key))
+    return frame(presentation, configuredLocale, state, values, actions);
   if (input.key === 'compact-confirm') compactConfirm(state, actions);
   if (
     input.key === 'compact-check' &&

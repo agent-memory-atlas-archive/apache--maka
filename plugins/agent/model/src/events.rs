@@ -232,6 +232,9 @@ impl Normalizer {
                 #[derive(serde::Deserialize)]
                 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
                 enum Failure {
+                    Http {
+                        status: u16,
+                    },
                     ContextOverflow {
                         #[serde(rename = "observedOutput")]
                         observed_output: bool,
@@ -241,6 +244,11 @@ impl Normalizer {
                 let failure = serde_json::from_value(value["error"].clone())
                     .map_err(|_| invalid("invalid provider error envelope"))?;
                 return Err(match failure {
+                    Failure::Http { status } => {
+                        maka_agent_facts::model::error::ModelFailureCause::Http { status }
+                            .validate()?;
+                        ModelError::Http { status }
+                    }
                     Failure::ContextOverflow { observed_output } => {
                         ModelError::ContextOverflow { observed_output }
                     }
@@ -275,6 +283,27 @@ mod tests {
                 Err(ModelError::Adapter(_))
             ));
         }
+        for status in [100, 199, 300, 400, 599] {
+            assert!(
+                matches!(Normalizer::default().push(json!({"type":"error","error":{"kind":"http","status":status}})), Err(ModelError::Http { status: actual }) if actual == status)
+            );
+        }
+        for status in [
+            json!(99),
+            json!(200),
+            json!(299),
+            json!(600),
+            json!(400.5),
+            json!("400"),
+            json!(null),
+        ] {
+            assert!(matches!(
+                Normalizer::default()
+                    .push(json!({"type":"error","error":{"kind":"http","status":status}})),
+                Err(ModelError::Adapter(_))
+            ));
+        }
+        assert!(matches!(Normalizer::default().push(json!({"type":"error","error":{"kind":"http","status":400,"message":"private provider body"}})), Err(ModelError::Adapter(_))));
         for observed in [false, true] {
             assert!(
                 matches!(Normalizer::default().push(json!({"type":"error","error":{"kind":"context_overflow","observedOutput":observed}})),Err(ModelError::ContextOverflow{observed_output}) if observed_output == observed)

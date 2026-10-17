@@ -230,6 +230,7 @@ async fn visible_ids_match_presentation_for_accepted_and_partial_parts_across_ca
                     &mut view,
                     &mut ids,
                     Fact::ModelInterrupted {
+                        model_failure: None,
                         diagnostic: None,
                         step_id: "step".into(),
                         status: ModelInterruption::Cancelled,
@@ -249,6 +250,7 @@ async fn visible_ids_match_presentation_for_accepted_and_partial_parts_across_ca
                     InvocationOutcome::Completed
                 } else {
                     InvocationOutcome::Failed {
+                        model_failure: None,
                         class: "test".into(),
                         message: None,
                     }

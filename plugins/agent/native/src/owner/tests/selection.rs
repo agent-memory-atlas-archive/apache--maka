@@ -560,11 +560,23 @@ async fn queued_model_route_change_settles_original_message_without_retargeting(
         response(&mut socket).await;
         fixture.drained().await;
         assert!(fixture.store.pending_messages(&session).await.unwrap().is_empty());
-        let facts = fixture.store.scoped_prefix(maka_agent_facts::event::LogScope::Session { id: session }, 256, 1024 * 1024).await.unwrap();
+        let facts = fixture.store.scoped_prefix(maka_agent_facts::event::LogScope::Session { id: session.clone() }, 256, 1024 * 1024).await.unwrap();
         assert!(facts.events.iter().any(|event| matches!(&event.event.fact, maka_agent_facts::event::Fact::InvocationEnded { outcome: maka_agent_facts::event::InvocationOutcome::Failed { class, .. } } if class == "message_preparation_failed")));
         assert_eq!(facts.events.iter().filter(|event| matches!(event.event.fact, maka_agent_facts::event::Fact::InvocationOpened { .. })).count(), 2);
+        let diagnostics=fixture.query("diagnostics",json!({"sessionId":session,"position":{"kind":"latest"}})).await;
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
+        let failed = facts.events.iter().find(|event|matches!(&event.event.fact,maka_agent_facts::event::Fact::InvocationEnded {
+            outcome:maka_agent_facts::event::InvocationOutcome::Failed {class,..}} if class == "message_preparation_failed")).unwrap();
+        let diagnostics=diagnostics.expect("queued preparation failure must be available through public diagnostics");
+        assert_eq!(diagnostics["entries"].as_array().unwrap().len(),1);
+        let entry=&diagnostics["entries"][0];
+        assert_eq!(entry["sequence"],failed.sequence);
+        assert_eq!(entry["eventId"],failed.event.id);
+        assert_eq!(entry["detail"]["kind"],"execution");
+        assert_eq!(entry["detail"]["invocation"],serde_json::to_value(&failed.event.invocation).unwrap());
+        assert_eq!(entry["detail"]["reason"],"message_preparation_failed");
+        assert!(entry["detail"]["modelFailure"].is_null(),"a deterministic queued route conflict is not a provider failure");
     }).await.unwrap();
 }
 

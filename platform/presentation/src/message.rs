@@ -331,7 +331,7 @@ impl TurnState {
             InvocationOutcome::Completed | InvocationOutcome::ContextCompactFinished { .. } => {
                 Self::Completed
             }
-            InvocationOutcome::Failed { class, message } => Self::Failed {
+            InvocationOutcome::Failed { class, message, .. } => Self::Failed {
                 error_class: class.clone(),
                 failure_message: message.as_ref().map(|text| {
                     let mut end = text.len().min(256);

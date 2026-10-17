@@ -33,7 +33,7 @@ pub struct ProviderFailure {
     retry_after_ms: Option<u64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderFailureReason {
     Network,
@@ -107,8 +107,37 @@ impl ProviderFailure {
     }
 }
 
+/// Safe failure evidence, separate from provider-owned diagnostic text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModelFailureCause {
+    Http {
+        #[schemars(range(min = 100, max = 599))]
+        status: u16,
+    },
+    TimedOut,
+    ContextOverflow,
+    Provider {
+        reason: ProviderFailureReason,
+    },
+    Adapter,
+}
+impl ModelFailureCause {
+    pub fn validate(&self) -> Result<(), ModelError> {
+        if matches!(self, Self::Http { status } if !(100..=599).contains(status) || (200..300).contains(status))
+        {
+            return Err(ModelError::Adapter(
+                "invalid model HTTP failure status".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, thiserror::Error)]
 pub enum ModelError {
+    #[error("model HTTP request failed (status {status})")]
+    Http { status: u16 },
     #[error("model request cancelled")]
     Cancelled,
     #[error("model stream idle timeout exceeded")]
@@ -119,4 +148,19 @@ pub enum ModelError {
     Provider(ProviderFailure),
     #[error("model adapter failed: {0}")]
     Adapter(String),
+}
+
+impl ModelError {
+    pub fn failure_cause(&self) -> Option<ModelFailureCause> {
+        Some(match self {
+            Self::Cancelled => return None,
+            Self::Http { status } => ModelFailureCause::Http { status: *status },
+            Self::TimedOut => ModelFailureCause::TimedOut,
+            Self::ContextOverflow { .. } => ModelFailureCause::ContextOverflow,
+            Self::Provider(failure) => ModelFailureCause::Provider {
+                reason: failure.reason(),
+            },
+            Self::Adapter(_) => ModelFailureCause::Adapter,
+        })
+    }
 }

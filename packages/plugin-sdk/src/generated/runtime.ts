@@ -310,6 +310,9 @@ export type RuntimeProtocol =
   | AgentDeliveryFact
   | AgentContentKind
   | AgentObservation
+  | AgentDiagnostics
+  | AgentDiagnosticPage
+  | AgentDiagnosticChange
   | AgentSessionRead
   | AgentHistoryRead
   | AgentHistoryPromptRead
@@ -4514,6 +4517,101 @@ export type AgentDeliveryFact =
     };
 export type AgentContentKind = 'text' | 'thinking';
 export type AgentRunState = 'admitted' | 'running' | 'waiting_for_user';
+export type AgentDiagnosticPosition =
+  | {
+      kind: 'latest';
+    }
+  | {
+      through: number;
+      sequence: number;
+      kind: 'before';
+    };
+export type DiagnosticDetail =
+  | {
+      invocation: Invocation;
+      reason: ExecutionFailureReason;
+      modelFailure?: ModelFailureCause | null;
+      kind: 'execution';
+    }
+  | {
+      invocation: Invocation;
+      stepId: string;
+      status: ModelInterruption;
+      modelFailure?: ModelFailureCause | null;
+      kind: 'model_step';
+    }
+  | {
+      invocation: Invocation;
+      cause: TitleFailureCause;
+      kind: 'session_title';
+    };
+export type ExecutionFailureReason =
+  | 'session_busy'
+  | 'continuation_changed'
+  | 'reconciliation_required'
+  | 'invalid_input'
+  | 'cancelled'
+  | 'model_incomplete'
+  | 'event_commit'
+  | 'event_store'
+  | 'model_timeout'
+  | 'model_http'
+  | 'model_adapter'
+  | 'model_provider'
+  | 'context_overflow'
+  | 'tool_execution'
+  | 'runtime_internal'
+  | 'cleanup_unconfirmed'
+  | 'executor'
+  | 'message_preparation_failed'
+  | 'host_interrupted'
+  | 'outcome_unknown'
+  | 'execution_failed';
+/**
+ * Safe failure evidence, separate from provider-owned diagnostic text.
+ */
+export type ModelFailureCause =
+  | {
+      status: number;
+      kind: 'http';
+    }
+  | {
+      kind: 'timed_out';
+    }
+  | {
+      kind: 'context_overflow';
+    }
+  | {
+      reason: ProviderFailureReason;
+      kind: 'provider';
+    }
+  | {
+      kind: 'adapter';
+    };
+export type ProviderFailureReason =
+  | 'network'
+  | 'timed_out'
+  | 'rate_limit'
+  | 'provider_unavailable'
+  | 'stream_truncated';
+export type ModelInterruption = ('cancelled' | 'timed_out' | 'failed') | 'retryable_failure';
+export type TitleFailureCause =
+  | {
+      kind: 'preparation';
+    }
+  | {
+      cause: ModelFailureCause;
+      kind: 'model';
+    }
+  | {
+      kind: 'invalid_output';
+    }
+  | {
+      kind: 'output_limit';
+    }
+  | {
+      kind: 'empty_output';
+    };
 /**
  * Cursor sequence addresses a sparse transcript row; Event addresses the raw
  * event log. Before excludes its end and After includes its start. Returned
@@ -9974,6 +10072,27 @@ export interface AgentPart {
   stepId: string;
   partId: string;
   textKind: AgentContentKind;
+}
+export interface AgentDiagnostics {
+  sessionId: string;
+  position: AgentDiagnosticPosition;
+}
+export interface AgentDiagnosticPage {
+  through: number;
+  entries: AgentDiagnostic[];
+  nextBefore?: number | null;
+}
+export interface AgentDiagnostic {
+  sequence: number;
+  eventId: string;
+  recordedAt: number;
+  detail: DiagnosticDetail;
+}
+export interface AgentDiagnosticChange {
+  /**
+   * Latest diagnostic event sequence, independently of transcript progress.
+   */
+  revision: number;
 }
 export interface AgentSessionRead {
   sessionId: string;

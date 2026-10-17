@@ -28,6 +28,7 @@
 | `actions.ts` | Available commands and explicit service intents |
 | `results.ts` | Query results, mutation receipts and live deliveries |
 | `messages.ts` | Bounded live text and timeline display projections |
+| `diagnostics.ts` | Session failure pages, live refresh and original-record details |
 | `events.ts`, `component-events.ts`, `raw-events.ts` | Lifecycle/action routing, child callbacks and raw commands within one candidate-frame transaction |
 | `frame.ts` | Retained root composition, dialogs and subscriptions |
 | `conversation-view.ts` | Conversation, composer and its footer |

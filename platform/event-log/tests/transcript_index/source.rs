@@ -377,6 +377,7 @@ async fn failure_search_reads_original_diagnostic_fields_and_visible_body() {
         &log,
         "failed",
         InvocationOutcome::Failed {
+            model_failure: None,
             class: "failure-class-hit".into(),
             message: Some(message.clone()),
         },

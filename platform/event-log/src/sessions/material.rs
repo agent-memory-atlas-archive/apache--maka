@@ -145,10 +145,14 @@ fn retained(event: &RuntimeEvent) -> Value {
             step_id,
             status,
             diagnostic,
+            model_failure,
         } => {
             let mut material = json!({"step_id":step_id,"status":status});
             if let Some(diagnostic) = diagnostic {
                 material["diagnostic"] = json!(diagnostic);
+            }
+            if let Some(cause) = model_failure {
+                material["model_failure"] = json!(cause);
             }
             material
         }
@@ -178,7 +182,17 @@ fn retained(event: &RuntimeEvent) -> Value {
         Fact::InvocationEnded { outcome } => {
             let outcome = match outcome {
                 InvocationOutcome::Completed => json!({"kind":"completed"}),
-                InvocationOutcome::Failed { class, .. } => json!({"kind":"failed","class":class}),
+                InvocationOutcome::Failed {
+                    class,
+                    model_failure,
+                    ..
+                } => {
+                    let mut material = json!({"kind":"failed","class":class});
+                    if let Some(cause) = model_failure {
+                        material["model_failure"] = json!(cause);
+                    }
+                    material
+                }
                 InvocationOutcome::Cancelled { source } => {
                     json!({"kind":"cancelled","source":source})
                 }

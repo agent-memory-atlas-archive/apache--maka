@@ -262,6 +262,7 @@ mod tests {
                         5500,
                         Fact::InvocationEnded {
                             outcome: InvocationOutcome::Failed {
+                                model_failure: None,
                                 class: "summary_failed".into(),
                                 message: None,
                             },

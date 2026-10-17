@@ -232,6 +232,10 @@ pub async fn run(
         Err(error) => (
             InvocationOutcome::Failed {
                 class: failure_class(error).into(),
+                model_failure: match error {
+                    RunError::Model(error) => error.failure_cause(),
+                    _ => None,
+                },
                 message: Some(error.to_string().chars().take(2048).collect()),
             },
             None,
@@ -253,6 +257,7 @@ pub async fn run(
                     Fact::InvocationEnded {
                         outcome: InvocationOutcome::Failed {
                             class: "event_commit".into(),
+                            model_failure: None,
                             message: Some(error.to_string().chars().take(2048).collect()),
                         },
                     },
@@ -286,6 +291,7 @@ fn failure_class(error: &RunError) -> &'static str {
         RunError::ModelIncomplete => "model_incomplete",
         RunError::Commit(_) => "event_commit",
         RunError::Store(_) => "event_store",
+        RunError::Model(maka_model::ModelError::Http { .. }) => "model_http",
         RunError::Model(maka_model::ModelError::TimedOut) => "model_timeout",
         RunError::Model(maka_model::ModelError::Adapter(_)) => "model_adapter",
         RunError::Model(maka_model::ModelError::Provider(failure))

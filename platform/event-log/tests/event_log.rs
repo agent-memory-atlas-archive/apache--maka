@@ -222,6 +222,7 @@ async fn committed_prefix_survives_reopen_with_exact_replay_and_terminal_sealing
                 invocation(),
                 Fact::InvocationEnded {
                     outcome: InvocationOutcome::Failed {
+                        model_failure: None,
                         class: "tool_outcome_unknown".into(),
                         message: Some("tool outcome was not committed".into()),
                     },

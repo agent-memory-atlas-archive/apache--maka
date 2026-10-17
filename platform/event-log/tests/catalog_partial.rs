@@ -86,6 +86,7 @@ async fn interrupted_and_terminal_fallback_catalog_match_committed_presentation_
         (
             false,
             InvocationOutcome::Failed {
+                model_failure: None,
                 class: "event_commit".into(),
                 message: None,
             },
@@ -188,6 +189,7 @@ async fn interrupted_and_terminal_fallback_catalog_match_committed_presentation_
                 &log,
                 &mut view,
                 Fact::ModelInterrupted {
+                    model_failure: None,
                     diagnostic: None,
                     step_id: "step".into(),
                     status: ModelInterruption::Cancelled,

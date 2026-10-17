@@ -142,12 +142,12 @@ async fn reopened_pending_main_and_summary_are_failed_without_replaying_admissio
         let end = prefix.events.len();
         assert!(
             matches!(&prefix.events[end - 2].event.fact, Fact::ModelInterrupted {
-        step_id, status: ModelInterruption::Failed, ..
+        step_id, status: ModelInterruption::Failed, model_failure: None, ..
     } if step_id == if summary { "summary" } else { "step" })
         );
         assert!(
             matches!(&prefix.events[end - 1].event.fact, Fact::InvocationEnded {
-        outcome: InvocationOutcome::Failed { class, .. }
+        outcome: InvocationOutcome::Failed { class, model_failure: None, .. }
     } if class == "host_interrupted")
         );
         assert!(
@@ -635,6 +635,7 @@ async fn accepted_history_budget_counts_complete_items_not_token_envelopes() {
             &log,
             if interrupted {
                 Fact::ModelInterrupted {
+                    model_failure: None,
                     diagnostic: None,
                     step_id: "step".into(),
                     status: ModelInterruption::RetryableFailure,
@@ -651,6 +652,7 @@ async fn accepted_history_budget_counts_complete_items_not_token_envelopes() {
             &log,
             Fact::InvocationEnded {
                 outcome: InvocationOutcome::Failed {
+                    model_failure: None,
                     class: "fixture_end".into(),
                     message: None,
                 },

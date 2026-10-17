@@ -155,6 +155,7 @@ fn accepted_tools_replay_with_distinct_ids_parentage_rejections() {
     });
     facts.push(Fact::InvocationEnded {
         outcome: InvocationOutcome::Failed {
+            model_failure: None,
             class: "unknown_outcome".into(),
             message: None,
         },

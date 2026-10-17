@@ -113,9 +113,28 @@ export async function forwardProviderStream(open, normalize, emit, kind) {
       await emit({ type: 'error', error: { kind: 'context_overflow', observedOutput } });
       return;
     }
-    const failure = transientFailure(error);
-    if (!failure) throw error;
-    await emit({ type: 'error', error: { kind: 'provider', ...failure, replaySafe } });
+    let transport = false;
+    for (let cause = error, depth = 0; record(cause) && depth < 8; depth++, cause = cause.cause) {
+      if (cause.name === 'AbortError' || cause.name === 'ProviderResponseLimitError') throw error;
+      transport ||= isTransportFailure(cause);
+    }
+    const failure = transientFailure(error, transport);
+    if (failure) {
+      await emit({ type: 'error', error: { kind: 'provider', ...failure, replaySafe } });
+      return;
+    }
+    if (
+      error instanceof Error &&
+      error.name === 'AI_APICallError' &&
+      Number.isInteger(error.statusCode) &&
+      error.statusCode >= 100 &&
+      error.statusCode <= 599 &&
+      !(error.statusCode >= 200 && error.statusCode < 300)
+    ) {
+      await emit({ type: 'error', error: { kind: 'http', status: error.statusCode } });
+      return;
+    }
+    throw error;
   };
   let result;
   try {
@@ -180,14 +199,8 @@ export async function forwardProviderStream(open, normalize, emit, kind) {
 
 // Only native transport or structured provider evidence authorizes a retry. A local
 // response-size failure wrapped by the SDK must not reset its budget by retrying.
-function transientFailure(error) {
+function transientFailure(error, transport) {
   if (!record(error)) return;
-  let cause = error;
-  let transport = false;
-  for (let depth = 0; record(cause) && depth < 8; depth++, cause = cause.cause) {
-    if (cause.name === 'AbortError' || cause.name === 'ProviderResponseLimitError') return;
-    transport ||= isTransportFailure(cause);
-  }
   const status = error.name === 'AI_APICallError' ? error.statusCode : undefined;
   const identifiers = new Set(
     providerRecords(error).flatMap((value) =>

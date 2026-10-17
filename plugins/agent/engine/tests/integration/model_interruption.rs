@@ -32,6 +32,7 @@ use maka_agent_facts::event::InvocationOutcome;
 use maka_agent_facts::event::ModelInterruption;
 use maka_agent_facts::event::TerminalStatus;
 use maka_agent_facts::model::ModelEvent;
+use maka_agent_facts::model::error::ModelFailureCause;
 use maka_event_log::EventLog;
 use maka_js_runtime::{CellLimits, CodeExecutor};
 use maka_model::{ModelError, ModelExecutor, ProviderConfig, ProviderKind};
@@ -295,7 +296,7 @@ async fn continuation_claim_replays_only_its_lineage_and_retries_with_frozen_inp
         title: None, operation_id: "unknown".into(),
                 call: maka_agent_facts::tool_call::ToolCallIdentity::standalone("unknown-call".into()),
                 name: "write".into(), input: json!({}) },
-            Fact::InvocationEnded { outcome: InvocationOutcome::Failed { class: "outcome_unknown".into(), message: None } },
+            Fact::InvocationEnded { outcome: InvocationOutcome::Failed { class: "outcome_unknown".into(), message: None, model_failure: None } },
         ] {
             log.append(&EventWrite::plain(RuntimeEvent::new(input(&base, "unknown").invocation, fact)).unwrap()).await.unwrap();
         }
@@ -341,9 +342,11 @@ async fn model_timeout_cause_survives_reopening_the_log() {
         assert!(matches!(
             &prefix.events.last().unwrap().event.fact,
             Fact::InvocationEnded {
-                outcome: InvocationOutcome::Failed { class, message: Some(message) }
+                outcome: InvocationOutcome::Failed { class, message: Some(message), model_failure: Some(ModelFailureCause::TimedOut) }
             } if class == "model_timeout" && message == &ModelError::TimedOut.to_string()
         ));
+        assert!(prefix.events.iter().any(|event| matches!(&event.event.fact,
+            Fact::ModelInterrupted { model_failure: Some(ModelFailureCause::TimedOut), .. })));
         assert_eq!(
             prefix.project_invocation("invocation-timeout").terminal,
             Some(TerminalStatus::Failed)

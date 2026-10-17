@@ -50,4 +50,5 @@ pub mod tool_call;
 pub mod tool_output;
 pub mod tools;
 
+pub mod diagnostics;
 pub mod display;

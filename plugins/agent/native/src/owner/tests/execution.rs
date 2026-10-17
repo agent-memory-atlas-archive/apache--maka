@@ -95,6 +95,7 @@ async fn assert_computer_output(fixture: &Fixture, session: &str, expected: &str
 async fn computer_resume_replays_original_input_without_duplicate_effects(stop: bool) {
     use maka_agent_facts::event::Fact;
     use maka_agent_facts::interaction::InteractionRequest;
+    const SECRET: &str = "SECRET_MAIN_PROVIDER_BODY_SENTINEL";
 
     tokio::time::timeout(Duration::from_secs(90), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -146,13 +147,15 @@ async fn computer_resume_replays_original_input_without_duplicate_effects(stop: 
         if stop {
             assert_eq!(fixture.mutation(2, "stop", json!({"sessionId":session,"invocationId":sent["invocationId"]}), Uuid::new_v4()).await.unwrap()["requested"], true);
         } else {
-            let body = json!({"error":{"message":"resume fixture model failure","type":"invalid_request_error","code":"invalid_request"}}).to_string();
+            let body = json!({"error":{"message":SECRET,"type":"invalid_request_error","code":"invalid_request"}}).to_string();
             socket.write_all(format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
         }
         drop(socket);
         fixture.drained().await;
         let source = fixture.query("execution", json!({"sessionId":session,"invocationId":sent["invocationId"]})).await.unwrap()["execution"].clone();
         assert_eq!(source["state"], if stop { "cancelled" } else { "failed" }, "{source}");
+        let failed_invocation=fixture.store.invocation_boundary(&session,sent["invocationId"].as_str().unwrap()).await.unwrap().unwrap().0.invocation;
+        let diagnostics=fixture.query("diagnostics",json!({"sessionId":session,"position":{"kind":"latest"}})).await;
 
         // A later message must not replace the selected source's original input.
         fixture.mutation(2, "send", json!({"sessionId":session,"message":"Later unrelated Computer request","model":fixture.selection().await}), Uuid::new_v4()).await.unwrap();
@@ -199,6 +202,27 @@ async fn computer_resume_replays_original_input_without_duplicate_effects(stop: 
         assert!(fixture.store.pending_interactions(&session).await.unwrap().is_empty());
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
+        if !stop {
+            let diagnostics=diagnostics.expect("actual main HTTP failure must be readable through public diagnostics");
+            let entries=diagnostics["entries"].as_array().unwrap();
+            assert_eq!(entries.len(),2,"both original model-step and terminal execution evidence must be visible");
+            for entry in entries {
+                assert!(entry["sequence"].as_u64().is_some_and(|sequence|sequence>0));
+                assert!(entry["eventId"].as_str().is_some_and(|id|!id.is_empty()));
+                assert!(entry["recordedAt"].as_f64().is_some());
+                assert_eq!(entry["detail"]["invocation"],serde_json::to_value(&failed_invocation).unwrap());
+                assert_eq!(entry["detail"]["modelFailure"],json!({"kind":"http","status":400}));
+            }
+            let execution=entries.iter().find(|entry|entry["detail"]["kind"] == "execution").unwrap();
+            assert_eq!(execution["detail"]["reason"],"model_http");
+            let step=entries.iter().find(|entry|entry["detail"]["kind"] == "model_step").unwrap();
+            assert_eq!(step["detail"]["status"],"failed");
+            let interrupted=facts.iter().find(|fact|matches!(fact,Fact::ModelInterrupted {..})).unwrap();
+            let ended=facts.iter().find(|fact|matches!(fact,Fact::InvocationEnded {outcome:maka_agent_facts::event::InvocationOutcome::Failed {..}})).unwrap();
+            assert_eq!(serde_json::to_value(interrupted).unwrap()["model_failure"],json!({"kind":"http","status":400}));
+            assert_eq!(serde_json::to_value(ended).unwrap()["outcome"]["model_failure"],json!({"kind":"http","status":400}));
+            assert!(!diagnostics.to_string().contains(SECRET),"safe diagnostics must not expose provider response bodies");
+        }
     }).await.unwrap();
 }
 
@@ -504,6 +528,7 @@ async fn resume_refuses_unsettled_effect_outside_its_selected_lineage() {
             },
             Fact::InvocationEnded {
                 outcome: InvocationOutcome::Failed {
+                    model_failure: None,
                     class: "outcome_unknown".into(),
                     message: None,
                 },

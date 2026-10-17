@@ -55,6 +55,8 @@ pub enum InvocationOutcome {
     Failed {
         class: String,
         message: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_failure: Option<crate::model::error::ModelFailureCause>,
     },
     Cancelled {
         source: String,
@@ -167,6 +169,8 @@ pub enum Fact {
         /// or retry authority. Missing on journals written by older Hosts.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diagnostic: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_failure: Option<crate::model::error::ModelFailureCause>,
     },
     ModelCompleted {
         step_id: String,
@@ -273,7 +277,7 @@ impl Fact {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelInterruption {
     Cancelled,

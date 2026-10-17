@@ -152,6 +152,7 @@ globalThis.Deno = {
   },
 };
 await assert.rejects(networkFetch(1)('http://fixture.invalid'), (error) => error === native);
+const privateFailure = 'PRIVATE_PROVIDER_HTTP_FAILURE_SENTINEL';
 for (const [statusCode, responseHeaders, reason, code] of [
   [200, {}, 'network'],
   [401, {}, undefined],
@@ -163,13 +164,16 @@ for (const [statusCode, responseHeaders, reason, code] of [
   [409, {}, undefined],
   [500, {}, 'provider_unavailable', 'resource-exhausted'],
 ]) {
-  const error = Object.assign(new Error('HTTP error body reset'), {
-    name: 'AI_APICallError',
-    statusCode,
-    responseHeaders,
-    cause: native,
-    responseBody: JSON.stringify({ error: { type: code } }),
-  });
+  const error = Object.assign(
+    new Error(reason === undefined ? privateFailure : 'HTTP error body reset'),
+    {
+      name: 'AI_APICallError',
+      statusCode,
+      responseHeaders,
+      cause: native,
+      responseBody: JSON.stringify({ error: { type: code, message: privateFailure } }),
+    },
+  );
   const emitted = [];
   const forward = () =>
     forwardProviderStream(
@@ -181,8 +185,9 @@ for (const [statusCode, responseHeaders, reason, code] of [
       'openai_chat',
     );
   if (reason === undefined) {
-    await assert.rejects(forward(), (value) => value === error);
-    assert.deepEqual(emitted, []);
+    await forward();
+    assert.deepEqual(emitted, [{ type: 'error', error: { kind: 'http', status: statusCode } }]);
+    assert(!JSON.stringify(emitted).includes(privateFailure));
   } else {
     await forward();
     assert.equal(emitted.at(-1).error.reason, reason);

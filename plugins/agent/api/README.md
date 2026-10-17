@@ -27,4 +27,6 @@ Independent Desktop clients consume the same persisted Agent service through the
 
 Read `history` pages under one fixed `through` fence and resume `watch` from its last `nextAfter`; watch also publishes queue and pending-interaction updates. `send` admits work and returns its identity; `stop` names that exact invocation. Use `pendingInteractions`, `interaction` and `respond` to reconstruct and answer the original request after reconnecting. Mutations retain their original operation receipts: a lost response does not authorize another send. See [native acceptance](../native/README.md) and [transport ownership and exit modes](../../../platform/transport/README.md).
 
+`diagnostics` reads bounded, newest-first pages of execution, model-step and automatic-title failures under a fixed `through` fence. `watchDiagnostics` emits the current diagnostic revision on subscription and after changes; reconnect by reading the latest page again. These session-scoped operational records retain original invocation/event identities and safe typed causes. They exclude provider bodies and failures belonging to copied source sessions. Their revision is independent of conversation history, so a late title failure remains discoverable after the answer finishes.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

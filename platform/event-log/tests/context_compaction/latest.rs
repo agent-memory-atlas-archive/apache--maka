@@ -86,6 +86,7 @@ async fn preturn_keeps_anchor_and_latest_main_never_falls_back_a_broken_newer_tr
         "current",
         Fact::InvocationEnded {
             outcome: InvocationOutcome::Failed {
+                model_failure: None,
                 class: "later_tool_failure".into(),
                 message: None,
             },
