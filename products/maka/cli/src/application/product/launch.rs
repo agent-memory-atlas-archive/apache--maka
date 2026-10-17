@@ -77,6 +77,7 @@ pub(super) struct Preparation {
     #[serde(default)]
     pub(super) restore: BTreeMap<Uuid, u64>,
     pub(super) sources: Sources,
+    pub(super) package_sets: super::PackageSets,
     // Exact immutable files, independent of whatever binary resumes this work.
     pub(super) packages: Vec<BTreeMap<String, String>>,
 }
@@ -256,7 +257,11 @@ pub(super) async fn prepare(
     if let Some(bytes) = record.pending {
         let mut preparation: Preparation = serde_json::from_slice(&bytes)?;
         let packages = decode_packages(std::mem::take(&mut preparation.packages))?;
-        let applications = super::prepare_sources(&preparation.sources, &packages)?;
+        let applications = super::prepare_package_sets(
+            &preparation.sources,
+            &preparation.package_sets,
+            &packages,
+        )?;
         return finish(
             store,
             PreparedLaunch {
@@ -496,12 +501,16 @@ async fn begin(
             return Err("installation deployment already exists; use its original launcher or application run".into());
         }
         let selection = sources.connections.clone();
+        let package_sets = super::PackageSets::from_applications(&applications);
+        let inventory: BTreeMap<_, _> = applications.iter().flat_map(|application| application.packages())
+            .map(|package| (package.application_ref(), package)).collect();
         let mut preparation = Preparation {
             product: Some(super::update::Baseline { product, installation, default_options, sources: sources.clone(), version: Some(version) }),
             previous_connections: None,
             restore: BTreeMap::new(),
             sources,
-            packages: packages.values().map(|package| package.files().iter().map(|(path, bytes)| (path.clone(), STANDARD.encode(bytes))).collect()).collect(),
+            package_sets,
+            packages: inventory.values().map(|package| package.files().iter().map(|(path, bytes)| (path.clone(), STANDARD.encode(bytes))).collect()).collect(),
         };
         let deployment = Uuid::new_v4();
         store.begin_application_launch(Record {

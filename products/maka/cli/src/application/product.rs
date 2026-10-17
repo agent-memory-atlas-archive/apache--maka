@@ -83,6 +83,35 @@ struct Sources {
     connections: Value,
 }
 
+#[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PackageSets {
+    pub(super) host: Vec<maka_plugin_core::package::PackageRef>,
+    pub(super) management_host: Vec<maka_plugin_core::package::PackageRef>,
+    pub(super) ui: Vec<maka_plugin_core::package::PackageRef>,
+}
+impl PackageSets {
+    pub(super) fn from_applications(applications: &[PreparedApplication; 3]) -> Self {
+        Self {
+            host: applications[0]
+                .packages()
+                .iter()
+                .map(Package::application_ref)
+                .collect(),
+            management_host: applications[1]
+                .packages()
+                .iter()
+                .map(Package::application_ref)
+                .collect(),
+            ui: applications[2]
+                .packages()
+                .iter()
+                .map(Package::application_ref)
+                .collect(),
+        }
+    }
+}
+
 impl Compose {
     pub(super) async fn run(self) -> Result<(), HostError> {
         let configuration = read_json(&self.configuration)?;
@@ -427,4 +456,47 @@ fn prepare_sources(
         .try_into()
         .unwrap_or_else(|_| unreachable!("three prepared product sources"));
     Ok(prepared)
+}
+
+/// Explicit inventories survive replacement and recovery without being selected again.
+fn prepare_package_sets(
+    sources: &Sources,
+    sets: &PackageSets,
+    packages: &[Package],
+) -> Result<[PreparedApplication; 3], HostError> {
+    let mut available = BTreeMap::new();
+    for package in packages {
+        if available
+            .insert(package.application_ref(), package)
+            .is_some()
+        {
+            return Err("duplicate prepared package bytes".into());
+        }
+    }
+    let [host, management_host, ui] = [
+        (&sources.host, &[][..], &sets.host),
+        (&sources.management_host, &[][..], &sets.management_host),
+        (&sources.ui, sources.remote_exports.as_slice(), &sets.ui),
+    ]
+    .map(|(input, observations, references)| {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut inventory = Vec::new();
+        for reference in references {
+            if !seen.insert(reference) {
+                return Err::<_, HostError>("duplicate prepared package reference".into());
+            }
+            inventory.push(
+                (*available
+                    .get(reference)
+                    .ok_or("prepared package set refers to missing bytes")?)
+                .clone(),
+            );
+        }
+        Ok(PreparedApplication::new(
+            input.clone(),
+            observations.to_vec(),
+            inventory,
+        )?)
+    });
+    Ok([host?, management_host?, ui?])
 }

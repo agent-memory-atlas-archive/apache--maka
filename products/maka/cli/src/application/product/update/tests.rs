@@ -83,7 +83,7 @@ async fn old_installation(
         .unwrap()
         .extend_from_slice(b"\n// previous product release\n");
     packages.insert("agent-screen".into(), Package::new(files).unwrap());
-    let (mut sources, installation, _) = super::super::author_with_source(
+    let (mut sources, installation, applications) = super::super::author_with_source(
         Product::Agent,
         config,
         &packages,
@@ -107,6 +107,7 @@ async fn old_installation(
         }),
         previous_connections: None,
         restore: BTreeMap::new(),
+        package_sets: super::super::PackageSets::from_applications(&applications),
         sources,
         packages: packages
             .values()
@@ -192,6 +193,75 @@ async fn explicit_installation_keeps_its_selected_tools_when_packages_upgrade() 
 async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() {
     let directory = tempfile::tempdir().unwrap();
     let (store, ui, serving) = old_installation(directory.path(), true).await;
+    let configuration = serde_json::from_value(
+        store
+            .application_launch()
+            .await
+            .unwrap()
+            .unwrap()
+            .configuration,
+    )
+    .unwrap();
+    let (path, domain, host_id, management_id) = launch::targets(&configuration).unwrap();
+    let host = super::super::public::Host::connect(path, domain, host_id)
+        .await
+        .unwrap();
+    let unused =
+        |name: &str| {
+            Package::new(BTreeMap::from([
+        ("maka.extension.json".into(), serde_json::to_vec(&json!({
+            "schemaVersion":1,"id":format!("example.inventory-{name}"),
+            "application":{"entries":{"host":{
+                "implementation":{"kind":"javascript","module":"entry.js","realm":"shared"},
+                "configuration":{"type":"object"},"imports":{},"exports":{}
+            }}}
+        })).unwrap()),
+        ("entry.js".into(), b"export function activate() { return {}; }".to_vec()),
+    ])).unwrap()
+        };
+    let extras = [unused("host"), unused("management"), unused("ui")];
+    let host_before_install = host.read().await.unwrap();
+    let mut host_packages = host
+        .packages(
+            &host_before_install.source.reference,
+            &host_before_install.packages,
+        )
+        .await
+        .unwrap();
+    host_packages.push(extras[0].clone());
+    host.ensure_restore(
+        host_before_install.source.reference.revision,
+        &host_before_install.source.input,
+        &host_before_install.source.remote_exports,
+        &host_packages,
+        None,
+    )
+    .await
+    .unwrap();
+    for (id, extra) in [(management_id, &extras[1]), (ui, &extras[2])] {
+        let current = store.load_application(id).await.unwrap().unwrap();
+        let (source, mut packages, _, _) = current.into_parts();
+        packages.push(extra.clone());
+        store
+            .commit_application(
+                id,
+                source.reference.revision,
+                source.input,
+                source.remote_exports,
+                packages,
+            )
+            .await
+            .unwrap();
+    }
+    let installed_host = host.read().await.unwrap();
+    let installed_local = [
+        store
+            .read_application_metadata(management_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        store.read_application_metadata(ui).await.unwrap().unwrap(),
+    ];
     let original = store.load_application(ui).await.unwrap().unwrap();
     let (original_source, _, _, _) = original.into_parts();
     let preview = synchronize(&store, true, false).await.unwrap();
@@ -211,6 +281,22 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
             .pending
             .is_none()
     );
+    assert_eq!(
+        serde_json::to_value(host.read().await.unwrap()).unwrap(),
+        serde_json::to_value(&installed_host).unwrap(),
+        "preview changed the public Host"
+    );
+    for (id, before) in [
+        (management_id, &installed_local[0]),
+        (ui, &installed_local[1]),
+    ] {
+        assert_eq!(
+            serde_json::to_value(store.read_application_metadata(id).await.unwrap().unwrap())
+                .unwrap(),
+            serde_json::to_value(before).unwrap(),
+            "preview changed a local source inventory"
+        );
+    }
     assert!(begin(&store).await.unwrap());
     let pending = store
         .application_launch()
@@ -250,9 +336,19 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
         assert!(tools.iter().any(|tool| tool["name"] == name));
     }
     let available = launch::decode_packages(preparation.packages).unwrap();
-    let selected = super::super::selected(
-        &preparation.sources.ui,
-        &preparation.sources.remote_exports,
+    for extra in &extras {
+        assert!(
+            available
+                .iter()
+                .any(|package| package.application_ref() == extra.application_ref()),
+            "frozen update package bytes lost installed unused package {}",
+            extra.application_ref().id
+        );
+    }
+
+    let [_, _, ui_target] = super::super::prepare_package_sets(
+        &preparation.sources,
+        &preparation.package_sets,
         &available,
     )
     .unwrap();
@@ -260,17 +356,20 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
     store
         .commit_application(
             ui,
-            1,
+            original_source.reference.revision,
             preparation.sources.ui.clone(),
             preparation.sources.remote_exports.clone(),
-            selected,
+            ui_target.packages().to_vec(),
         )
         .await
         .unwrap();
     launch::prepare(&store, None, Product::Agent).await.unwrap();
     let current = store.load_application(ui).await.unwrap().unwrap();
     let (current_source, _, _, _) = current.into_parts();
-    assert_eq!(current_source.reference.revision, 2);
+    assert_eq!(
+        current_source.reference.revision,
+        original_source.reference.revision + 1
+    );
     for (name, node) in &original_source.input.instances {
         assert_eq!(node.key, current_source.input.instances[name].key);
     }
@@ -280,6 +379,53 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
             .await
             .unwrap()
             .is_some()
+    );
+    let updated_host = host.read().await.unwrap();
+    let updated_local = [
+        store
+            .read_application_metadata(management_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        store.read_application_metadata(ui).await.unwrap().unwrap(),
+    ];
+    let updated_heads = [&updated_host, &updated_local[0], &updated_local[1]];
+    for (index, head) in updated_heads.into_iter().enumerate() {
+        let mut inventory = head.packages.clone();
+        inventory.sort();
+        let bytes = if index == 0 {
+            host.packages(&head.source.reference, &head.packages)
+                .await
+                .unwrap()
+        } else {
+            store
+                .load_application_at(&head.source.reference)
+                .await
+                .unwrap()
+                .unwrap()
+                .into_parts()
+                .1
+        };
+        let mut expected: Vec<_> =
+            super::super::selected(&head.source.input, &head.source.remote_exports, &bytes)
+                .unwrap()
+                .iter()
+                .map(Package::application_ref)
+                .collect();
+        expected.push(extras[index].application_ref());
+        expected.sort();
+        assert_eq!(
+            inventory, expected,
+            "source {index} must retain its own installed unused package without leaking other catalogs"
+        );
+    }
+    let old_screen = match &original_source.input.instances["agent-screen"].package {
+        maka_plugin_core::package::PackageSelection::Pinned { package } => package,
+        _ => unreachable!(),
+    };
+    assert!(
+        !updated_local[1].packages.contains(old_screen),
+        "replaced formerly selected package revisions must not accumulate"
     );
     assert!(!begin(&store).await.unwrap());
     assert!(
@@ -291,6 +437,7 @@ async fn defaults_update_once_and_resume_an_acknowledgement_lost_after_commit() 
             .pending
             .is_none()
     );
+    host.into_client().close().await.unwrap();
     serving.stop().await;
     store.drain().await;
 }

@@ -226,37 +226,74 @@ async fn synchronize_version(
         }
         // Unchanged defaults only need source metadata. Read and validate old
         // package bytes when an actual merge needs to retain user-selected code.
-        let mut available = BTreeMap::new();
-        for package in host
+        let host_inventory = host
             .packages(&current[0].source.reference, &current[0].packages)
-            .await?
-        {
-            available.insert(package.application_ref(), package);
-        }
+            .await?;
+        let host_required: BTreeSet<_> = super::selected(
+            &local.host,
+            &current[0].source.remote_exports,
+            &host_inventory,
+        )?
+        .iter()
+        .map(|package| package.application_ref())
+        .collect();
+        let mut inventories = vec![(host_inventory, host_required)];
         for head in [&current[1], &current[2]] {
-            let target = store;
-            let loaded = target
+            let loaded = store
                 .load_application_at(&head.source.reference)
                 .await?
                 .ok_or("product source missing")?;
-            for package in loaded.into_parts().1 {
-                available.insert(package.application_ref(), package);
-            }
+            let required = loaded
+                .plan()
+                .instances()
+                .values()
+                .map(|instance| instance.package.clone())
+                .collect();
+            inventories.push((loaded.packages().to_vec(), required));
         }
-        for package in packages.values() {
+        let mut available = BTreeMap::new();
+        for package in inventories
+            .iter()
+            .flat_map(|(inventory, _)| inventory.iter())
+            .chain(packages.values())
+        {
             available.insert(package.application_ref(), package.clone());
         }
         let available: Vec<_> = available.into_values().collect();
         let mut selected = BTreeMap::new();
-        // Validate the complete merge and its actual package bytes before writing preparation.
-        for (input, observations) in [
-            (&sources.host, &[][..]),
-            (&sources.management_host, &[][..]),
-            (&sources.ui, sources.remote_exports.as_slice()),
-        ] {
-            let required = super::selected(input, observations, &available)?;
-            maka_event_log::applications::validate_application(input, observations, &required)?;
-            for package in required {
+        let mut package_sets = super::PackageSets::default();
+        // Catalogs belong to each source, even when immutable bytes are shared.
+        for ((input, observations, references), (old_inventory, old_required)) in [
+            (&sources.host, &[][..], &mut package_sets.host),
+            (
+                &sources.management_host,
+                &[][..],
+                &mut package_sets.management_host,
+            ),
+            (
+                &sources.ui,
+                sources.remote_exports.as_slice(),
+                &mut package_sets.ui,
+            ),
+        ]
+        .into_iter()
+        .zip(&inventories)
+        {
+            let mut inventory: BTreeMap<_, _> = old_inventory
+                .iter()
+                .filter(|package| !old_required.contains(&package.application_ref()))
+                .map(|package| (package.application_ref(), package.clone()))
+                .collect();
+            for package in super::selected(input, observations, &available)? {
+                inventory.insert(package.application_ref(), package);
+            }
+            let inventory: Vec<_> = inventory.into_values().collect();
+            maka_event_log::applications::validate_application(input, observations, &inventory)?;
+            *references = inventory
+                .iter()
+                .map(|package| package.application_ref())
+                .collect();
+            for package in inventory {
                 selected.insert(package.application_ref(), package);
             }
         }
@@ -275,6 +312,7 @@ async fn synchronize_version(
                 previous_connections: Some(record.configuration),
                 restore: revisions,
                 sources,
+                package_sets,
                 packages: selected
                     .values()
                     .map(|package| {

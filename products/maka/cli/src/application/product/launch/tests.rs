@@ -48,6 +48,7 @@ async fn pending(store: &EventLog, host: &EventLog) -> (Uuid, Uuid, Uuid) {
         product: None,
         previous_connections: None,
         restore: BTreeMap::new(),
+        package_sets: super::super::PackageSets::default(),
         sources: Sources {
             host: input(),
             management_host: input(),
@@ -295,4 +296,75 @@ async fn invalid_presentation_is_rejected_before_host_initialization() {
         assert!(store.application_launch().await.unwrap().is_none());
     }
     store.drain().await;
+}
+
+#[test]
+fn explicit_source_package_sets_keep_catalogs_and_reject_missing_or_duplicate_refs() {
+    let package = Package::new(BTreeMap::from([(
+        "maka.extension.json".into(),
+        serde_json::to_vec(&json!({
+            "schemaVersion":1,"id":"example.installed",
+            "application":{"entries":{"host":{
+                "implementation":{"kind":"native","implementation":"example.Component"},
+                "configuration":{"type":"object","additionalProperties":false},
+                "imports":{},"exports":{}
+            }}}
+        }))
+        .unwrap(),
+    )]))
+    .unwrap();
+    let sources = Sources {
+        host: input(),
+        management_host: input(),
+        ui: input(),
+        remote_exports: vec![],
+        connections: json!({}),
+    };
+    let sets = super::super::PackageSets {
+        host: vec![package.application_ref()],
+        management_host: vec![],
+        ui: vec![],
+    };
+    let applications =
+        super::super::prepare_package_sets(&sources, &sets, std::slice::from_ref(&package))
+            .unwrap();
+    assert_eq!(
+        applications[0]
+            .packages()
+            .iter()
+            .map(Package::application_ref)
+            .collect::<Vec<_>>(),
+        vec![package.application_ref()]
+    );
+    assert!(applications[1].packages().is_empty());
+    assert!(applications[2].packages().is_empty());
+    assert!(
+        applications[0].input().instances.is_empty(),
+        "installed inventory need not execute"
+    );
+
+    let mut missing = super::super::PackageSets::from_applications(&applications);
+    let mut unavailable = package.application_ref();
+    unavailable.id = "example.missing".into();
+    missing.management_host.push(unavailable);
+    let error =
+        super::super::prepare_package_sets(&sources, &missing, std::slice::from_ref(&package))
+            .err()
+            .unwrap();
+    assert_eq!(
+        error.to_string(),
+        "prepared package set refers to missing bytes"
+    );
+
+    let mut duplicated = super::super::PackageSets::from_applications(&applications);
+    duplicated.host.push(package.application_ref());
+    let error =
+        super::super::prepare_package_sets(&sources, &duplicated, std::slice::from_ref(&package))
+            .err()
+            .unwrap();
+    assert_eq!(error.to_string(), "duplicate prepared package reference");
+    let error = super::super::prepare_package_sets(&sources, &sets, &[package.clone(), package])
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "duplicate prepared package bytes");
 }

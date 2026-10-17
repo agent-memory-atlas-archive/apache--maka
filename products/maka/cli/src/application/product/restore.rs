@@ -109,17 +109,26 @@ async fn restore(store: &EventLog) -> Result<DeploymentRef, HostError> {
         let ui = originals.pop().unwrap();
         let management = originals.pop().unwrap();
         let host = originals.pop().unwrap();
+        let package_sets = super::PackageSets {
+            host: host.packages,
+            management_host: management.packages,
+            ui: ui.packages,
+        };
+        let sources = Sources {
+            host: host.input,
+            management_host: management.input,
+            ui: ui.input,
+            remote_exports: ui.remote_exports,
+            connections: record.configuration,
+        };
+        let inventory: Vec<_> = packages.values().cloned().collect();
+        super::prepare_package_sets(&sources, &package_sets, &inventory)?;
         let preparation = launch::Preparation {
             product: None,
             previous_connections: None,
             restore: revisions,
-            sources: Sources {
-                host: host.input,
-                management_host: management.input,
-                ui: ui.input,
-                remote_exports: ui.remote_exports,
-                connections: record.configuration,
-            },
+            sources,
+            package_sets,
             packages: packages
                 .values()
                 .map(|package| {
@@ -212,6 +221,101 @@ mod tests {
             recovery: None,
         }
     }
+    fn unused_package(id: &str) -> Package {
+        Package::new(BTreeMap::from([(
+            "maka.extension.json".into(),
+            serde_json::to_vec(&json!({
+                "schemaVersion":1,"id":id,
+                "application":{"entries":{"host":{
+                    "implementation":{"kind":"native","implementation":"example.Component"},
+                    "configuration":{"type":"object","additionalProperties":false},
+                    "imports":{},"exports":{}
+                }}}
+            }))
+            .unwrap(),
+        )]))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn restore_keeps_each_original_source_inventory_without_catalog_leakage() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = launch::open(directory.path().join("ui"), true, None)
+            .await
+            .unwrap();
+        let host_path = directory.path().join("host");
+        let host = Arc::new(launch::open(host_path.clone(), true, None).await.unwrap());
+        let host_id = Uuid::new_v4();
+        let manager = Uuid::new_v4();
+        let ui = Uuid::new_v4();
+        let root = host.owned_root().unwrap();
+        let endpoint = json!({"service":{"consumer":[Uuid::new_v4()],"import":"service","grant":{"methods":["read"],"recovery":true}}});
+        let configuration = json!({"hosts":[
+            {"name":"local","location":{"kind":"public","root":root.canonical_path(),"stateDomain":root.root_id()},"deployment":host_id,"endpoints":endpoint},
+            {"name":"manager","location":{"kind":"cohost"},"deployment":manager,"endpoints":endpoint}
+        ]});
+        drop(root);
+        let originals = [
+            unused_package("example.original-host"),
+            unused_package("example.original-manager"),
+            unused_package("example.original-ui"),
+        ];
+        let later = unused_package("example.installed-later");
+        let mut selected = None;
+        for ((target, deployment), original) in
+            [(host.as_ref(), host_id), (&store, manager), (&store, ui)]
+                .into_iter()
+                .zip(&originals)
+        {
+            target
+                .commit_application(deployment, 0, input(), vec![], vec![original.clone()])
+                .await
+                .unwrap();
+            let head = target
+                .commit_application(
+                    deployment,
+                    1,
+                    input(),
+                    vec![],
+                    vec![original.clone(), later.clone()],
+                )
+                .await
+                .unwrap();
+            if deployment == ui {
+                selected = Some(head);
+            }
+        }
+        store
+            .select_committed_application_launch(selected.unwrap(), configuration.clone())
+            .await
+            .unwrap();
+        let serving = PublishedHost::start(host.clone(), host_id).await;
+        let restored = restore(&store).await.unwrap();
+        let mut actual = Vec::new();
+        for (target, deployment) in [(host.as_ref(), host_id), (&store, manager), (&store, ui)] {
+            let loaded = target.load_application(deployment).await.unwrap().unwrap();
+            assert_eq!(loaded.source().reference.revision, 3);
+            actual.push(
+                loaded
+                    .packages()
+                    .iter()
+                    .map(Package::application_ref)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        let record = store.application_launch().await.unwrap().unwrap();
+        serving.stop().await;
+        drop(host);
+        store.drain().await;
+        assert_eq!(restored.deployment, ui);
+        assert_eq!(record.configuration, configuration);
+        assert!(record.pending.is_none());
+        assert_eq!(
+            actual,
+            originals.map(|package| vec![package.application_ref()])
+        );
+    }
+
     #[tokio::test]
     async fn restore_preserves_original_identity_history_and_resumes_without_replay() {
         let directory = tempfile::tempdir().unwrap();
@@ -254,6 +358,7 @@ mod tests {
                         product: None,
                         previous_connections: None,
                         restore: BTreeMap::new(),
+                        package_sets: super::super::PackageSets::default(),
                         sources: Sources {
                             host: input(),
                             management_host: input(),
@@ -293,6 +398,7 @@ mod tests {
             product: None,
             previous_connections: None,
             restore: BTreeMap::from([(host_id, 3), (manager, 3), (ui, 3)]),
+            package_sets: super::super::PackageSets::default(),
             sources: Sources {
                 host: input(),
                 management_host: input(),
