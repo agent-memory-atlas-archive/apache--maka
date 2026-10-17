@@ -18,6 +18,47 @@
  */
 
 use super::*;
+use maka_host_runtime::application::{host::Client, transport::wire::Reply};
+use maka_plugin_core::operation::{OperationCleanup, OperationOutcome, Receipt};
+
+async fn fixture_call(
+    client: &Client,
+    endpoint: &str,
+    method: &str,
+    input: serde_json::Value,
+) -> serde_json::Value {
+    let mut call = client
+        .call(endpoint, method.into(), input, Default::default())
+        .await
+        .unwrap();
+    call.start().await.unwrap();
+    let value = match call.receive().await.unwrap() {
+        Reply::Finished {
+            result: Ok(value),
+            cleanup: Ok(()),
+        } => value,
+        Reply::Prepared { .. } => {
+            let Reply::Mutation {
+                reply,
+                cleanup: Ok(()),
+            } = call.confirm().await.unwrap()
+            else {
+                panic!("{endpoint}.{method}: mutation did not finish with cleanup");
+            };
+            let Receipt::Recorded {
+                outcome: OperationOutcome::Returned { value },
+                cleanup: OperationCleanup::Confirmed,
+            } = reply.receipt
+            else {
+                panic!("{endpoint}.{method}: original mutation was not recorded and returned");
+            };
+            value
+        }
+        reply => panic!("{endpoint}.{method}: unexpected reply {reply:?}"),
+    };
+    assert!(call.cleanup_confirmed());
+    value
+}
 
 fn graph_tool_response(socket: &mut TcpStream, name: &str, input: serde_json::Value) {
     let input = if matches!(
@@ -65,7 +106,7 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     let namespaces = RootNamespaces::for_current_account().unwrap();
     drop(RootOwner::create(&ui, &namespaces).unwrap());
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(seed_connection(
+    let connection_id = runtime.block_on(seed_connection(
         &ui.join("host"),
         &namespaces,
         &base,
@@ -83,10 +124,83 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
         "en",
     ]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
+    let second_title = "Graph fixture second conversation";
+    runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let discovery =
+                maka_host_runtime::application::host::discovery::read(&ui.join("host")).unwrap();
+            let mut client = Client::connect(&discovery.endpoint, Some(discovery.host_epoch))
+                .await
+                .unwrap();
+            client.catalogue().select("coordinator").unwrap();
+            client.catalogue().select("workhub").unwrap();
+            let directories = fixture_call(
+                &client,
+                "coordinator",
+                "directories",
+                json!({"kind":"roots"}),
+            )
+            .await;
+            assert_eq!(directories["kind"], "roots");
+            let workspace = workspace.canonicalize().unwrap();
+            let directory = directories["roots"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|directory| Path::new(directory["path"].as_str().unwrap()) == workspace)
+                .expect("fixture workspace is published by the real coordinator");
+            let resolved = fixture_call(
+                &client,
+                "workhub",
+                "resolve",
+                json!({"workspace":directory["selection"]}),
+            )
+            .await;
+            assert_eq!(resolved["kind"], "ready", "{resolved}");
+            let first_id = resolved["session"]["id"].as_str().unwrap();
+            let created = fixture_call(
+                &client,
+                "coordinator",
+                "create",
+                json!({
+                    "title":second_title,"automaticTitle":false,"labels":[],
+                    "workspace":{"kind":"session","sessionId":first_id}
+                }),
+            )
+            .await;
+            assert_eq!(created["kind"], "created", "{created}");
+            let second_id = created["session"]["id"].as_str().unwrap();
+            assert_ne!(first_id, second_id);
+            let backend = json!({"kind":"model","connectionId":connection_id,
+            "modelId":"fixture-model","thinkingLevel":null});
+            // Persist the model before either screen can optimistically select it.
+            for session_id in [first_id, second_id] {
+                let selected = fixture_call(
+                    &client,
+                    "coordinator",
+                    "selectBackend",
+                    json!({
+                        "sessionId":session_id,"backend":backend
+                    }),
+                )
+                .await;
+                assert_eq!(selected["kind"], "committed", "{selected}");
+                assert_eq!(selected["session"]["id"], session_id);
+                assert_eq!(selected["session"]["backend"], backend);
+            }
+            client.close().await.unwrap();
+        })
+        .await
+        .expect("public Host graph fixture setup timed out");
+    });
     command(&mut tui, "WorkHub");
-    click(&mut tui, "Set up WorkHub");
-    click(&mut tui, "› Workspace");
-    click(&mut tui, "Create here");
+    let setup_prompt = "Choose a working directory for the coordinator.";
+    tui.wait_until(|s| {
+        !s.contains("Close commands") && (s.contains("Message…") || s.contains(setup_prompt))
+    });
+    if tui.screen.snapshot().unwrap().screen.contains(setup_prompt) {
+        click(&mut tui, "Check result");
+    }
     tui.wait_until(|s| s.contains("Message…") && !s.contains("Restoring draft…"));
     click(&mut tui, "Graph / Swarm");
     click(&mut tui, "Start Swarm");
@@ -186,7 +300,13 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     );
     evidence(&tui, "graph-pinned-history");
     click(&mut tui, "Close");
-    command(&mut tui, "New conversation");
+    tui.send(b"\x0b");
+    tui.wait_for("Close commands");
+    tui.send(b"\x1b[F");
+    tui.send(&[0x7f; 40]);
+    tui.send(second_title.as_bytes());
+    tui.wait_for(&format!("› Conversation · {second_title}"));
+    tui.send(b"\r");
     tui.wait_until(|s| {
         s.contains("What would you like to accomplish?")
             && s.contains("Message…")

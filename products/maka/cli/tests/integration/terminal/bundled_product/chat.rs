@@ -45,7 +45,7 @@ async fn seed_connection(
     namespaces: &RootNamespaces,
     base: &str,
     model_overrides: serde_json::Value,
-) {
+) -> String {
     let owner = Arc::new(RootOwner::create(host, namespaces).unwrap());
     let config = Arc::new(
         maka_config::ConfigurationStore::for_root(owner)
@@ -77,6 +77,7 @@ async fn seed_connection(
     ));
     assert!(matches!(config.set_default_target(serde_json::from_value(json!({"expectedCatalogRevision":config.catalog().await.unwrap().revision,"target":{"connectionId":basis.connection_id,"modelId":"fixture-model"}})).unwrap()).await.unwrap(),CatalogMutationResult::Committed{..}));
     config.shutdown().await.unwrap();
+    basis.connection_id
 }
 
 fn request(socket: &mut TcpStream) -> serde_json::Value {
