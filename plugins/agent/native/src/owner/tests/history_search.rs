@@ -107,21 +107,19 @@ async fn history_search_preserves_empty_batches_and_exact_cursors_with_original_
             managed: false,
             authority_session_id: None,
         };
-        fixture.store.begin_session_import(&plugin, &Source {
+
+        let records = (0..112).map(|i| Record {
+            source_message_id: format!("m{i}"),
+            source_turn_id: format!("turn-{i}"),
+            timestamp: Some(i + 1),
+            content: Content::User { text: if i < 72 { format!("Earlier {i}") } else {
+                format!("中😀 match {i} {}", "界".repeat(300))
+            } },
+        }).collect();
+        fixture.store.import_session(&plugin, &Source {
             adapter: "fixture".into(), session_id: "source".into(),
-        }, &configuration, 1).await.unwrap();
-        for start in (0..112).step_by(8) {
-            let records = (start..start + 8).map(|i| Record {
-                source_message_id: format!("m{i}"),
-                source_turn_id: format!("turn-{i}"),
-                timestamp: Some(i + 1),
-                content: Content::User { text: if i < 72 { format!("Earlier {i}") } else {
-                    format!("中😀 match {i} {}", "界".repeat(300))
-                } },
-            }).collect();
-            fixture.store.append_session_import(&session, start, records).await.unwrap();
-        }
-        fixture.store.publish_session_import(&session, 112).await.unwrap();
+        }, &configuration, records, 1).await.unwrap();
+
         let through = *fixture.store.subscribe_commits().borrow();
         let request = json!({"sessionId":session,"through":through,"after":0,"query":"中😀","caseSensitive":true,"wholeWord":false,"includeInternal":false});
         let mut input = request.clone();
@@ -188,9 +186,7 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
             creator: Namespace::new("source.fixture", StorageScope::Profile).unwrap(),
             fingerprint: "search-source-fields".into(), managed: false, authority_session_id: None,
         };
-        fixture.store.begin_session_import(&owner, &Source {
-            adapter: "fixture".into(), session_id: "original".into(),
-        }, &configuration, 1).await.unwrap();
+
         let body = format!("user-body-hit {}", "中😀\0\n".repeat(1400));
         let thought = format!("thinking-hit {}", "中😀\0\n".repeat(1400));
         let args = json!({"argument-key-hit": "原始😀\"\n".repeat(1400)});
@@ -204,8 +200,10 @@ async fn search_hits_read_the_exact_field_when_history_body_is_absent_or_differe
         ].into_iter().enumerate().map(|(i, content)| Record {
             source_message_id: format!("record-{i}"), source_turn_id: "turn".into(), timestamp: Some(1), content,
         }).collect();
-        fixture.store.append_session_import(&session, 0, records).await.unwrap();
-        fixture.store.publish_session_import(&session, 5).await.unwrap();
+        fixture.store.import_session(&owner, &Source {
+            adapter: "fixture".into(), session_id: "original".into(),
+        }, &configuration, records, 1).await.unwrap();
+
         let through = *fixture.store.subscribe_commits().borrow();
         for include in [false, true] {
             let mut position = json!({"kind":"start"});
@@ -341,9 +339,10 @@ async fn reading_prompt_is_indexed_fenced_and_keeps_original_session_authority()
     let seed = fixture.create("Reading context").await;
     let configuration = fixture.owner.session(&seed).await.unwrap().configuration;
     let session = format!("{}{}", fixture.owner.prefix, Uuid::new_v4().simple());
+
     fixture
         .store
-        .begin_session_import(
+        .import_session(
             &PluginSession {
                 session_id: session.clone(),
                 creator: Namespace::new("prompt.fixture", StorageScope::Profile).unwrap(),
@@ -356,15 +355,6 @@ async fn reading_prompt_is_indexed_fenced_and_keeps_original_session_authority()
                 session_id: "source".into(),
             },
             &configuration,
-            1,
-        )
-        .await
-        .unwrap();
-    fixture
-        .store
-        .append_session_import(
-            &session,
-            0,
             vec![
                 Record {
                     source_message_id: "u1".into(),
@@ -391,14 +381,11 @@ async fn reading_prompt_is_indexed_fenced_and_keeps_original_session_authority()
                     content: Content::User { text: "?".into() },
                 },
             ],
+            1,
         )
         .await
         .unwrap();
-    fixture
-        .store
-        .publish_session_import(&session, 3)
-        .await
-        .unwrap();
+
     let through = *fixture.store.subscribe_commits().borrow();
     let read = json!({"sessionId":session,"through":through,"position":{"kind":"start"},"view":"conversation"});
     let first = loop {

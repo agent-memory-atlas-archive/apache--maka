@@ -20,25 +20,6 @@
 //! Imported conversation is historical evidence, never local execution or usage.
 use serde::{Deserialize, Serialize};
 
-/// Size of a legacy transport append batch, independent of total history size.
-pub const IMPORT_BATCH_BYTES: usize = 6 * 1024 * 1024;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ImportState {
-    Collecting,
-    Published,
-    Abandoned,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ImportProgress {
-    pub state: ImportState,
-    pub records: u64,
-    pub bytes: u64,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Source {

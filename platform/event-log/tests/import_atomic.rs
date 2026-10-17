@@ -17,8 +17,8 @@
  * under the License.
  */
 
+use maka_agent_facts::event::{Fact, LogScope};
 use maka_agent_facts::import::Content;
-use maka_agent_facts::import::ImportState;
 use maka_agent_facts::import::Record;
 use maka_agent_facts::import::Source;
 use maka_capabilities::storage::Namespace;
@@ -77,12 +77,37 @@ async fn atomic_import_publishes_once_in_its_namespace() {
         .await
         .unwrap();
     assert_eq!(
-        log.session_import_progress(&claim.session_id)
+        log.get_session::<Value>(&claim.session_id)
             .await
             .unwrap()
-            .state,
-        ImportState::Published
+            .as_ref(),
+        Some(&first)
     );
+    assert_eq!(
+        log.session_creator(&claim.session_id).await.unwrap(),
+        Some(claim.creator.clone())
+    );
+    let published = log
+        .scoped_prefix(
+            LogScope::Session {
+                id: claim.session_id.clone(),
+            },
+            16,
+            64 * 1024,
+        )
+        .await
+        .unwrap();
+    assert_eq!(published.events.len(), 2);
+    let imported: Vec<_> = published
+        .events
+        .iter()
+        .map(|event| match &event.event.fact {
+            Fact::MessageImported { record, .. } => record.as_ref(),
+            _ => panic!("publication must preserve canonical imported records"),
+        })
+        .collect();
+    assert_eq!(imported, records.iter().collect::<Vec<_>>());
+    let original_digest = published.digest;
     assert!(log.unfinished_invocations(16).await.unwrap().is_empty());
     let through = *log.subscribe_commits().borrow();
     let retry = log
@@ -97,6 +122,20 @@ async fn atomic_import_publishes_once_in_its_namespace() {
         .unwrap();
     assert_eq!(first, retry);
     assert_eq!(*log.subscribe_commits().borrow(), through);
+    assert!(matches!(
+        log.import_session(
+            &PluginSession {
+                fingerprint: "different-origin".into(),
+                ..claim.clone()
+            },
+            &source,
+            &json!({"name":"copy"}),
+            records.clone(),
+            20
+        )
+        .await,
+        Err(StoreError::SessionConflict)
+    ));
     let mut changed = records.clone();
     changed[0] = record(0, "Replaced source".into());
     assert!(matches!(
@@ -150,5 +189,127 @@ async fn atomic_import_publishes_once_in_its_namespace() {
         2
     );
     assert_eq!(*reopened.subscribe_commits().borrow(), through + 4);
+    assert_eq!(
+        reopened
+            .scoped_prefix(
+                LogScope::Session {
+                    id: claim.session_id.clone()
+                },
+                16,
+                64 * 1024
+            )
+            .await
+            .unwrap()
+            .digest,
+        original_digest
+    );
     reopened.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn second_record_sql_failure_rolls_back_the_complete_import_and_allows_retry() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("rollback.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    let inspect = rusqlite::Connection::open(&path).unwrap();
+    inspect
+        .execute_batch(
+            "CREATE TRIGGER fail_second_import_record BEFORE INSERT ON event_log
+        WHEN NEW.kind='message_imported'
+          AND json_extract(NEW.event_json,'$.fact.record.sourceMessageId')='source-1'
+          AND EXISTS(SELECT 1 FROM event_log WHERE kind='message_imported'
+            AND json_extract(event_json,'$.fact.record.sourceMessageId')='source-0')
+        BEGIN SELECT RAISE(ABORT,'atomic second record fault'); END;",
+        )
+        .unwrap();
+    let claim = owner("rollback-owned");
+    let source = Source {
+        adapter: "fixture".into(),
+        session_id: "foreign".into(),
+    };
+    let records = vec![
+        record(0, "first".into()),
+        record(1, "second".into()),
+        record(2, "third".into()),
+    ];
+    let notices = log.subscribe_commits();
+    let through = *notices.borrow();
+    let result = log
+        .import_session(
+            &claim,
+            &source,
+            &json!({"title":"Atomic"}),
+            records.clone(),
+            20,
+        )
+        .await;
+    assert!(
+        matches!(result,Err(StoreError::Sqlx(error)) if error.as_database_error().and_then(|error|error.code()).as_deref()==Some("1811"))
+    );
+    assert_eq!(*notices.borrow(), through);
+    assert!(!notices.has_changed().unwrap());
+    assert!(
+        log.get_session::<Value>(&claim.session_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        log.session_creator(&claim.session_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        log.imported_sessions::<Value>("rollback-", None, 16)
+            .await
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    assert!(log.prefix(16, 64 * 1024).await.unwrap().events.is_empty());
+    inspect
+        .execute_batch("DROP TRIGGER fail_second_import_record")
+        .unwrap();
+    drop(inspect);
+    let accepted = log
+        .import_session(
+            &claim,
+            &source,
+            &json!({"title":"Atomic"}),
+            records.clone(),
+            20,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        log.imported_sessions::<Value>("rollback-", None, 16)
+            .await
+            .unwrap()
+            .0,
+        vec![accepted.clone()]
+    );
+    let published = log.prefix(16, 64 * 1024).await.unwrap();
+    let imported: Vec<_> = published
+        .events
+        .iter()
+        .map(|event| match &event.event.fact {
+            Fact::MessageImported { record, .. } => record.as_ref(),
+            _ => panic!("retry must publish only the complete ordered import"),
+        })
+        .collect();
+    assert_eq!(imported, records.iter().collect::<Vec<_>>());
+    let digest = published.digest;
+    log.close().await.unwrap();
+    let log = EventLog::open(&path).await.unwrap();
+    let notices = log.subscribe_commits();
+    assert_eq!(
+        log.import_session(&claim, &source, &json!({"title":"Atomic"}), records, 99)
+            .await
+            .unwrap(),
+        accepted
+    );
+    assert!(!notices.has_changed().unwrap());
+    assert_eq!(log.prefix(16, 64 * 1024).await.unwrap().digest, digest);
+    log.close().await.unwrap();
 }

@@ -726,17 +726,7 @@ async fn oversized_tool_metadata_returns_accepted_window_without_consuming_its_b
         managed: false,
         authority_session_id: None,
     };
-    log.begin_session_import(
-        &owner,
-        &Source {
-            adapter: "fixture".into(),
-            session_id: "foreign".into(),
-        },
-        &serde_json::json!({}),
-        1,
-    )
-    .await
-    .unwrap();
+
     let records = [
         Content::User {
             text: "accepted prefix".into(),
@@ -761,10 +751,19 @@ async fn oversized_tool_metadata_returns_accepted_window_without_consuming_its_b
         content,
     })
     .collect::<Vec<_>>();
-    log.append_session_import("budget", 0, records)
-        .await
-        .unwrap();
-    log.publish_session_import("budget", 3).await.unwrap();
+    log.import_session(
+        &owner,
+        &Source {
+            adapter: "fixture".into(),
+            session_id: "foreign".into(),
+        },
+        &serde_json::json!({}),
+        records,
+        1,
+    )
+    .await
+    .unwrap();
+
     let through = *log.subscribe_commits().borrow();
     assert!(log.prepare_transcript("budget", through, 32).await.unwrap());
     for reverse in [false, true] {
@@ -839,17 +838,7 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
         managed: false,
         authority_session_id: None,
     };
-    log.begin_session_import(
-        &owner,
-        &Source {
-            adapter: "fixture".into(),
-            session_id: "foreign".into(),
-        },
-        &serde_json::json!({}),
-        1,
-    )
-    .await
-    .unwrap();
+
     let mut records = Vec::new();
     let mut expected = Vec::new();
     for index in 0..40 {
@@ -877,13 +866,19 @@ async fn bounded_history_windows_cover_sparse_rows_both_directions_and_validate_
             content,
         });
     }
-    let count = records.len() as u64;
-    for (batch, records) in records.chunks(8).enumerate() {
-        log.append_session_import("window", (batch * 8) as u64, records.to_vec())
-            .await
-            .unwrap();
-    }
-    log.publish_session_import("window", count).await.unwrap();
+    log.import_session(
+        &owner,
+        &Source {
+            adapter: "fixture".into(),
+            session_id: "foreign".into(),
+        },
+        &serde_json::json!({}),
+        records,
+        1,
+    )
+    .await
+    .unwrap();
+
     let through = *log.subscribe_commits().borrow();
     while !log.prepare_transcript("window", through, 32).await.unwrap() {}
     for position in [Position::Start, Position::Tail] {
@@ -1592,17 +1587,7 @@ async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_read
         managed: false,
         authority_session_id: None,
     };
-    log.begin_session_import(
-        &owner,
-        &Source {
-            adapter: "fixture".into(),
-            session_id: "foreign".into(),
-        },
-        &serde_json::json!({}),
-        1,
-    )
-    .await
-    .unwrap();
+
     let thinking = "reason 中😀\0\r\n".repeat(101);
     let body = "answer é🦀\0tail".repeat(13);
     let records = [
@@ -1639,10 +1624,19 @@ async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_read
         content,
     })
     .collect();
-    log.append_session_import("thinking", 0, records)
-        .await
-        .unwrap();
-    log.publish_session_import("thinking", 5).await.unwrap();
+    log.import_session(
+        &owner,
+        &Source {
+            adapter: "fixture".into(),
+            session_id: "foreign".into(),
+        },
+        &serde_json::json!({}),
+        records,
+        1,
+    )
+    .await
+    .unwrap();
+
     let through = *log.subscribe_commits().borrow();
     while !log
         .prepare_transcript("thinking", through, 32)

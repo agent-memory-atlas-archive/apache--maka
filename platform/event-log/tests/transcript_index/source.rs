@@ -44,17 +44,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
         managed: false,
         authority_session_id: None,
     };
-    log.begin_session_import(
-        &owner,
-        &Source {
-            adapter: "fixture".into(),
-            session_id: "foreign".into(),
-        },
-        &serde_json::json!({}),
-        1,
-    )
-    .await
-    .unwrap();
+
     let records = [
         Content::User {
             text: "Inspect tools".into(),
@@ -94,10 +84,19 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
         content,
     })
     .collect::<Vec<_>>();
-    log.append_session_import("source", 0, records)
-        .await
-        .unwrap();
-    log.publish_session_import("source", 6).await.unwrap();
+    log.import_session(
+        &owner,
+        &Source {
+            adapter: "fixture".into(),
+            session_id: "foreign".into(),
+        },
+        &serde_json::json!({}),
+        records,
+        1,
+    )
+    .await
+    .unwrap();
+
     let through = *log.subscribe_commits().borrow();
     while !log.prepare_transcript("source", through, 32).await.unwrap() {}
     let Page::Ready { chunks, .. } = log
@@ -541,20 +540,14 @@ async fn structured_values_page_literal_text_and_exact_json_without_aliasing_key
         managed: false,
         authority_session_id: None,
     };
-    log.begin_session_import(
+
+    log.import_session(
         &owner,
         &Source {
             adapter: "fixture".into(),
             session_id: "foreign".into(),
         },
         &serde_json::json!({}),
-        1,
-    )
-    .await
-    .unwrap();
-    log.append_session_import(
-        "structured",
-        0,
         [
             Content::User {
                 text: "Inspect structured tool fields".into(),
@@ -579,10 +572,11 @@ async fn structured_values_page_literal_text_and_exact_json_without_aliasing_key
             content,
         })
         .collect(),
+        1,
     )
     .await
     .unwrap();
-    log.publish_session_import("structured", 3).await.unwrap();
+
     let through = *log.subscribe_commits().borrow();
     while !log
         .prepare_transcript("structured", through, 32)

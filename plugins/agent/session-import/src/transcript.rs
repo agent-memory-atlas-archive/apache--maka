@@ -25,10 +25,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Execution(#[from] maka_capabilities::authorization::CommandError),
-    #[error("import operation conflicts with its saved intent")]
-    Conflict,
-    #[error(transparent)]
     Storage(#[from] maka_capabilities::storage::StoreError),
     #[error(transparent)]
     Remote(#[from] maka_agent_ports::remote::Error),

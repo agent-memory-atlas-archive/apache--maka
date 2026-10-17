@@ -9784,7 +9784,6 @@ dependencies = [
 name = "maka-session-import"
 version = "0.2.0"
 dependencies = [
- "base64 0.22.1",
  "chrono",
  "dunce",
  "futures-util",

@@ -38,22 +38,15 @@ async fn imported(f: &Fixture, title: &str, prefix: &str) -> String {
         managed: false,
         authority_session_id: None,
     };
+
     f.store
-        .begin_session_import(
+        .import_session(
             &plugin,
             &Source {
                 adapter: "fixture".into(),
                 session_id: "original".into(),
             },
             &configuration,
-            1,
-        )
-        .await
-        .unwrap();
-    f.store
-        .append_session_import(
-            &session,
-            0,
             vec![
                 Record {
                     source_message_id: "question".into(),
@@ -82,10 +75,11 @@ async fn imported(f: &Fixture, title: &str, prefix: &str) -> String {
                     },
                 },
             ],
+            1,
         )
         .await
         .unwrap();
-    f.store.publish_session_import(&session, 3).await.unwrap();
+
     session
 }
 #[tokio::test]

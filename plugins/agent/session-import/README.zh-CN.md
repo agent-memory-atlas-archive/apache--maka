@@ -21,6 +21,6 @@
 
 [English](README.md)
 
-发现并转换 Claude、Codex 和 OpenCode 的外部会话格式。`Transcript` 是统一的导入表示，`source` 与 `catalog` 负责发现。导入通过所属服务产生会话数据，不执行导入文本中的指令，也不替代 Host 的规范事件写入方。
+发现并转换 Claude、Codex 和 OpenCode 的外部会话格式。`Transcript` 是统一的导入表示，`source` 与 `catalog` 负责发现。原生 Agent 服务验证所选来源，在同一事务中写入完整记录并发布新 Session；重试核对原始规范记录。导入不执行文本中的指令，也不替代 Host 的规范事件写入方。
 
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

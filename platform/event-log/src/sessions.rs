@@ -27,7 +27,6 @@ pub(crate) mod copy;
 pub use copy::{AbandonRevision, SessionCopy, SessionCopyResult};
 mod execution;
 mod import;
-pub use import::{ImportProgress, ImportState};
 mod material;
 pub use material::MaterialCollection;
 mod metadata;

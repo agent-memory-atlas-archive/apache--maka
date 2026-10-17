@@ -40,7 +40,6 @@ impl From<maka_session_import::Error> for Failure {
     fn from(error: maka_session_import::Error) -> Self {
         use maka_session_import::Error;
         match error {
-            Error::Conflict => Self::Changed,
             Error::Limit { .. }
             | Error::Database(maka_capabilities::filesystem::database::Error::Limit(_)) => {
                 Self::Limit

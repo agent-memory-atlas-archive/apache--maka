@@ -1,11 +1,11 @@
 {
   "inputs": {
-    "Cargo.lock": "7854bd37b3282ccb03c3adb0645a7cef172465446b9351904f4e4320dd33ece4",
+    "Cargo.lock": "8f8923a3aa2be0570ababb45352f45db48cc27b131ca8876fe3f1590979396c0",
     "Cargo.toml": "14267cde6fe41af5ecb119508050e0d32044b91f9dbb41544681747eae35e9be",
     "package-lock.json": "a5af15aca21fabe0e1bdd48784167df4dc81cee17777d54861dcbd641168a4eb",
     "package.json": "38baf3beeb5876849ca16e31868d59bfaee769f260c7555b4a8a1847b92e28a1",
     "packages/plugin-sdk/src/configurations.ts": "20e587b47e84a31fc794176f85e7ac71c1b8b7f88a46947f9403011c307fff1e",
-    "packages/plugin-sdk/src/contracts.ts": "52ab5975952e06a5408291540d13a86253779354b484889e4c4062d539080010",
+    "packages/plugin-sdk/src/contracts.ts": "8625b7090fdbc5984a0b1efae35d482d8ed3e286e6106621c5a563fde0951e5e",
     "packages/plugin-sdk/src/generated/runtime.ts": "504c951103328e8eabdab89a550baf0be10439bc6db6f7ab1408f320e45a73cb",
     "packages/plugin-sdk/src/index.ts": "27b68be5a29d1857f7fe361c8c678e77ba21413c79ec3870c1ce30d0faf9323f",
     "packages/plugin-sdk/src/native.ts": "d29328923ca55874fe1a0fc37985097196d805a09b56043c1a3379fd46bd5a20",
@@ -191,7 +191,7 @@
     "plugins/agent/session-details/locale.ts": "8b544ffd918ef2ba5eb11022e9dbf046d55c99ee173ddfbdcb178640623962f1",
     "plugins/agent/session-details/package.ts": "2dca0c173a77d051c34ee67375f406ea519c4eeca3be0d3062e836275d6065df",
     "plugins/agent/session-details/tui.ts": "47e11ee0a4686fdfbd10da5d047aaf433d60019cb1fd47c49a8ffeef6728bf8e",
-    "plugins/agent/session-import/Cargo.toml": "f5673e702896432db33fe43ff6c77b6e07e0015a3ab4afa3cac2807b55515cea",
+    "plugins/agent/session-import/Cargo.toml": "eb62acfeb40912e9090b8fb440151d166ec3c4018563ead77c8b548515b591e6",
     "plugins/agent/session-recap/Cargo.toml": "5416a07f862ca4b9e347e1aa0009887c98526739d9a179db8cce21adb025c378",
     "plugins/agent/session-title/Cargo.toml": "16ab72c30e4df4b4c41e5c43b1c51c79e620d3d9f54faf2cb8d4780f3d192728",
     "plugins/agent/studio-gateway/package.ts": "996776043cc0c2db9fb8991e5a5f2e640d63604e3cf0ff2abf7a263b26bfb48c",

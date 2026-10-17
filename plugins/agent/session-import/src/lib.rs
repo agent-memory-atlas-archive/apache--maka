@@ -23,10 +23,8 @@ pub mod access;
 pub mod catalog;
 pub mod claude;
 pub mod codex;
-pub mod intent;
 mod jsonl;
 pub mod opencode;
-pub mod remote;
 pub mod source;
 mod transcript;
 

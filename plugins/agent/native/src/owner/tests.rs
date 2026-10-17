@@ -1681,19 +1681,7 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
         managed: false,
         authority_session_id: None,
     };
-    fixture
-        .store
-        .begin_session_import(
-            &plugin,
-            &Source {
-                adapter: "fixture".into(),
-                session_id: "foreign".into(),
-            },
-            &configuration,
-            1,
-        )
-        .await
-        .unwrap();
+
     let input = json!({"count":42,"flag":false,"text":"中😀\0".repeat(2000)});
     let records = [
         Content::User {
@@ -1721,14 +1709,19 @@ async fn tool_source_uses_original_agent_grant_and_frozen_canonical_fields() {
     .collect();
     fixture
         .store
-        .append_session_import(&session, 0, records)
+        .import_session(
+            &plugin,
+            &Source {
+                adapter: "fixture".into(),
+                session_id: "foreign".into(),
+            },
+            &configuration,
+            records,
+            1,
+        )
         .await
         .unwrap();
-    fixture
-        .store
-        .publish_session_import(&session, 3)
-        .await
-        .unwrap();
+
     let fence = *fixture.store.subscribe_commits().borrow();
     let history = loop {
         let value = fixture

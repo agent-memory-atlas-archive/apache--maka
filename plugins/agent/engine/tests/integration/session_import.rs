@@ -30,7 +30,7 @@ use maka_agent_facts::import::Source;
 use maka_capabilities::storage::Namespace;
 use maka_event_log::{
     EventLog, StoreError,
-    sessions::{ImportState, PluginSession, SessionCopy, SessionCopyResult},
+    sessions::{PluginSession, SessionCopy, SessionCopyResult},
 };
 use maka_plugin_core::scope::Scope;
 use serde_json::{Value, json};
@@ -74,6 +74,7 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
         },
     );
     let records = vec![
+        first,
         record(
             "user",
             Content::User {
@@ -105,29 +106,16 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
             },
         ),
     ];
-    log.begin_session_import(&owner, &source(), &json!({"name":"Imported"}), 1)
+    let accepted = log
+        .import_session(
+            &owner,
+            &source(),
+            &json!({"name":"Imported"}),
+            records.clone(),
+            1,
+        )
         .await
         .unwrap();
-    log.append_session_import("imported", 0, vec![first.clone()])
-        .await
-        .unwrap();
-    assert!(
-        log.get_session::<Value>("imported")
-            .await
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        log.create_session("imported", &owner.fingerprint, &json!({}), 1)
-            .await
-            .is_err()
-    );
-    assert!(log.retain_session("imported").await.is_err());
-    assert!(
-        log.append_session_import("imported", 2, records.clone())
-            .await
-            .is_err()
-    );
     let prefix = log
         .scoped_prefix(
             LogScope::Session {
@@ -138,55 +126,51 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
         )
         .await
         .unwrap();
+    assert_eq!(prefix.events.len(), 5);
     assert!(EventWrite::plain(prefix.events[0].event.clone()).is_err());
-    assert!(
-        maka_agent_engine::project_model_history(&prefix, "imported")
-            .unwrap()
-            .is_empty()
-    );
     assert!(log.unfinished_invocations(100).await.unwrap().is_empty());
+    let accepted_digest = prefix.digest;
+    let accepted_through = prefix.high_water;
     log.close().await.unwrap();
 
     let log = EventLog::open(&path).await.unwrap();
-    assert_eq!(
-        log.begin_session_import(&owner, &source(), &json!({"name":"Imported"}), 99)
-            .await
-            .unwrap()
-            .records,
-        1
-    );
-    assert_eq!(
-        log.append_session_import("imported", 0, vec![first.clone()])
-            .await
-            .unwrap()
-            .records,
-        1
-    );
-    let changed = record(
+    let commits = log.subscribe_commits();
+    let retry = log
+        .import_session(
+            &owner,
+            &source(),
+            &json!({"name":"Imported"}),
+            records.clone(),
+            99,
+        )
+        .await
+        .unwrap();
+    assert_eq!(retry, accepted);
+    assert!(!commits.has_changed().unwrap());
+    let mut changed = records.clone();
+    changed[0] = record(
         "leading",
         Content::User {
             text: "changed".into(),
         },
     );
     assert!(matches!(
-        log.append_session_import("imported", 0, vec![changed])
+        log.import_session(&owner, &source(), &json!({"name":"Imported"}), changed, 99)
             .await,
         Err(StoreError::EventConflict)
     ));
-    log.append_session_import("imported", 1, records)
+    let replayed = log
+        .scoped_prefix(
+            LogScope::Session {
+                id: "imported".into(),
+            },
+            100,
+            1024 * 1024,
+        )
         .await
         .unwrap();
-    assert!(log.publish_session_import("imported", 3).await.is_err());
-    let receipt = log.publish_session_import("imported", 5).await.unwrap();
-    assert_eq!(receipt.state, ImportState::Published);
-    assert_eq!(
-        log.publish_session_import("imported", 5).await.unwrap(),
-        receipt
-    );
-    assert_eq!(
-        log.abandon_session_import("imported").await.unwrap(),
-        receipt
-    );
+    assert_eq!(replayed.digest, accepted_digest);
+    assert_eq!(replayed.high_water, accepted_through);
     let session = log.get_session::<Value>("imported").await.unwrap().unwrap();
     assert!(session.execution.is_none());
     assert_eq!(
@@ -346,92 +330,70 @@ async fn import_is_retryable_history_not_an_execution_and_survives_copy_and_rest
 }
 
 #[tokio::test]
-async fn nonconversation_import_cannot_publish_and_abandon_releases_material() {
+async fn atomic_import_refuses_notes_and_retiring_parent_authority_without_publication() {
     let directory = tempfile::tempdir().unwrap();
-    let log = EventLog::open(&directory.path().join("abandon.sqlite"))
+    let log = EventLog::open(&directory.path().join("refused-import.sqlite"))
         .await
         .unwrap();
     log.create_session("parent", "parent", &json!({}), 1)
         .await
         .unwrap();
-    let mut child = owner("dependent");
-    child.authority_session_id = Some("parent".into());
-    log.begin_session_import(&child, &source(), &json!({}), 1)
-        .await
-        .unwrap();
-    log.append_session_import(
-        "dependent",
-        0,
-        vec![record(
-            "user",
-            Content::User {
-                text: "historical".into(),
-            },
-        )],
-    )
-    .await
-    .unwrap();
     let parent = log.get_session::<Value>("parent").await.unwrap().unwrap();
     log.begin_session_removal("parent", parent.revision)
         .await
         .unwrap();
-    assert!(log.publish_session_import("dependent", 1).await.is_err());
-    assert_eq!(
-        log.session_import_progress("dependent")
-            .await
-            .unwrap()
-            .state,
-        ImportState::Collecting
-    );
-    log.abandon_session_import("dependent").await.unwrap();
-    log.begin_session_import(&owner("notes"), &source(), &json!({}), 1)
-        .await
-        .unwrap();
-    assert!(
-        log.append_session_import(
-            "notes",
-            0,
+    let mut child = owner("dependent");
+    child.authority_session_id = Some("parent".into());
+    assert!(matches!(
+        log.import_session(
+            &child,
+            &source(),
+            &json!({}),
             vec![record(
-                "oversize",
+                "user",
                 Content::User {
-                    text: "x".repeat(6 * 1024 * 1024),
+                    text: "historical".into()
                 }
-            )]
+            )],
+            2
+        )
+        .await,
+        Err(StoreError::SessionRetired)
+    ));
+    assert!(
+        log.import_session(
+            &owner("notes"),
+            &source(),
+            &json!({}),
+            vec![record(
+                "note",
+                Content::Note {
+                    text: "not a conversation".into()
+                }
+            )],
+            2
         )
         .await
         .is_err()
     );
-    assert_eq!(
-        log.session_import_progress("notes").await.unwrap().records,
-        0
-    );
-    log.append_session_import(
-        "notes",
-        0,
-        vec![record(
-            "note",
-            Content::Note {
-                text: "not a conversation".into(),
-            },
-        )],
-    )
-    .await
-    .unwrap();
-    assert!(log.publish_session_import("notes", 1).await.is_err());
-    assert_eq!(
-        log.abandon_session_import("notes").await.unwrap().state,
-        ImportState::Abandoned
-    );
-    assert!(log.publish_session_import("notes", 1).await.is_err());
-    while log.collect_session_material(None).await.unwrap()
-        != maka_event_log::sessions::MaterialCollection::Done
-    {}
-    assert!(matches!(
-        log.scoped_prefix(LogScope::Session { id: "notes".into() }, 100, 1024 * 1024)
-            .await,
-        Err(StoreError::MaterialCollected)
-    ));
-    assert!(log.get_session::<Value>("notes").await.unwrap().is_none());
+    for session in ["dependent", "notes"] {
+        assert!(log.get_session::<Value>(session).await.unwrap().is_none());
+        assert!(log.session_creator(session).await.unwrap().is_none());
+        assert!(
+            log.imported_sessions::<Value>(session, None, 16)
+                .await
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        assert!(
+            log.scoped_prefix(LogScope::Session { id: session.into() }, 100, 1024 * 1024)
+                .await
+                .unwrap()
+                .events
+                .is_empty()
+        );
+    }
     log.close().await.unwrap();
 }
 
@@ -446,12 +408,10 @@ async fn imported_conversation_compacts_before_its_first_native_turn() {
             .await
             .unwrap(),
     );
-    log.begin_session_import(&owner("session"), &source(), &json!({}), 1)
-        .await
-        .unwrap();
-    log.append_session_import(
-        "session",
-        0,
+    log.import_session(
+        &owner("session"),
+        &source(),
+        &json!({}),
         vec![
             record(
                 "user",
@@ -477,10 +437,10 @@ async fn imported_conversation_compacts_before_its_first_native_turn() {
                 },
             ),
         ],
+        1,
     )
     .await
     .unwrap();
-    log.publish_session_import("session", 4).await.unwrap();
     let prefix = log
         .scoped_prefix(
             LogScope::Session {
@@ -565,9 +525,32 @@ async fn large_import_fits_summary_recovers_overflow_and_continues_after_restart
     log.import_session(&owner("session"), &source(), &json!({}), records, 1)
         .await
         .unwrap();
-    let progress = log.session_import_progress("session").await.unwrap();
-    assert_eq!(progress.records, 7601);
-    assert!(progress.bytes > 9 * 1024 * 1024);
+    let imported = log
+        .scoped_prefix(
+            LogScope::Session {
+                id: "session".into(),
+            },
+            8000,
+            32 * 1024 * 1024,
+        )
+        .await
+        .unwrap();
+    assert_eq!(imported.events.len(), 7601);
+    assert!(
+        imported
+            .events
+            .iter()
+            .all(|event| matches!(event.event.fact, Fact::MessageImported { .. }))
+    );
+    let imported_bytes = serde_json::to_vec(&imported.events).unwrap();
+    assert!(imported_bytes.len() > 9 * 1024 * 1024);
+    let imported_digest = maka_agent_facts::artifact::content_digest(&imported_bytes);
+    assert!(
+        matches!(&imported.events.last().unwrap().event.fact,Fact::MessageImported {record,..}
+        if matches!(&record.content,Content::User {text} if text == "Historical update 7599: keep this work available."))
+    );
+    drop(imported_bytes);
+    drop(imported);
     assert!(log.unfinished_invocations(16).await.unwrap().is_empty());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -615,10 +598,6 @@ async fn large_import_fits_summary_recovers_overflow_and_continues_after_restart
         .baseline
         .unwrap()
         .event_id;
-    assert_eq!(
-        log.session_import_progress("session").await.unwrap(),
-        progress
-    );
     let original = log
         .scoped_prefix(
             LogScope::Session {
@@ -632,6 +611,16 @@ async fn large_import_fits_summary_recovers_overflow_and_continues_after_restart
     assert!(
         matches!(&original.events[0].event.fact, Fact::MessageImported { record, .. }
         if matches!(&record.content, Content::User { text } if text.len() == large_bytes && text.ends_with("original-tail-marker")))
+    );
+    let imported: Vec<_> = original
+        .events
+        .iter()
+        .filter(|event| matches!(event.event.fact, Fact::MessageImported { .. }))
+        .collect();
+    assert_eq!(imported.len(), 7601);
+    assert_eq!(
+        maka_agent_facts::artifact::content_digest(&serde_json::to_vec(&imported).unwrap()),
+        imported_digest
     );
     drop(original);
     drop(worker);
@@ -674,10 +663,27 @@ async fn large_import_fits_summary_recovers_overflow_and_continues_after_restart
             .event_id,
         checkpoint
     );
+    let original = log
+        .scoped_prefix(
+            LogScope::Session {
+                id: "session".into(),
+            },
+            8000,
+            32 * 1024 * 1024,
+        )
+        .await
+        .unwrap();
+    let imported: Vec<_> = original
+        .events
+        .iter()
+        .filter(|event| matches!(event.event.fact, Fact::MessageImported { .. }))
+        .collect();
+    assert_eq!(imported.len(), 7601);
     assert_eq!(
-        log.session_import_progress("session").await.unwrap(),
-        progress
+        maka_agent_facts::artifact::content_digest(&serde_json::to_vec(&imported).unwrap()),
+        imported_digest
     );
+    drop(original);
     drop(worker);
     Arc::try_unwrap(log).ok().unwrap().close().await.unwrap();
 }

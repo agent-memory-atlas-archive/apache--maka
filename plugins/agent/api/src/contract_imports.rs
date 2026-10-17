@@ -162,7 +162,7 @@ pub enum ImportsRead {
         entry: ImportEntryRef,
         #[schemars(with = "maka_plugin_core::wire_schema::RequiredNullable<String>")]
         digest: Option<String>,
-        #[schemars(range(max = 7499))]
+        #[schemars(range(max = 9_007_199_254_740_991u64))]
         after: u64,
     },
     Copies {

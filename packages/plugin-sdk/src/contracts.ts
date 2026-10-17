@@ -14791,7 +14791,7 @@ export const contracts = {
                     type: 'integer',
                     format: 'uint64',
                     minimum: 0,
-                    maximum: 7499,
+                    maximum: 9007199254740991,
                   },
                   kind: {
                     type: 'string',
