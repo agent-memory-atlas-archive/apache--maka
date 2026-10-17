@@ -557,3 +557,94 @@ async fn historical_binary_bundle_export_round_trips_and_cancels_with_cleanup() 
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn immutable_document_resource_over_one_mib_roundtrips_through_validated_pages() {
+    async fn read_all(manager: &Manager, source: &DeploymentRef) -> String {
+        let contract = deployment_manager_contract();
+        let Interface::Service { methods } = contract.interface else {
+            unreachable!()
+        };
+        let method = &methods["readDocument"];
+        let input_validator = jsonschema::validator_for(&method.input).unwrap();
+        let output_validator = jsonschema::validator_for(&method.output).unwrap();
+        let mut offset = 0;
+        let mut text = String::new();
+        let mut read_beyond_one_mib = false;
+        loop {
+            let input = json!({"source":source,"offset":offset});
+            input_validator.validate(&input).unwrap();
+            let context = context(Attachments::new());
+            let scope = context.scope.clone();
+            let value = manager
+                .call("readDocument".into(), input, context)
+                .await
+                .unwrap();
+            scope.finish().await.unwrap();
+            assert!(scope.resources.is_idle());
+            output_validator.validate(&value).unwrap();
+            let chunk: DeploymentDocumentChunk = serde_json::from_value(value).unwrap();
+            assert_eq!(&chunk.source, source);
+            assert_eq!(chunk.offset, offset);
+            assert!(chunk.text.len() <= 65536);
+            read_beyond_one_mib |= chunk.offset > 1024 * 1024;
+            text.push_str(&chunk.text);
+            if let Some(next) = chunk.next {
+                assert_eq!(next, text.len());
+                assert!(next > offset);
+                offset = next;
+            } else {
+                assert_eq!(text.len(), chunk.total_bytes);
+                break;
+            }
+        }
+        assert!(
+            read_beyond_one_mib,
+            "public continuation offsets must cross the old document limit"
+        );
+        text
+    }
+
+    let fixture = Fixture::new().await;
+    let selected = package(vec![0, 255, 128]);
+    let mut large_input = input(&selected);
+    let padding = format!("界{}\n🙂尾", "x".repeat(1024 * 1024 + 128 * 1024));
+    large_input
+        .instances
+        .get_mut("payload")
+        .unwrap()
+        .configuration
+        .values
+        .insert("padding".into(), json!(padding));
+    let document = DeploymentDocument {
+        input: large_input,
+        remote_exports: vec![],
+        packages: vec![selected.application_ref()],
+    };
+    assert!(serde_json::to_vec(&document).unwrap().len() > 1024 * 1024);
+    let replaced = replace(&fixture.manager, 1, &document, Some(bundles(&[&selected]))).await;
+    assert_eq!(replaced["status"], "committed", "{replaced}");
+    let source: DeploymentRef = serde_json::from_value(replaced["value"].clone()).unwrap();
+    assert_eq!(source.revision, 2);
+    let first = read_all(&fixture.manager, &source).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&first).unwrap(),
+        serde_json::to_value(&document).unwrap()
+    );
+
+    // Advancing the head cannot reinterpret any old-source continuation.
+    let smaller = DeploymentDocument {
+        input: fixture.input.clone(),
+        remote_exports: vec![],
+        packages: vec![],
+    };
+    let newer = replace(&fixture.manager, 2, &smaller, None).await;
+    assert_eq!(newer["status"], "committed", "{newer}");
+    assert_eq!(newer["value"]["revision"], 3);
+    let repeated = read_all(&fixture.manager, &source).await;
+    assert_eq!(repeated, first);
+    assert_eq!(
+        serde_json::from_str::<Value>(&repeated).unwrap(),
+        serde_json::to_value(&document).unwrap()
+    );
+}

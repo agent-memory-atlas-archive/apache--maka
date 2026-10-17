@@ -193,3 +193,60 @@ async fn independent_public_agent_client_reconnects_history_watch_and_pending_in
         assert!(fixture.model_requests.try_recv().is_err(), "only the original question and its continuation reached the model");
     }).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_public_agent_client_reads_git_changes_after_reconnect() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let mut fixture = Fixture::open().await;
+        let session = &fixture.session;
+        assert_eq!(
+            support::query(&fixture.native, "agent", "gitStatus", json!({"sessionId":session})).await,
+            Value::Null,
+        );
+        // Git only authors fixture data; queries below cross the public Host socket.
+        for args in [
+            vec!["init", "--quiet", "--initial-branch=main"],
+            vec!["config", "core.autocrlf", "false"],
+        ] {
+            let output = std::process::Command::new("git")
+                .arg("-C").arg(&fixture.workspace).args(args)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", fixture.workspace.join("absent-global-config"))
+                .output().unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        }
+        std::fs::write(fixture.workspace.join(".git/info/exclude"), "*\n!tracked.txt\n").unwrap();
+        std::fs::write(fixture.workspace.join("tracked.txt"), "staged\n").unwrap();
+        let output = std::process::Command::new("git")
+            .arg("-C").arg(&fixture.workspace).args(["add", "--", "tracked.txt"])
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", fixture.workspace.join("absent-global-config"))
+            .output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let before = std::fs::read(fixture.workspace.join(".git/index")).unwrap();
+        let status = support::query(&fixture.native, "agent", "gitStatus", json!({"sessionId":session})).await;
+        assert_eq!(status, json!({
+            "head":null,
+            "entries":[{"area":"staged","path":{"bytesBase64":"dHJhY2tlZC50eHQ="},"kind":"added"}],
+            "truncated":false,
+        }));
+
+        fixture.native.close().await.unwrap();
+        fixture.client.close().await.unwrap();
+        std::fs::write(fixture.workspace.join("tracked.txt"), "edited while detached\n").unwrap();
+        let mut client = Client::connect(&fixture.endpoint, Some(fixture.epoch)).await.unwrap();
+        let diff = support::query(&client, "agent", "gitDiff", json!({
+            "sessionId":session,"area":"worktree","path":{"bytesBase64":"dHJhY2tlZC50eHQ="},
+        })).await;
+        assert_eq!(diff["kind"], "text");
+        let changed: Vec<_> = diff["patch"].as_str().unwrap().lines().filter(|line| {
+            (line.starts_with('+') && !line.starts_with("+++"))
+                || (line.starts_with('-') && !line.starts_with("---"))
+        }).collect();
+        assert_eq!(changed, ["-staged", "+edited while detached"]);
+        assert_eq!(std::fs::read(fixture.workspace.join(".git/index")).unwrap(), before);
+        assert!(fixture.model_requests.try_recv().is_err(), "Git reads do not start a model invocation");
+        client.quit().await.unwrap();
+        fixture.server.await.unwrap().unwrap();
+    }).await.unwrap();
+}

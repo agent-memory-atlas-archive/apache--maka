@@ -270,6 +270,18 @@ impl Handler for Agent {
                     let operation = context.operation().ok_or("agent_mutation_required")?;
                     encode(owner.create(input, operation, context.scope()).await?)
                 }
+                "gitStatus" => {
+                    let result = encode(owner.git_status(decode(input)?, context.scope()).await?)?;
+                    maka_plugin_core::json::check_delivery(&result, 512 * 1024)
+                        .map_err(|_| "agent_git_output_unavailable")?;
+                    Ok(result)
+                }
+                "gitDiff" => {
+                    let result = encode(owner.git_diff(decode(input)?, context.scope()).await?)?;
+                    maka_plugin_core::json::check_delivery(&result, 512 * 1024)
+                        .map_err(|_| "agent_git_output_unavailable")?;
+                    Ok(result)
+                }
                 "snapshotPatch" => {
                     context.operation().ok_or("agent_mutation_required")?;
                     encode(

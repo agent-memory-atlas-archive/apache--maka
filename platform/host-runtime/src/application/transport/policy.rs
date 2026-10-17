@@ -235,7 +235,7 @@ pub(super) fn check_grant(contract: &Contract, grant: &Grant) -> Result<()> {
     };
     if contract.transport != Transport::Remote
         || grant.methods.is_empty()
-        || grant.methods.len() > 64
+        || grant.methods.len() > super::MAX_GRANTED_METHODS
         || grant.methods.iter().any(|name| !methods.contains_key(name))
     {
         return Err("invalid Application endpoint grant".into());
@@ -262,7 +262,7 @@ impl NativeGrant {
             || self.export.is_empty()
             || self.export.len() > 256
             || self.methods.is_empty()
-            || self.methods.len() > 64
+            || self.methods.len() > super::MAX_GRANTED_METHODS
             || self
                 .methods
                 .iter()

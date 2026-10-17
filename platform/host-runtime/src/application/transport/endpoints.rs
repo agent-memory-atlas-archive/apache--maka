@@ -43,7 +43,7 @@ impl HostEndpoint {
             || self.import.is_empty()
             || self.import.len() > 256
             || self.grant.methods.is_empty()
-            || self.grant.methods.len() > 64
+            || self.grant.methods.len() > super::MAX_GRANTED_METHODS
             || self
                 .grant
                 .methods
@@ -196,6 +196,52 @@ impl Endpoints {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_method_grants_share_capacity_without_admitting_unknown_methods() {
+        use super::super::{NativeGrant, policy::check_grant};
+        use maka_plugin_core::contract::Interface;
+
+        let mut contract = maka_plugin_core::operation::receipt_reader_contract();
+        let Interface::Service { methods } = &mut contract.interface else {
+            unreachable!()
+        };
+        let read = methods["read"].clone();
+        *methods = (0..129)
+            .map(|index| (format!("read{index:03}"), read.clone()))
+            .collect();
+        let selected: BTreeSet<_> = methods.keys().take(128).cloned().collect();
+        let mut endpoint = HostEndpoint {
+            consumer: InstanceId(vec![Uuid::new_v4()]),
+            import: "reads".into(),
+            grant: Grant {
+                methods: selected.clone(),
+                recovery: false,
+            },
+        };
+        let mut native = NativeGrant {
+            origin: endpoint.consumer.clone(),
+            consumer: endpoint.consumer.clone(),
+            provider: InstanceId(vec![Uuid::new_v4()]),
+            export: "Reads".into(),
+            methods: selected,
+            recovery: false,
+        };
+        endpoint.validate().unwrap();
+        native.validate().unwrap();
+        check_grant(&contract, &endpoint.grant).unwrap();
+
+        endpoint.grant.methods.remove("read000");
+        endpoint.grant.methods.insert("unlisted".into());
+        assert!(check_grant(&contract, &endpoint.grant).is_err());
+
+        endpoint.grant.methods = (0..129).map(|index| format!("read{index:03}")).collect();
+        native.methods = endpoint.grant.methods.clone();
+        assert!(endpoint.validate().is_err());
+        assert!(native.validate().is_err());
+        assert!(check_grant(&contract, &endpoint.grant).is_err());
+    }
+
     #[test]
     fn unavailable_declarations_still_require_the_original_method_grant() {
         let captured = || CapturedImport::Unavailable {

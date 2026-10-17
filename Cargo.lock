@@ -8560,6 +8560,7 @@ name = "maka-fs-tools"
 version = "0.2.0"
 dependencies = [
  "apply-patch",
+ "base64 0.22.1",
  "cap-fs-ext",
  "cap-std",
  "dunce",
@@ -8573,6 +8574,7 @@ dependencies = [
  "imagesize 0.15.0",
  "libc",
  "maka-agent-facts",
+ "maka-plugin-core",
  "maka-sandbox",
  "rustix 1.1.4",
  "schemars 1.2.2",

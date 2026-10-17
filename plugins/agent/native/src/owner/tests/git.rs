@@ -1,0 +1,410 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+use super::*;
+use base64::{Engine, engine::general_purpose::STANDARD};
+use std::path::Path;
+
+// Git is only a fixture author. All observed status/diff values come from the
+// public ApplicationClient through the actual Agent service and Session scope.
+fn git(workspace: &Path, arguments: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(arguments)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn repository(workspace: &Path) {
+    git(workspace, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        workspace,
+        &["config", "user.email", "git-fixture@example.invalid"],
+    );
+    git(workspace, &["config", "user.name", "Git fixture"]);
+    git(workspace, &["config", "core.autocrlf", "false"]);
+    // The workspace identity marker is fixture infrastructure, not a user edit.
+    std::fs::write(
+        workspace.join(".git/info/exclude"),
+        format!("/{}\n", maka_fs_tools::workspace::MARKER_FILE),
+    )
+    .unwrap();
+}
+
+fn path(name: &str) -> Value {
+    json!({"bytesBase64": STANDARD.encode(name.as_bytes())})
+}
+
+fn changed_lines(result: &Value) -> Vec<&str> {
+    assert_eq!(result["kind"], "text", "{result}");
+    result["patch"]
+        .as_str()
+        .unwrap()
+        .lines()
+        .filter(|line| {
+            (line.starts_with('+') && !line.starts_with("+++"))
+                || (line.starts_with('-') && !line.starts_with("---"))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn git_status_and_diff_read_current_workspace_without_mutating_index() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
+        let session = f.create("Git comparison").await;
+        repository(&f.workspace);
+        std::fs::write(f.workspace.join("tracked.txt"), "base\n").unwrap();
+        git(&f.workspace, &["add", "tracked.txt"]);
+        git(&f.workspace, &["commit", "--quiet", "-m", "base"]);
+        std::fs::write(f.workspace.join("tracked.txt"), "staged\n").unwrap();
+        git(&f.workspace, &["add", "tracked.txt"]);
+        std::fs::write(f.workspace.join("tracked.txt"), "worktree\n").unwrap();
+        std::fs::write(f.workspace.join("new.txt"), "new file\n").unwrap();
+        let index = f.workspace.join(".git/index");
+        let index_bytes = std::fs::read(&index).unwrap();
+        let index_modified = std::fs::metadata(&index).unwrap().modified().unwrap();
+        let observed = f.query("gitStatus", json!({"sessionId":session})).await;
+        // A preimplementation missing-method RED still closes the real runtime.
+        if observed.is_err() {
+            f.app.shutdown().await.unwrap();
+            f.config.shutdown().await.unwrap();
+        }
+        let status = observed.expect("Agent gitStatus must read the selected Session repository");
+        assert_eq!(status["truncated"], false);
+        let mut entries = status["entries"].as_array().unwrap().clone();
+        entries.sort_by_key(|entry| (entry["area"].as_str().unwrap().to_owned(), entry["path"].to_string()));
+        assert_eq!(entries, vec![
+            json!({"area":"staged","path":{"bytesBase64":"dHJhY2tlZC50eHQ="},"kind":"modified"}),
+            json!({"area":"untracked","path":{"bytesBase64":"bmV3LnR4dA=="},"kind":"added"}),
+            json!({"area":"worktree","path":{"bytesBase64":"dHJhY2tlZC50eHQ="},"kind":"modified"}),
+        ]);
+        for (area, name, expected) in [
+            ("staged", "tracked.txt", vec!["-base", "+staged"]),
+            ("worktree", "tracked.txt", vec!["-staged", "+worktree"]),
+            ("untracked", "new.txt", vec!["+new file"]),
+        ] {
+            let diff = f.query("gitDiff", json!({"sessionId":session,"area":area,"path":path(name)})).await.unwrap();
+            assert_eq!(changed_lines(&diff), expected, "{area}");
+        }
+        std::fs::write(f.workspace.join("tracked.txt"), "later edit\n").unwrap();
+        let fresh = f.query("gitDiff", json!({"sessionId":session,"area":"worktree","path":path("tracked.txt")})).await.unwrap();
+        assert_eq!(changed_lines(&fresh), vec!["-staged", "+later edit"]);
+        std::fs::remove_file(f.workspace.join("new.txt")).unwrap();
+        let fresh_status = f.query("gitStatus", json!({"sessionId":session})).await.unwrap();
+        let mut areas: Vec<_> = fresh_status["entries"].as_array().unwrap().iter().map(|entry| entry["area"].as_str().unwrap()).collect();
+        areas.sort();
+        assert_eq!(areas, ["staged", "worktree"]);
+        assert_eq!(std::fs::read(&index).unwrap(), index_bytes);
+        assert_eq!(std::fs::metadata(&index).unwrap().modified().unwrap(), index_modified);
+        assert!(!f.workspace.join(".git/index.lock").exists());
+        assert_eq!(std::fs::read_to_string(f.workspace.join("tracked.txt")).unwrap(), "later edit\n");
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn git_queries_keep_unborn_binary_results_within_session_and_method_grants() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
+        let session = f.create("Unborn Git").await;
+        assert_eq!(f.query("gitStatus", json!({"sessionId":session})).await.unwrap(), Value::Null);
+        assert_eq!(f.query("gitDiff", json!({"sessionId":session,"area":"untracked","path":path("binary.dat")})).await.unwrap(), Value::Null);
+        repository(&f.workspace);
+        std::fs::write(f.workspace.join("binary.dat"), b"before\0after").unwrap();
+        git(&f.workspace, &["add", "binary.dat"]);
+        let expected = json!({"head":null,"entries":[{"area":"staged","path":{"bytesBase64":"YmluYXJ5LmRhdA=="},"kind":"added"}],"truncated":false});
+        assert_eq!(f.query("gitStatus", json!({"sessionId":session})).await.unwrap(), expected);
+        let input = json!({"sessionId":session,"area":"staged","path":path("binary.dat")});
+        assert_eq!(f.query("gitDiff", input.clone()).await.unwrap(), json!({"kind":"binary"}));
+        for (method, input) in [("gitStatus", json!({"sessionId":session})), ("gitDiff", input)] {
+            let denied = f.app.client().start(f.binding(2).await, method.into(), input.clone(),
+                scope(&f.issuer, false), Attachments::new().into()).await;
+            assert_eq!(denied.err().unwrap(), "denied", "{method} must retain its actual Host method grant");
+            let mut foreign = input;
+            foreign["sessionId"] = json!("foreign-session");
+            assert_eq!(f.query(method, foreign).await.unwrap_err(), "agent_session_unavailable", "{method}");
+        }
+        assert_eq!(f.query("gitStatus", json!({"sessionId":session})).await.unwrap(), expected);
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn git_queries_reject_selected_subdirectories_and_replaced_workspace_identity() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
+        let root_session = f.create("Repository root").await;
+        repository(&f.workspace);
+        std::fs::create_dir(f.workspace.join("selected")).unwrap();
+        std::fs::write(f.workspace.join("selected/inside.txt"), "inside base\n").unwrap();
+        std::fs::write(f.workspace.join("sibling.txt"), "sibling base\n").unwrap();
+        git(&f.workspace, &["add", "selected/inside.txt", "sibling.txt"]);
+        git(&f.workspace, &["commit", "--quiet", "-m", "base"]);
+        std::fs::write(f.workspace.join("selected/inside.txt"), "inside current\n").unwrap();
+        std::fs::write(f.workspace.join("sibling.txt"), "private sibling current\n").unwrap();
+        let root_diff = f
+            .query(
+                "gitDiff",
+                json!({"sessionId":root_session,"area":"worktree","path":path("sibling.txt")}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            changed_lines(&root_diff),
+            ["-sibling base", "+private sibling current"]
+        );
+        let roots = f
+            .query("directories", json!({"kind":"roots"}))
+            .await
+            .unwrap();
+        let children = f
+            .query(
+                "directories",
+                json!({"kind":"children","selection":roots["roots"][0]["selection"],"after":null}),
+            )
+            .await
+            .unwrap();
+        let selected = children["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| {
+                Path::new(entry["path"].as_str().unwrap()).file_name()
+                    == Some(std::ffi::OsStr::new("selected"))
+            })
+            .unwrap();
+        let child = f
+            .mutation(
+                2,
+                "create",
+                json!({"title":"Selected child","labels":[],
+            "workspace":{"kind":"directory","selection":selected["selection"]}}),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(child["kind"], "created");
+        let child_session = &child["session"]["id"];
+        for (method, input) in [
+            ("gitStatus", json!({"sessionId":child_session})),
+            (
+                "gitDiff",
+                json!({"sessionId":child_session,"area":"worktree","path":path("inside.txt")}),
+            ),
+        ] {
+            let error = f.query(method, input).await.unwrap_err();
+            assert_eq!(error, "agent_git_unsupported", "{method}");
+            assert!(!error.contains("private sibling current"));
+        }
+        let original_marker =
+            std::fs::read(f.workspace.join(maka_fs_tools::workspace::MARKER_FILE)).unwrap();
+        let moved = f.workspace.with_file_name("original-workspace");
+        std::fs::rename(&f.workspace, &moved).unwrap();
+        std::fs::create_dir(&f.workspace).unwrap();
+        std::fs::write(
+            f.workspace.join(maka_fs_tools::workspace::MARKER_FILE),
+            original_marker,
+        )
+        .unwrap();
+        repository(&f.workspace);
+        std::fs::write(f.workspace.join("replacement.txt"), "must not retarget\n").unwrap();
+        for (method, input) in [
+            ("gitStatus", json!({"sessionId":root_session})),
+            (
+                "gitDiff",
+                json!({"sessionId":root_session,"area":"untracked","path":path("replacement.txt")}),
+            ),
+        ] {
+            assert_eq!(
+                f.query(method, input).await.unwrap_err(),
+                "agent_workspace_unavailable",
+                "{method} must validate the original workspace identity"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(moved.join("sibling.txt")).unwrap(),
+            "private sibling current\n"
+        );
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn git_diff_reads_link_text_without_following_the_target_outside_its_workspace() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
+        let session = f.create("Link text").await;
+        repository(&f.workspace);
+        std::fs::write(f.root.join("private-secret"), "private target payload\n").unwrap();
+        symlink("../old-target", f.workspace.join("link.txt")).unwrap();
+        git(&f.workspace, &["add", "link.txt"]);
+        git(&f.workspace, &["commit", "--quiet", "-m", "base link"]);
+        std::fs::remove_file(f.workspace.join("link.txt")).unwrap();
+        symlink("../root/private-secret", f.workspace.join("link.txt")).unwrap();
+        let diff = f
+            .query(
+                "gitDiff",
+                json!({"sessionId":session,"area":"worktree","path":path("link.txt")}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            changed_lines(&diff),
+            ["-../old-target", "+../root/private-secret"]
+        );
+        assert!(
+            !diff["patch"]
+                .as_str()
+                .unwrap()
+                .contains("private target payload")
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.root.join("private-secret")).unwrap(),
+            "private target payload\n"
+        );
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn git_path_bytes_roundtrip_through_public_status_and_diff() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        use std::os::unix::ffi::OsStringExt;
+        let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
+        let session = f.create("Opaque Git paths").await;
+        repository(&f.workspace);
+        // APFS rejects invalid UTF-8 filenames; still exercise exact legal
+        // bytes that cannot safely be treated as shell syntax or quoted text.
+        #[cfg(target_os = "macos")]
+        let (bytes, expected) = (
+            "odd-中文\n\t\\.txt".as_bytes().to_vec(),
+            "b2RkLeS4reaWhwoJXC50eHQ=",
+        );
+        #[cfg(not(target_os = "macos"))]
+        let (bytes, expected) = (b"odd-\xff\n\t.txt".to_vec(), "b2RkLf8KCS50eHQ=");
+        let name = std::ffi::OsString::from_vec(bytes);
+        std::fs::write(f.workspace.join(name), "exact file contents\n").unwrap();
+        let status = f
+            .query("gitStatus", json!({"sessionId":session}))
+            .await
+            .unwrap();
+        assert_eq!(
+            status["entries"],
+            json!([{"area":"untracked","path":{"bytesBase64":expected},"kind":"added"}])
+        );
+        let diff = f
+            .query(
+                "gitDiff",
+                json!({"sessionId":session,"area":"untracked","path":status["entries"][0]["path"]}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(changed_lines(&diff), ["+exact file contents"]);
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn git_queries_use_the_selected_managed_linked_worktree_not_its_source_repository() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let f = Fixture::configured("http://127.0.0.1:1/v1", None, None, None, |settings| {
+            settings.isolated_workspaces = true
+        })
+        .await;
+        let source_session = f.create("Source repository").await;
+        repository(&f.workspace);
+        std::fs::write(f.workspace.join("tracked.txt"), "source base\n").unwrap();
+        git(&f.workspace, &["add", "tracked.txt"]);
+        git(&f.workspace, &["commit", "--quiet", "-m", "source base"]);
+        let mut input = f.create_input("Managed checkout").await;
+        input["workspace"]["kind"] = json!("isolated_git");
+        let created = f
+            .mutation(2, "create", input, Uuid::new_v4())
+            .await
+            .unwrap();
+        assert_eq!(created["kind"], "created", "{created}");
+        let managed =
+            std::path::PathBuf::from(created["session"]["workspace"]["path"].as_str().unwrap());
+        assert!(
+            managed.join(".git").is_file(),
+            "exercise an actual linked worktree"
+        );
+        std::fs::write(managed.join("tracked.txt"), "managed current\n").unwrap();
+        let session = &created["session"]["id"];
+        let diff = f
+            .query(
+                "gitDiff",
+                json!({"sessionId":session,"area":"worktree","path":path("tracked.txt")}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(changed_lines(&diff), ["-source base", "+managed current"]);
+        let status = f
+            .query("gitStatus", json!({"sessionId":session}))
+            .await
+            .unwrap();
+        assert_eq!(
+            status["entries"],
+            json!([{"area":"worktree","path":{"bytesBase64":"dHJhY2tlZC50eHQ="},"kind":"modified"}])
+        );
+        assert_eq!(
+            f.query("gitStatus", json!({"sessionId":source_session}))
+                .await
+                .unwrap()["entries"],
+            json!([])
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.workspace.join("tracked.txt")).unwrap(),
+            "source base\n"
+        );
+        f.app.shutdown().await.unwrap();
+        f.config.shutdown().await.unwrap();
+    })
+    .await
+    .unwrap();
+}

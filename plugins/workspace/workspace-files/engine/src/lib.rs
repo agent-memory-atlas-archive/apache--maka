@@ -21,6 +21,7 @@ mod edit_index;
 mod edit_match;
 pub use edit_match::EditMatchStrategy;
 pub mod directory;
+pub mod git;
 pub mod image;
 mod search;
 pub mod workspace;

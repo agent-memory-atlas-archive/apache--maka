@@ -67,7 +67,10 @@ impl Binding {
     fn base_ref(&self) -> String {
         format!("refs/maka/worktrees/{}", self.id)
     }
-    fn admin(&self) -> PathBuf {
+    pub(crate) fn common_directory(&self) -> &Path {
+        &self.common_dir
+    }
+    pub(crate) fn admin(&self) -> PathBuf {
         self.common_dir
             .join("worktrees")
             .join(format!("maka-{}", self.id))

@@ -11289,6 +11289,207 @@ export const contracts = {
           },
           resources: {},
         },
+        gitDiff: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentGitDiffRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              area: {
+                $ref: '#/$defs/GitArea',
+              },
+              path: {
+                $ref: '#/$defs/GitPath',
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'area', 'path'],
+            $defs: {
+              GitArea: {
+                type: 'string',
+                enum: ['staged', 'worktree', 'untracked'],
+              },
+              GitPath: {
+                type: 'object',
+                properties: {
+                  bytesBase64: {
+                    type: 'string',
+                    maxLength: 5464,
+                  },
+                },
+                additionalProperties: false,
+                required: ['bytesBase64'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Nullable_GitDiff',
+            anyOf: [
+              {
+                $ref: '#/$defs/GitDiff',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            $defs: {
+              GitDiff: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      patch: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'text',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'patch'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'binary',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'too_large',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'unchanged',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      kind: {
+                        type: 'string',
+                        const: 'unsupported',
+                      },
+                    },
+                    required: ['kind'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            },
+          },
+          resources: {},
+        },
+        gitStatus: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentSessionRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId'],
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'Nullable_GitStatus',
+            anyOf: [
+              {
+                $ref: '#/$defs/GitStatus',
+              },
+              {
+                type: 'null',
+              },
+            ],
+            $defs: {
+              GitStatus: {
+                type: 'object',
+                properties: {
+                  head: {
+                    type: ['string', 'null'],
+                  },
+                  entries: {
+                    type: 'array',
+                    items: {
+                      $ref: '#/$defs/GitStatusEntry',
+                    },
+                  },
+                  truncated: {
+                    type: 'boolean',
+                  },
+                },
+                additionalProperties: false,
+                required: ['head', 'entries', 'truncated'],
+              },
+              GitStatusEntry: {
+                type: 'object',
+                properties: {
+                  area: {
+                    $ref: '#/$defs/GitArea',
+                  },
+                  path: {
+                    $ref: '#/$defs/GitPath',
+                  },
+                  kind: {
+                    $ref: '#/$defs/GitChangeKind',
+                  },
+                },
+                additionalProperties: false,
+                required: ['area', 'path', 'kind'],
+              },
+              GitArea: {
+                type: 'string',
+                enum: ['staged', 'worktree', 'untracked'],
+              },
+              GitPath: {
+                type: 'object',
+                properties: {
+                  bytesBase64: {
+                    type: 'string',
+                    maxLength: 5464,
+                  },
+                },
+                additionalProperties: false,
+                required: ['bytesBase64'],
+              },
+              GitChangeKind: {
+                type: 'string',
+                enum: ['added', 'modified', 'deleted', 'type_changed', 'conflicted'],
+              },
+            },
+          },
+          resources: {},
+        },
         globalInstructions: {
           mode: 'query',
           input: {
@@ -47627,7 +47828,7 @@ export const contracts = {
                 type: 'integer',
                 format: 'uint',
                 minimum: 0,
-                maximum: 1048576,
+                maximum: 2097152,
               },
             },
             additionalProperties: false,
@@ -49638,7 +49839,7 @@ export const contracts = {
                     type: 'integer',
                     format: 'uint',
                     minimum: 0,
-                    maximum: 1048576,
+                    maximum: 2097152,
                   },
                 },
                 additionalProperties: false,
@@ -50893,7 +51094,7 @@ export const contracts = {
                     type: 'integer',
                     format: 'uint',
                     minimum: 0,
-                    maximum: 1048576,
+                    maximum: 2097152,
                   },
                 },
                 additionalProperties: false,

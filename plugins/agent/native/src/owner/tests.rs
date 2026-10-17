@@ -94,10 +94,13 @@ mod queue;
 #[path = "tests/selection.rs"]
 mod selection;
 
+#[path = "tests/git.rs"]
+mod git;
 #[path = "tests/jev.rs"]
 mod jev_tests;
 #[path = "tests/web.rs"]
 mod web_tests;
+
 #[path = "tests/worktrees.rs"]
 mod worktrees;
 

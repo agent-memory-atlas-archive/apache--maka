@@ -281,7 +281,7 @@ fn read_json<T: serde::de::DeserializeOwned>(source: &Path) -> Result<T, HostErr
         .take((LIMIT + 1) as u64)
         .read_to_end(&mut bytes)?;
     if bytes.len() > LIMIT {
-        return Err("application input exceeds 1 MiB".into());
+        return Err(format!("application input exceeds {LIMIT} bytes").into());
     }
     Ok(serde_json::from_slice(&bytes)?)
 }
@@ -414,15 +414,19 @@ mod source_input_tests {
     fn authoring_reads_large_contract_documents_with_the_deployment_bound() {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("remote-exports.json");
-        let value = serde_json::json!({"contract": "x".repeat(768 * 1024)});
+        let value = serde_json::json!({"contract": "x".repeat(1152 * 1024)});
         std::fs::write(&file, serde_json::to_vec(&value).unwrap()).unwrap();
         assert_eq!(read_json::<serde_json::Value>(&file).unwrap(), value);
-        std::fs::write(&file, vec![b' '; 1024 * 1024 + 1]).unwrap();
+        std::fs::write(
+            &file,
+            vec![b' '; maka_plugin_core::deployment::management::MAX_DOCUMENT_BYTES + 1],
+        )
+        .unwrap();
         assert!(
             read_json::<serde_json::Value>(&file)
                 .unwrap_err()
                 .to_string()
-                .contains("1 MiB")
+                .contains("application input exceeds")
         );
     }
 }

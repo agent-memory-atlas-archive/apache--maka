@@ -611,7 +611,9 @@ fn read_document_resource(
         || resource.bytes() == 0
         || resource.bytes() > MAX_DOCUMENT_BYTES
     {
-        return Err("source document must be immutable UTF-8 and at most 1 MiB".into());
+        return Err(format!(
+            "source document must be immutable UTF-8 and at most {MAX_DOCUMENT_BYTES} bytes"
+        ));
     }
     let length = resource.bytes();
     let mut bytes = Vec::with_capacity(length);

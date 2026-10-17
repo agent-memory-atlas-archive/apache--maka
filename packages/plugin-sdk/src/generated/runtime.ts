@@ -286,6 +286,13 @@ export type RuntimeProtocol =
   | FormAsk
   | FormResponse
   | WorkspaceProcessConfiguration
+  | GitPath
+  | GitArea
+  | GitChangeKind
+  | GitStatusEntry
+  | GitStatus
+  | GitDiff
+  | AgentGitDiffRead
   | TerminalList
   | TerminalTarget
   | TerminalOutputRequest
@@ -4396,6 +4403,25 @@ export type FormResult =
     };
 export type QuestionRejection = 'invalid_input' | 'unavailable';
 export type WorkspaceProcessSessionKind = 'agent' | 'workhub';
+export type GitArea = 'staged' | 'worktree' | 'untracked';
+export type GitChangeKind = 'added' | 'modified' | 'deleted' | 'type_changed' | 'conflicted';
+export type GitDiff =
+  | {
+      patch: string;
+      kind: 'text';
+    }
+  | {
+      kind: 'binary';
+    }
+  | {
+      kind: 'too_large';
+    }
+  | {
+      kind: 'unchanged';
+    }
+  | {
+      kind: 'unsupported';
+    };
 /**
  * Ephemeral output observation; Closed is not a process cleanup receipt.
  */
@@ -10008,6 +10034,24 @@ export interface Policy {
    * @maxItems 128
    */
   denyGlobs: string[];
+}
+export interface GitPath {
+  bytesBase64: string;
+}
+export interface GitStatusEntry {
+  area: GitArea;
+  path: GitPath;
+  kind: GitChangeKind;
+}
+export interface GitStatus {
+  head: string | null;
+  entries: GitStatusEntry[];
+  truncated: boolean;
+}
+export interface AgentGitDiffRead {
+  sessionId: string;
+  area: GitArea;
+  path: GitPath;
 }
 export interface TerminalList {
   sessionId: string;

@@ -17,7 +17,10 @@
  * under the License.
  */
 
-use super::Image;
+pub(crate) struct Image {
+    pub mode: u32,
+    pub bytes: Vec<u8>,
+}
 use gix::diff::blob::{
     self,
     unified_diff::{ConsumeHunk, DiffLineKind, HunkHeader},
@@ -26,12 +29,13 @@ use std::io::{self, Write};
 
 mod binary;
 
-pub(super) fn append(
+pub(crate) fn append(
     out: &mut Vec<u8>,
     name: &[u8],
     before: Option<&Image>,
     after: Option<&Image>,
     hash: gix::hash::Kind,
+    limit: usize,
 ) -> io::Result<()> {
     if before.map(|i| (i.mode, &i.bytes)) == after.map(|i| (i.mode, &i.bytes)) {
         return Ok(());
@@ -40,8 +44,8 @@ pub(super) fn append(
     if let (Some(old), Some(new)) = (before, after)
         && (old.mode & 0o170000) != (new.mode & 0o170000)
     {
-        append(out, name, before, None, hash)?;
-        return append(out, name, None, after, hash);
+        append(out, name, before, None, hash, limit)?;
+        return append(out, name, None, after, hash, limit);
     }
     let a = quote(b"a/", name);
     let b = quote(b"b/", name);
@@ -78,8 +82,8 @@ pub(super) fn append(
         || std::str::from_utf8(new).is_err()
     {
         writeln!(out, "GIT binary patch")?;
-        binary::literal(out, new)?;
-        return binary::literal(out, old);
+        binary::literal(out, new, limit)?;
+        return binary::literal(out, old, limit);
     }
     writeln!(
         out,
@@ -89,11 +93,11 @@ pub(super) fn append(
     )?;
     let input = blob::InternedInput::new(old, new);
     let diff = blob::diff_with_slider_heuristics(blob::Algorithm::Histogram, &input);
-    blob::UnifiedDiff::new(&diff, &input, Hunks(out), Default::default()).consume()?;
+    blob::UnifiedDiff::new(&diff, &input, Hunks(out, limit), Default::default()).consume()?;
     Ok(())
 }
 
-struct Hunks<'a>(&'a mut Vec<u8>);
+struct Hunks<'a>(&'a mut Vec<u8>, usize);
 impl ConsumeHunk for Hunks<'_> {
     type Out = ();
     fn consume_hunk(
@@ -103,8 +107,8 @@ impl ConsumeHunk for Hunks<'_> {
     ) -> io::Result<()> {
         writeln!(self.0, "{header}")?;
         for (kind, line) in lines {
-            if self.0.len().saturating_add(line.len() + 32) > super::LIMIT {
-                return Err(crate::workspace::invalid("worktree patch exceeds 50 MiB"));
+            if self.0.len().saturating_add(line.len() + 32) > self.1 {
+                return Err(crate::workspace::invalid("Git patch exceeds byte limit"));
             }
             self.0.push(kind.to_prefix() as u8);
             self.0.extend_from_slice(line);

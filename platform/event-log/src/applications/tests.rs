@@ -113,8 +113,8 @@ async fn oversized_source_is_rejected_before_materialization() {
         .await
         .unwrap();
     store.connection.run(move |conn| Box::pin(async move {
-        sqlx::query("UPDATE application_sources SET input_json = json_object('huge', printf('%.*c', 1048576, 'x')) WHERE deployment = ?")
-            .bind(id.to_string()).execute(conn).await?;
+        sqlx::query("UPDATE application_sources SET input_json = json_object('huge', printf('%.*c', ?, 'x')) WHERE deployment = ?")
+            .bind(MAX_JSON as i64).bind(id.to_string()).execute(conn).await?;
         Ok(())
     })).await.unwrap();
     let error = store.load_application(id).await.err().unwrap().to_string();

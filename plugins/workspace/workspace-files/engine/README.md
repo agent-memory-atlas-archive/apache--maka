@@ -23,4 +23,6 @@
 
 Implements file reads, search, edits, writes, patches and worktree operations. Callers provide the authorized filesystem scope. `ReadExecutor` handles bounded reads; `MutationExecutor` and `WriteCoordinator` prepare and serialize writes. Patch parsing is delegated to the adjacent `patch` crate.
 
+`git` provides native, read-only repository status and per-file comparisons. Callers supply the original directory identity, private State Root and any validated managed-worktree binding, and retain the blocking worker until it settles. Git metadata and ignore/attribute control files are checked before library traversal; external commands and alternate object stores are not used. Cancellation is cooperative, and response limits do not promise a fixed execution time or an atomic repository snapshot.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

@@ -25,6 +25,8 @@ Runs checked service compositions and owns call admission, activation and retire
 
 A committed source is desired configuration. It becomes effective only after its instances converge. Updates preserve unchanged activations and their captured bindings; replacements wait for accepted calls and native resources to settle. Mutation receipts distinguish business results from cleanup, so a lost reply must be resolved through its original receipt.
 
+Complete source documents, including frozen remote contracts and package references, have a shared 2 MiB budget for admission, persistence and management. Read them in pages under one source revision; replace large documents through immutable resources.
+
 Persistence comes from the owned EventLog. Stable plugin data belongs to the Root, deployment and instance; an activation epoch identifies execution, not a new data owner.
 
 The built-in `maka.host.logs` provider derives its fixed log source from that same Root owner. Its `HostLogs` export (`maka.host.Logs`) offers bounded raw-byte `read` queries and cancellable `watch` subscriptions. Compositions must bind and explicitly grant these methods; registration grants no access, and requests cannot select another Root or file. See the generated SDK contract for page and cursor fields.

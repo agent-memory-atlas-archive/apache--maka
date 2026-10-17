@@ -28,14 +28,9 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-mod format;
+use crate::git::image::{self as format, Image};
 const LIMIT: usize = 50 * 1024 * 1024;
 const MAX_PATHS: usize = 100_000;
-
-pub(super) struct Image {
-    mode: u32,
-    bytes: Vec<u8>,
-}
 
 pub(super) fn capture(binding: &Binding, cancel: Arc<AtomicBool>) -> io::Result<Vec<u8>> {
     let repo = git::discover(&binding.directory)?;
@@ -130,6 +125,7 @@ pub(super) fn capture(binding: &Binding, cancel: Arc<AtomicBool>) -> io::Result<
             before.as_ref(),
             after.as_ref(),
             repo.object_hash(),
+            LIMIT,
         )?;
         if patch.len() > LIMIT {
             return Err(invalid(
