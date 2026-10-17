@@ -116,7 +116,8 @@ async fn child_output_limit_after_t2_preserves_raw_and_remains_catchable() {
                 "tool output byte limit exceeded"
             );
         }
-        let prefix = log.prefix(32, 64 * 1024).await.unwrap();
+        // Both cases share this ledger; each keeps a 1 MiB model projection.
+        let prefix = log.prefix(32, 2 * 1024 * 1024 + 64 * 1024).await.unwrap();
         let outcomes: Vec<_> = prefix
             .events
             .iter()
