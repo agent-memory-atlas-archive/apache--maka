@@ -251,11 +251,19 @@ async fn watch(
         .unwrap()
 }
 
-async fn item(stream: &mut maka_host_runtime::application::Subscription) -> Value {
-    tokio::time::timeout(Duration::from_secs(10), stream.recv())
-        .await
-        .expect("filesystem observation must make progress")
-        .expect("watch must remain available")
+#[track_caller]
+fn item(
+    stream: &mut maka_host_runtime::application::Subscription,
+) -> impl std::future::Future<Output = Value> + '_ {
+    let caller = std::panic::Location::caller();
+    async move {
+        tokio::time::timeout(Duration::from_secs(10), stream.recv())
+            .await
+            .unwrap_or_else(|error| {
+                panic!("filesystem observation must make progress at {caller}: {error}")
+            })
+            .unwrap_or_else(|| panic!("watch must remain available at {caller}"))
+    }
 }
 
 #[tokio::test]
@@ -263,9 +271,10 @@ async fn watch_files_invalidates_reconnects_and_settles_without_retaining_observ
     tokio::time::timeout(Duration::from_secs(60), async {
         let f = Fixture::new("http://127.0.0.1:1/v1", None).await;
         let session = f.create("Watched files").await;
-        let directory = f.workspace.join("parent/target");
+        let selected = "parent/a/b/c/d/e/f/g/h/i/j/k/l/m/n/target";
+        let directory = f.workspace.join(selected);
         std::fs::create_dir_all(&directory).unwrap();
-        let request = json!({"sessionId":session,"path":path("parent/target")});
+        let request = json!({"sessionId":session,"path":path(selected)});
         let denied = f
             .app
             .client()
@@ -281,7 +290,7 @@ async fn watch_files_invalidates_reconnects_and_settles_without_retaining_observ
         let mut foreign = watch(
             &f,
             "foreign-session",
-            "parent/target",
+            selected,
             scope(&f.issuer, true),
         )
         .await;
@@ -294,13 +303,13 @@ async fn watch_files_invalidates_reconnects_and_settles_without_retaining_observ
         // one native callback per mutation or draining by a quiet-time heuristic.
         for operation in 0..4 {
             let observed = scope(&f.issuer, true);
-            let mut stream = watch(&f, &session, "parent/target", observed.clone()).await;
+            let mut stream = watch(&f, &session, selected, observed.clone()).await;
             let ready = item(&mut stream).await;
             assert_eq!(ready["kind"], "ready");
             let before = f
                 .query(
                     "listFiles",
-                    json!({"sessionId":session,"path":path("parent/target"),"after":null}),
+                    json!({"sessionId":session,"path":path(selected),"after":null}),
                 )
                 .await
                 .unwrap();
@@ -316,13 +325,13 @@ async fn watch_files_invalidates_reconnects_and_settles_without_retaining_observ
             let current = f
                 .query(
                     "listFiles",
-                    json!({"sessionId":session,"path":path("parent/target"),"after":null}),
+                    json!({"sessionId":session,"path":path(selected),"after":null}),
                 )
                 .await
                 .unwrap();
             let expected = match operation {
-                0 | 1 => json!([{"path":path("parent/target/created"),"kind":"file"}]),
-                2 => json!([{"path":path("parent/target/renamed"),"kind":"file"}]),
+                0 | 1 => json!([{"path":path("parent/a/b/c/d/e/f/g/h/i/j/k/l/m/n/target/created"),"kind":"file"}]),
+                2 => json!([{"path":path("parent/a/b/c/d/e/f/g/h/i/j/k/l/m/n/target/renamed"),"kind":"file"}]),
                 3 => json!([]),
                 _ => unreachable!(),
             };
@@ -335,7 +344,7 @@ async fn watch_files_invalidates_reconnects_and_settles_without_retaining_observ
         // Moving a selected ancestor must terminate, rather than follow a new
         // directory installed at the same workspace-relative path.
         let observed = scope(&f.issuer, true);
-        let mut stream = watch(&f, &session, "parent/target", observed.clone()).await;
+        let mut stream = watch(&f, &session, selected, observed.clone()).await;
         let ready = item(&mut stream).await;
         std::fs::rename(f.workspace.join("parent"), f.workspace.join("moved-parent")).unwrap();
         loop {
@@ -355,21 +364,21 @@ async fn watch_files_invalidates_reconnects_and_settles_without_retaining_observ
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::write(directory.join("fresh"), "new identity").unwrap();
         let observed = scope(&f.issuer, true);
-        let mut stream = watch(&f, &session, "parent/target", observed.clone()).await;
+        let mut stream = watch(&f, &session, selected, observed.clone()).await;
         let fresh = item(&mut stream).await;
         assert_eq!(fresh["kind"], "ready");
         assert_ne!(fresh["directoryIdentity"], ready["directoryIdentity"]);
         let current = f
             .query(
                 "listFiles",
-                json!({"sessionId":session,"path":path("parent/target"),"after":null}),
+                json!({"sessionId":session,"path":path(selected),"after":null}),
             )
             .await
             .unwrap();
         assert_eq!(current["directoryIdentity"], fresh["directoryIdentity"]);
         assert_eq!(
             current["entries"],
-            json!([{"path":path("parent/target/fresh"),"kind":"file"}])
+            json!([{"path":path("parent/a/b/c/d/e/f/g/h/i/j/k/l/m/n/target/fresh"),"kind":"file"}])
         );
         // Closing an observer leaves the Session and Owner available.
         stream.cancel();
@@ -379,14 +388,14 @@ async fn watch_files_invalidates_reconnects_and_settles_without_retaining_observ
         assert_eq!(
             f.query(
                 "listFiles",
-                json!({"sessionId":session,"path":path("parent/target"),"after":null})
+                json!({"sessionId":session,"path":path(selected),"after":null})
             )
             .await
             .unwrap(),
             current
         );
         let observed = scope(&f.issuer, true);
-        let mut stream = watch(&f, &session, "parent/target", observed.clone()).await;
+        let mut stream = watch(&f, &session, selected, observed.clone()).await;
         assert_eq!(item(&mut stream).await["kind"], "ready");
         f.app.shutdown().await.unwrap();
         stream.completion().await.cleanup.unwrap();

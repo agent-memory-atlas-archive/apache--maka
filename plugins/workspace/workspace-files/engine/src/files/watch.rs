@@ -117,11 +117,15 @@ pub(super) fn open(directory: &Directory) -> io::Result<Watch> {
             }
         };
     let result = (|| {
+        let mut paths = watcher.paths_mut();
         for anchor in &directory.anchors {
-            watcher
-                .watch(&anchor.path, RecursiveMode::NonRecursive)
+            paths
+                .add(&anchor.path, RecursiveMode::NonRecursive)
                 .map_err(|_| error("files_watch_unavailable"))?;
         }
+        paths
+            .commit()
+            .map_err(|_| error("files_watch_unavailable"))?;
         directory.validate_inner()
     })();
     if let Err(error) = result {
