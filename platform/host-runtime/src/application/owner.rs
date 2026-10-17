@@ -53,6 +53,12 @@ struct Failed {
     _resources: OwnedSemaphorePermit,
     _confirmation: Option<Confirmation>,
 }
+// Cancellation custody for original accepted subscriptions, not completion evidence.
+struct Observation {
+    provider: Activation,
+    consumer: Activation,
+    cancellation: CancellationToken,
+}
 struct Owned {
     imports: Arc<BTreeMap<String, Vec<Binding>>>,
     resource: Resource,
@@ -137,6 +143,7 @@ pub(super) struct Owner {
     jobs: Jobs,
     terminals: FuturesUnordered<BoxFuture<'static, (usize, String)>>,
     failed: Vec<Failed>,
+    observations: BTreeMap<Uuid, Observation>,
     updates: watch::Sender<Snapshot>,
     starting: bool,
     startup_error: Option<String>,
@@ -192,6 +199,7 @@ impl Owner {
             jobs: Jobs::new(),
             terminals: FuturesUnordered::new(),
             failed: Vec::new(),
+            observations: BTreeMap::new(),
             updates,
             starting: true,
             startup_error: None,
@@ -621,6 +629,16 @@ impl Owner {
                     );
                 }
                 self.starting = false;
+            }
+        }
+        for observation in self.observations.values() {
+            if [&observation.provider, &observation.consumer]
+                .iter()
+                .any(|activation| {
+                    matches!(self.runtime.phase(activation), Ok(Phase::Retiring) | Err(_))
+                })
+            {
+                observation.cancellation.cancel();
             }
         }
         for (id, activation) in &self.activations {
@@ -1329,6 +1347,16 @@ impl Owner {
                         let execution = execution.expect("accepted execution");
                         let child = child.expect("accepted child scope");
                         let confirmation = kind.take_confirmation();
+                        if matches!(kind, CallKind::Subscription { .. }) {
+                            self.observations.insert(
+                                execution.id(),
+                                Observation {
+                                    provider: execution.provider().clone(),
+                                    consumer: binding.0.consumer().clone(),
+                                    cancellation: child.cancellation.clone(),
+                                },
+                            );
+                        }
                         let caller = scope;
                         let scope = child;
                         let consumer = binding.0.consumer().clone();
@@ -1644,6 +1672,7 @@ impl Owner {
                 _resources,
                 confirmation,
             } => {
+                self.observations.remove(&execution.id());
                 if let Some(observation) = historical {
                     receipt = Some(Box::new(
                         self.recovery_gate(&consumer, &observation.reference, &caller)

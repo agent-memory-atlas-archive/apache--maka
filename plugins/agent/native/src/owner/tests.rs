@@ -48,6 +48,9 @@ mod attachments;
 #[path = "tests/files.rs"]
 mod files;
 
+#[path = "tests/file_browsing.rs"]
+mod file_browsing;
+
 #[path = "tests/health.rs"]
 mod health;
 #[path = "tests/processes.rs"]

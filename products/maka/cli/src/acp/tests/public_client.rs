@@ -250,3 +250,169 @@ async fn independent_public_agent_client_reads_git_changes_after_reconnect() {
         fixture.server.await.unwrap().unwrap();
     }).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_public_agent_client_lists_and_watches_files_after_reconnect() {
+    async fn item(call: &mut LocalCall) -> Value {
+        let reply = tokio::time::timeout(Duration::from_secs(10), call.pull())
+            .await
+            .expect("file watch must settle its pending pull")
+            .unwrap();
+        let Reply::Item { value } = reply else {
+            panic!("file watch ended before its expected invalidation: {reply:?}");
+        };
+        value
+    }
+    async fn subscribe(client: &Client, session: &str) -> (LocalCall, Value) {
+        let mut call = client
+            .call(
+                "agent",
+                "watchFiles".into(),
+                json!({
+                    "sessionId":session,"path":{"bytesBase64":"d2F0Y2hlZA=="},
+                }),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        call.start().await.unwrap();
+        assert!(matches!(call.receive().await.unwrap(), Reply::Subscribed));
+        assert!(!call.holds_caller_intent());
+        let ready = item(&mut call).await;
+        assert_eq!(ready["kind"], "ready");
+        (call, ready["directoryIdentity"].clone())
+    }
+    async fn listing(client: &Client, session: &str, identity: &Value, expected: Value) {
+        let page = support::query(
+            client,
+            "agent",
+            "listFiles",
+            json!({
+                "sessionId":session,"path":{"bytesBase64":"d2F0Y2hlZA=="},"after":null,
+            }),
+        )
+        .await;
+        assert_eq!(&page["directoryIdentity"], identity);
+        assert_eq!(page["entries"], expected);
+        assert_eq!(page["next"], Value::Null);
+    }
+    async fn invalidated(call: &mut LocalCall) {
+        assert_eq!(item(call).await, json!({"kind":"changed"}));
+    }
+    async fn intent_count(database: &std::path::Path) -> i64 {
+        use sqlx::Connection;
+        let mut connection = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(database)
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        let count = sqlx::query_scalar("SELECT COUNT(*) FROM application_intents")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+        count
+    }
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let mut fixture = Fixture::open().await;
+        let session = fixture.session.clone();
+        let directory = fixture.workspace.join("watched");
+        std::fs::create_dir(&directory).unwrap();
+        let before = intent_count(&fixture.database).await;
+        // Registration and its actual Ready precede every initial directory read.
+        let (mut changes, identity) = subscribe(&fixture.native, &session).await;
+        listing(&fixture.native, &session, &identity, json!([])).await;
+        std::fs::write(directory.join("alpha.txt"), "created\n").unwrap();
+        invalidated(&mut changes).await;
+        let alpha = json!([{"path":{"bytesBase64":"d2F0Y2hlZC9hbHBoYS50eHQ="},"kind":"file"}]);
+        listing(&fixture.native, &session, &identity, alpha.clone()).await;
+        std::fs::write(directory.join("alpha.txt"), "edited\n").unwrap();
+        invalidated(&mut changes).await;
+        listing(&fixture.native, &session, &identity, alpha).await;
+        std::fs::rename(directory.join("alpha.txt"), directory.join("beta.txt")).unwrap();
+        invalidated(&mut changes).await;
+        listing(
+            &fixture.native,
+            &session,
+            &identity,
+            json!([
+                {"path":{"bytesBase64":"d2F0Y2hlZC9iZXRhLnR4dA=="},"kind":"file"},
+            ]),
+        )
+        .await;
+        std::fs::remove_file(directory.join("beta.txt")).unwrap();
+        invalidated(&mut changes).await;
+        listing(&fixture.native, &session, &identity, json!([])).await;
+        changes.close().await.unwrap();
+        assert!(changes.cleanup_confirmed());
+
+        // A terminal invalidation is also the handler's final delivered value;
+        // it must not be overwritten by an invented Ready on completion.
+        let (mut removed, _) = subscribe(&fixture.native, &session).await;
+        std::fs::remove_dir(&directory).unwrap();
+        let terminal = loop {
+            let value = item(&mut removed).await;
+            if value["kind"] == "changed" {
+                continue;
+            }
+            assert_eq!(
+                value,
+                json!({"kind":"unavailable","reason":"directory_changed"})
+            );
+            break value;
+        };
+        let finished = tokio::time::timeout(Duration::from_secs(10), removed.pull())
+            .await
+            .expect("terminal file watch must confirm cleanup")
+            .unwrap();
+        let Reply::Finished { result, cleanup } = finished else {
+            panic!("terminal file watch did not settle: {finished:?}");
+        };
+        assert_eq!(result.unwrap(), terminal);
+        cleanup.unwrap();
+        assert!(removed.cleanup_confirmed());
+        fixture.native.close().await.unwrap();
+        fixture.client.close().await.unwrap();
+        let status = Client::status(&fixture.endpoint, Some(fixture.epoch))
+            .await
+            .unwrap();
+        assert_eq!(status.sessions, 0);
+        assert!(!status.closing && !status.closed);
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(
+            directory.join("reconnected.txt"),
+            "written while disconnected\n",
+        )
+        .unwrap();
+        let mut client = Client::connect(&fixture.endpoint, Some(fixture.epoch))
+            .await
+            .unwrap();
+        let (mut fresh, identity) = subscribe(&client, &session).await;
+        listing(
+            &client,
+            &session,
+            &identity,
+            json!([
+                {"path":{"bytesBase64":"d2F0Y2hlZC9yZWNvbm5lY3RlZC50eHQ="},"kind":"file"},
+            ]),
+        )
+        .await;
+        fresh.close().await.unwrap();
+        assert!(fresh.cleanup_confirmed());
+        assert_eq!(
+            intent_count(&fixture.database).await,
+            before,
+            "file queries and subscriptions must not create mutation intents"
+        );
+        assert!(
+            fixture.model_requests.try_recv().is_err(),
+            "file browsing must not start a model request"
+        );
+        client.quit().await.unwrap();
+        fixture.server.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+}

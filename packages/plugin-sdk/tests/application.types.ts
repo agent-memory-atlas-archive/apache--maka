@@ -30,6 +30,11 @@ import type {
   WorkHubControl,
   WorkHubControlRead,
   WorkHubConfiguration,
+  AgentFileListRead,
+  AgentFileWatch,
+  AgentFilePage,
+  AgentFileChange,
+  WorkspacePath,
   AgentWorkRead,
   AgentExecutionResult,
   AgentHistoryPage,
@@ -575,3 +580,42 @@ function controlStopped(control: WorkHubControl): boolean | null {
     : null;
 }
 void [messageWork, answerPage, originalControl, controlStopped, taskExecution, coordinatorWorkers];
+
+// Workspace file browsing uses Session authority and exact relative path bytes.
+const workspaceRootFiles = {
+  sessionId: 'session',
+  path: null,
+  after: null,
+} satisfies AgentFileListRead;
+const directoryWatch = { sessionId: 'session', path: null } satisfies AgentFileWatch;
+// @ts-expect-error Root selection is explicit; omission is not another path spelling.
+const missingFilePath = { sessionId: 'session' } satisfies AgentFileWatch;
+// @ts-expect-error A workspace path is encoded bytes, never an absolute Host pathname.
+const ambientFilePath: WorkspacePath = '/private/other';
+function continueWorkspaceFiles(page: AgentFilePage): AgentFileListRead {
+  for (const entry of page.entries) {
+    const exactPath: WorkspacePath = entry.path;
+    void exactPath;
+  }
+  return { sessionId: 'session', path: null, after: page.next };
+}
+function observeWorkspaceFiles(change: AgentFileChange) {
+  if (change.kind === 'ready') {
+    const originalDirectory: string = change.directoryIdentity;
+    void originalDirectory;
+  } else if (change.kind === 'unavailable') {
+    const reason: 'directory_changed' = change.reason;
+    void reason;
+  }
+  // @ts-expect-error File invalidation has no durable event replay cursor.
+  const replay = change.after;
+  void replay;
+}
+void [
+  workspaceRootFiles,
+  directoryWatch,
+  missingFilePath,
+  ambientFilePath,
+  continueWorkspaceFiles,
+  observeWorkspaceFiles,
+];

@@ -28,6 +28,7 @@ mod attachments;
 mod auxiliary;
 mod compaction;
 mod execution;
+mod files;
 mod goal;
 mod graph;
 mod imports;

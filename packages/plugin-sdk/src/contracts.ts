@@ -11303,7 +11303,7 @@ export const contracts = {
                 $ref: '#/$defs/GitArea',
               },
               path: {
-                $ref: '#/$defs/GitPath',
+                $ref: '#/$defs/WorkspacePath',
               },
             },
             additionalProperties: false,
@@ -11313,7 +11313,7 @@ export const contracts = {
                 type: 'string',
                 enum: ['staged', 'worktree', 'untracked'],
               },
-              GitPath: {
+              WorkspacePath: {
                 type: 'object',
                 properties: {
                   bytesBase64: {
@@ -11458,7 +11458,7 @@ export const contracts = {
                     $ref: '#/$defs/GitArea',
                   },
                   path: {
-                    $ref: '#/$defs/GitPath',
+                    $ref: '#/$defs/WorkspacePath',
                   },
                   kind: {
                     $ref: '#/$defs/GitChangeKind',
@@ -11471,7 +11471,7 @@ export const contracts = {
                 type: 'string',
                 enum: ['staged', 'worktree', 'untracked'],
               },
-              GitPath: {
+              WorkspacePath: {
                 type: 'object',
                 properties: {
                   bytesBase64: {
@@ -15585,6 +15585,139 @@ export const contracts = {
               AgentSessionActivity: {
                 type: 'string',
                 enum: ['idle', 'working', 'waiting'],
+              },
+            },
+          },
+          resources: {},
+        },
+        listFiles: {
+          mode: 'query',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentFileListRead',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              path: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/WorkspacePath',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+              after: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentFileCursor',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'path', 'after'],
+            $defs: {
+              WorkspacePath: {
+                type: 'object',
+                properties: {
+                  bytesBase64: {
+                    type: 'string',
+                    maxLength: 5464,
+                  },
+                },
+                additionalProperties: false,
+                required: ['bytesBase64'],
+              },
+              AgentFileCursor: {
+                type: 'object',
+                properties: {
+                  directoryIdentity: {
+                    type: 'string',
+                  },
+                  after: {
+                    $ref: '#/$defs/WorkspacePath',
+                  },
+                },
+                additionalProperties: false,
+                required: ['directoryIdentity', 'after'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentFilePage',
+            type: 'object',
+            properties: {
+              directoryIdentity: {
+                type: 'string',
+              },
+              entries: {
+                type: 'array',
+                items: {
+                  $ref: '#/$defs/AgentFileEntry',
+                },
+              },
+              next: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/AgentFileCursor',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['directoryIdentity', 'entries', 'next'],
+            $defs: {
+              AgentFileEntry: {
+                type: 'object',
+                properties: {
+                  path: {
+                    $ref: '#/$defs/WorkspacePath',
+                  },
+                  kind: {
+                    $ref: '#/$defs/AgentFileKind',
+                  },
+                },
+                additionalProperties: false,
+                required: ['path', 'kind'],
+              },
+              WorkspacePath: {
+                type: 'object',
+                properties: {
+                  bytesBase64: {
+                    type: 'string',
+                    maxLength: 5464,
+                  },
+                },
+                additionalProperties: false,
+                required: ['bytesBase64'],
+              },
+              AgentFileKind: {
+                type: 'string',
+                enum: ['file', 'directory', 'symlink', 'other'],
+              },
+              AgentFileCursor: {
+                type: 'object',
+                properties: {
+                  directoryIdentity: {
+                    type: 'string',
+                  },
+                  after: {
+                    $ref: '#/$defs/WorkspacePath',
+                  },
+                },
+                additionalProperties: false,
+                required: ['directoryIdentity', 'after'],
               },
             },
           },
@@ -24678,6 +24811,96 @@ export const contracts = {
             },
             additionalProperties: false,
             required: ['revision'],
+          },
+          resources: {},
+        },
+        watchFiles: {
+          mode: 'subscription',
+          input: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentFileWatch',
+            type: 'object',
+            properties: {
+              sessionId: {
+                type: 'string',
+              },
+              path: {
+                anyOf: [
+                  {
+                    $ref: '#/$defs/WorkspacePath',
+                  },
+                  {
+                    type: 'null',
+                  },
+                ],
+              },
+            },
+            additionalProperties: false,
+            required: ['sessionId', 'path'],
+            $defs: {
+              WorkspacePath: {
+                type: 'object',
+                properties: {
+                  bytesBase64: {
+                    type: 'string',
+                    maxLength: 5464,
+                  },
+                },
+                additionalProperties: false,
+                required: ['bytesBase64'],
+              },
+            },
+          },
+          output: {
+            $schema: 'https://json-schema.org/draft/2020-12/schema',
+            title: 'AgentFileChange',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  directoryIdentity: {
+                    type: 'string',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'ready',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'directoryIdentity'],
+              },
+              {
+                type: 'object',
+                properties: {
+                  kind: {
+                    type: 'string',
+                    const: 'changed',
+                  },
+                },
+                required: ['kind'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  reason: {
+                    $ref: '#/$defs/AgentFileUnavailable',
+                  },
+                  kind: {
+                    type: 'string',
+                    const: 'unavailable',
+                  },
+                },
+                additionalProperties: false,
+                required: ['kind', 'reason'],
+              },
+            ],
+            $defs: {
+              AgentFileUnavailable: {
+                type: 'string',
+                enum: ['directory_changed'],
+              },
+            },
           },
           resources: {},
         },

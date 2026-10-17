@@ -80,6 +80,98 @@ impl backend::Realm for Domain {
         })
     }
 }
+fn service_plan(contract: &Contract) -> (Input, Plan) {
+    let mut packages = Packages::default();
+    let mut nodes = BTreeMap::new();
+    for (name, key, provider) in [("provider", 1, true), ("consumer", 2, false)] {
+        let package = PackageRef {
+            id: name.into(),
+            revision: format!("sha256-{:064x}", key),
+        };
+        packages
+            .insert(
+                package.clone(),
+                Declaration {
+                    composition: None,
+                    entries: BTreeMap::from([(
+                        EntryTarget::Host,
+                        EntryDeclaration {
+                            scene: None,
+                            implementation: if provider {
+                                Implementation::Native {
+                                    implementation: "native".into(),
+                                }
+                            } else {
+                                Implementation::JavaScript {
+                                    module: "consumer.mjs".into(),
+                                    realm: Realm::Shared,
+                                }
+                            },
+                            configuration: json!({}),
+                            imports: if provider {
+                                BTreeMap::new()
+                            } else {
+                                BTreeMap::from([(
+                                    "echo".into(),
+                                    Import {
+                                        contract: contract.clone(),
+                                        cardinality: Cardinality::One,
+                                    },
+                                )])
+                            },
+                            exports: if provider {
+                                BTreeMap::from([(
+                                    "echo".into(),
+                                    Export {
+                                        contract: contract.clone(),
+                                        availability: Availability::Required,
+                                    },
+                                )])
+                            } else {
+                                BTreeMap::new()
+                            },
+                        },
+                    )]),
+                },
+            )
+            .unwrap();
+        nodes.insert(
+            name.into(),
+            Node {
+                key: Uuid::from_u128(key),
+                package: package.into(),
+                use_package: PackageUse::Entry,
+                configuration: Configuration::default(),
+                parameters: Configuration::default(),
+                bindings: if provider {
+                    BTreeMap::new()
+                } else {
+                    BTreeMap::from([(
+                        "echo".into(),
+                        vec![Target::Instance {
+                            path: vec!["provider".into()],
+                            export: "echo".into(),
+                        }],
+                    )])
+                },
+                disabled: false,
+                overrides: Vec::new(),
+            },
+        );
+    }
+    let input = Input {
+        environment: Environment {
+            location: ExecutionLocation::Host,
+            presentation: None,
+        },
+        instances: nodes,
+        recovery: None,
+        launch: None,
+    };
+    let plan = Plan::prepare(&input, &packages, &RemoteExports::new()).unwrap();
+    (input, plan)
+}
+
 #[tokio::test]
 async fn final_admission_rejects_failed_consumer_before_terminal_notification_is_polled() {
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -100,94 +192,7 @@ async fn final_admission_rejects_failed_consumer_before_terminal_notification_is
                 )]),
             },
         };
-        let mut packages = Packages::default();
-        let mut nodes = BTreeMap::new();
-        for (name, key, provider) in [("provider", 1, true), ("consumer", 2, false)] {
-            let package = PackageRef {
-                id: name.into(),
-                revision: format!("sha256-{:064x}", key),
-            };
-            packages
-                .insert(
-                    package.clone(),
-                    Declaration {
-                        composition: None,
-                        entries: BTreeMap::from([(
-                            EntryTarget::Host,
-                            EntryDeclaration {
-                                scene: None,
-                                implementation: if provider {
-                                    Implementation::Native {
-                                        implementation: "native".into(),
-                                    }
-                                } else {
-                                    Implementation::JavaScript {
-                                        module: "consumer.mjs".into(),
-                                        realm: Realm::Shared,
-                                    }
-                                },
-                                configuration: json!({}),
-                                imports: if provider {
-                                    BTreeMap::new()
-                                } else {
-                                    BTreeMap::from([(
-                                        "echo".into(),
-                                        Import {
-                                            contract: contract.clone(),
-                                            cardinality: Cardinality::One,
-                                        },
-                                    )])
-                                },
-                                exports: if provider {
-                                    BTreeMap::from([(
-                                        "echo".into(),
-                                        Export {
-                                            contract: contract.clone(),
-                                            availability: Availability::Required,
-                                        },
-                                    )])
-                                } else {
-                                    BTreeMap::new()
-                                },
-                            },
-                        )]),
-                    },
-                )
-                .unwrap();
-            nodes.insert(
-                name.into(),
-                Node {
-                    key: Uuid::from_u128(key),
-                    package: package.into(),
-                    use_package: PackageUse::Entry,
-                    configuration: Configuration::default(),
-                    parameters: Configuration::default(),
-                    bindings: if provider {
-                        BTreeMap::new()
-                    } else {
-                        BTreeMap::from([(
-                            "echo".into(),
-                            vec![Target::Instance {
-                                path: vec!["provider".into()],
-                                export: "echo".into(),
-                            }],
-                        )])
-                    },
-                    disabled: false,
-                    overrides: Vec::new(),
-                },
-            );
-        }
-        let input = Input {
-            environment: Environment {
-                location: ExecutionLocation::Host,
-                presentation: None,
-            },
-            instances: nodes,
-            recovery: None,
-            launch: None,
-        };
-        let plan = Plan::prepare(&input, &packages, &RemoteExports::new()).unwrap();
+        let (input, plan) = service_plan(&contract);
         let waiting_replacement = plan.instances()[&InstanceId(vec![Uuid::from_u128(2)])].clone();
         let issuer = Issuer::default();
         let domains = Arc::new(Domains::default());
@@ -496,4 +501,307 @@ async fn retained_old_head_after_new_explicit_adoption_does_not_poison_readiness
     assert!(owner.check_adoption_source(&second).is_err());
     drop(owner);
     Arc::try_unwrap(store).ok().unwrap().close().await.unwrap();
+}
+
+struct RetirementGate {
+    subscription: bool,
+    started: tokio::sync::Notify,
+    returned: Arc<tokio::sync::Notify>,
+    finish_query: Arc<tokio::sync::Notify>,
+    cleanup: Arc<tokio::sync::Notify>,
+    cancellation: std::sync::Mutex<Option<CancellationToken>>,
+}
+impl Handler for RetirementGate {
+    fn call(&self, _: String, _: Value, context: Context) -> BoxFuture<'static, Result<Value>> {
+        let subscription = self.subscription;
+        let cleanup = self.cleanup.clone();
+        let mut ticket = context.scope().resources.reserve().unwrap();
+        ticket.start();
+        tokio::spawn(async move {
+            cleanup.notified().await;
+            ticket.complete(Ok(()));
+        });
+        self.cancellation
+            .lock()
+            .unwrap()
+            .replace(context.scope().cancellation.clone());
+        self.started.notify_one();
+        let stop = context.scope().cancellation.clone();
+        let finished = self.finish_query.clone();
+        let returned = self.returned.clone();
+        Box::pin(async move {
+            if subscription {
+                stop.cancelled().await;
+            } else {
+                finished.notified().await;
+            }
+            returned.notify_one();
+            Ok(Value::Null)
+        })
+    }
+}
+
+fn poll_ready(owner: &mut Owner) {
+    while let Some(Some(done)) = owner.jobs.next().now_or_never() {
+        owner.complete(done);
+        owner.drive();
+    }
+}
+
+async fn retirement_preserves_execution_cleanup(
+    subscription: bool,
+    consumer_only: bool,
+    loading_consumer: bool,
+) {
+    let contract = Contract {
+        name: "example.Retirement".into(),
+        version: 1,
+        transport: Transport::Local,
+        interface: Interface::Service {
+            methods: BTreeMap::from([(
+                "observe".into(),
+                Method {
+                    progress: None,
+                    mode: if subscription {
+                        MethodMode::Subscription
+                    } else {
+                        MethodMode::Query
+                    },
+                    input: json!({}),
+                    output: json!({}),
+                    resources: BTreeMap::new(),
+                },
+            )]),
+        },
+    };
+    let (input, plan) = service_plan(&contract);
+    let issuer = Issuer::default();
+    let mut owner = Owner::new(
+        plan,
+        input,
+        BTreeMap::new(),
+        NativeRegistry::default(),
+        issuer.clone(),
+        Arc::new(Allowed),
+        None,
+        watch::channel(Snapshot::default()).0,
+        Weak::new(),
+        None,
+    );
+    owner.pending.clear();
+    owner.starting = false;
+    let gate = Arc::new(RetirementGate {
+        subscription,
+        started: tokio::sync::Notify::new(),
+        returned: Arc::new(tokio::sync::Notify::new()),
+        finish_query: Arc::new(tokio::sync::Notify::new()),
+        cleanup: Arc::new(tokio::sync::Notify::new()),
+        cancellation: std::sync::Mutex::new(None),
+    });
+    let closes = Arc::new(AtomicUsize::new(0));
+    let mut activations = Vec::new();
+    for key in [1, 2] {
+        let activation = owner
+            .runtime
+            .begin(&InstanceId(vec![Uuid::from_u128(key)]))
+            .unwrap();
+        let provider = key == 1;
+        owner
+            .activations
+            .insert(activation.instance().clone(), activation.clone());
+        let closed = closes.clone();
+        owner.owned.insert(
+            activation.instance().clone(),
+            Owned {
+                imports: Arc::new(BTreeMap::new()),
+                resource: owner
+                    .runtime
+                    .own_resource(&activation, "native fixture")
+                    .unwrap(),
+                close: Some(Box::pin(async move {
+                    if provider {
+                        closed.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Ok(())
+                })),
+                initializing: false,
+                closing: false,
+                native_owner: None,
+                vm: None,
+            },
+        );
+        if provider || !loading_consumer {
+            owner
+                .runtime
+                .publish(
+                    &activation,
+                    if provider {
+                        BTreeMap::from([(
+                            "echo".into(),
+                            Published {
+                                contract: contract.clone(),
+                                value: Service::new(contract.clone(), gate.clone()).unwrap(),
+                            },
+                        )])
+                    } else {
+                        BTreeMap::new()
+                    },
+                )
+                .map_err(|error| error.error)
+                .unwrap();
+        }
+        activations.push(activation);
+    }
+    let provider = &activations[0];
+    let consumer = &activations[1];
+    let binding = owner.capture_bindings(consumer, "echo").unwrap().remove(0);
+    let scope = issuer
+        .issue(
+            Identity::Remote {
+                request_id: Uuid::new_v4(),
+            },
+            CancellationToken::new(),
+        )
+        .unwrap();
+    let (query_reply, query) = oneshot::channel();
+    let (subscription_reply, observation) = oneshot::channel();
+    owner.command(Command::Call(Box::new(Call {
+        kind: if subscription {
+            CallKind::Subscription {
+                reply: subscription_reply,
+            }
+        } else {
+            CallKind::Query(query_reply)
+        },
+        parent: None,
+        binding,
+        method: "observe".into(),
+        input: Value::Null,
+        scope: scope.clone(),
+        attachments: Attachments::new(),
+        capture: None,
+        resources: Arc::new(Semaphore::new(0))
+            .try_acquire_many_owned(0)
+            .unwrap(),
+        bytes: Arc::new(Semaphore::new(4))
+            .try_acquire_many_owned(4)
+            .unwrap(),
+    })));
+    let accepted_query = if subscription {
+        None
+    } else {
+        Some(query.await.unwrap().unwrap())
+    };
+    let accepted_observation = if subscription {
+        Some(observation.await.unwrap().unwrap())
+    } else {
+        None
+    };
+    poll_ready(&mut owner);
+    gate.started.notified().await;
+    owner.drive();
+    poll_ready(&mut owner);
+    assert!(
+        !gate
+            .cancellation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .is_cancelled(),
+        "an admitted subscription remains live while its consumer initializes"
+    );
+    owner
+        .runtime
+        .retire(if consumer_only { consumer } else { provider })
+        .unwrap();
+    owner.drive();
+    poll_ready(&mut owner);
+    let cancelled = gate
+        .cancellation
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .is_cancelled();
+    assert_eq!(cancelled, subscription);
+    assert!(
+        !scope.cancellation.is_cancelled(),
+        "retirement does not cancel the original caller"
+    );
+    if !subscription {
+        gate.finish_query.notify_one();
+        poll_ready(&mut owner);
+    }
+    gate.returned.notified().await;
+    assert_eq!(
+        owner.runtime.status(provider).unwrap().calls,
+        1,
+        "the returned handler still owns its unfinished native cleanup"
+    );
+    assert_eq!(
+        closes.load(Ordering::SeqCst),
+        0,
+        "native close must wait for actual call cleanup"
+    );
+    assert!(!owner.closed);
+    gate.cleanup.notify_one();
+    let done = owner.jobs.next().await.unwrap();
+    owner.complete(done);
+    owner.drive();
+    poll_ready(&mut owner);
+    if subscription {
+        accepted_observation
+            .unwrap()
+            .completion()
+            .await
+            .cleanup
+            .unwrap();
+    } else {
+        let completion = accepted_query.unwrap().completion().await;
+        assert_eq!(completion.result.unwrap(), Value::Null);
+        completion.cleanup.unwrap();
+    }
+    scope.resources.finish().await.unwrap();
+    if consumer_only {
+        assert_eq!(owner.runtime.status(provider).unwrap().phase, Phase::Active);
+    }
+    owner.stop();
+    owner.drive();
+    while let Some(done) = owner.jobs.next().await {
+        owner.complete(done);
+        owner.drive();
+    }
+    assert!(owner.closed);
+    assert_eq!(closes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn retiring_either_subscription_party_cancels_but_waits_for_original_cleanup() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        retirement_preserves_execution_cleanup(true, false, false).await;
+        retirement_preserves_execution_cleanup(true, true, false).await;
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn retirement_does_not_cancel_an_accepted_query() {
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        retirement_preserves_execution_cleanup(false, false, false),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn loading_consumer_subscription_survives_drive_until_retirement() {
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        retirement_preserves_execution_cleanup(true, true, true),
+    )
+    .await
+    .unwrap();
 }

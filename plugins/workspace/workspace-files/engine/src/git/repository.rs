@@ -167,7 +167,7 @@ impl Repository {
             {
                 return Err(failure("git_unsupported"));
             }
-            GitPath::from_bytes(entry.path(&index))?;
+            WorkspacePath::from_bytes(entry.path(&index))?;
         }
         let head = repo
             .head()
@@ -323,7 +323,7 @@ impl Repository {
         for (area, name, kind) in entries {
             let entry = GitStatusEntry {
                 area,
-                path: GitPath::from_bytes(&name)?,
+                path: WorkspacePath::from_bytes(&name)?,
                 kind,
             };
             let bytes = serde_json::to_vec(&entry).map_err(io::Error::other)?.len()

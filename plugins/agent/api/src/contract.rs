@@ -27,6 +27,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+#[path = "contract_files.rs"]
+mod files;
+pub use files::*;
 #[path = "contract_git.rs"]
 mod git;
 pub use git::*;
@@ -1489,6 +1492,14 @@ pub fn contract() -> Contract {
                 (
                     "create".into(),
                     method::<Create, Created>(MethodMode::Mutation),
+                ),
+                (
+                    "listFiles".into(),
+                    method::<FileListRead, FilePage>(MethodMode::Query),
+                ),
+                (
+                    "watchFiles".into(),
+                    method::<FileWatch, FileChange>(MethodMode::Subscription),
                 ),
                 (
                     "gitStatus".into(),

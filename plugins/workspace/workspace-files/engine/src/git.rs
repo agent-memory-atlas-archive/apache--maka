@@ -18,8 +18,8 @@
  */
 
 //! Read-only Git comparisons within the Session's original workspace.
+pub use crate::path::WorkspacePath;
 use crate::worktree::Binding;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gix::bstr::ByteSlice;
 use maka_agent_facts::execution::DirectoryIdentity;
 use schemars::JsonSchema;
@@ -46,56 +46,6 @@ const MAX_CONTROL: usize = 256 * 1024;
 const MAX_DIFF_INPUT: usize = 1024 * 1024;
 const MAX_OUTPUT: usize = 512 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct GitPath {
-    #[schemars(length(max = 5464))]
-    pub bytes_base64: String,
-}
-impl GitPath {
-    pub fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
-        let path = Self {
-            bytes_base64: STANDARD.encode(bytes),
-        };
-        path.validate()?;
-        Ok(path)
-    }
-    pub fn validate(&self) -> io::Result<()> {
-        self.bytes().map(|_| ())
-    }
-    fn bytes(&self) -> io::Result<Vec<u8>> {
-        if self.bytes_base64.len() > 5464 {
-            return Err(failure("git_invalid_path"));
-        }
-        let bytes = STANDARD
-            .decode(&self.bytes_base64)
-            .map_err(|_| failure("git_invalid_path"))?;
-        if bytes.is_empty()
-            || bytes.len() > 4096
-            || bytes.contains(&0)
-            || bytes
-                .split(|b| *b == b'/')
-                .any(|p| p.is_empty() || p == b"." || p == b".." || p.eq_ignore_ascii_case(b".git"))
-            || STANDARD.encode(&bytes) != self.bytes_base64
-        {
-            return Err(failure("git_invalid_path"));
-        }
-        #[cfg(windows)]
-        if bytes.contains(&b'\\') {
-            return Err(failure("git_invalid_path"));
-        }
-        let path =
-            gix::path::try_from_bstr(bytes.as_bstr()).map_err(|_| failure("git_invalid_path"))?;
-        if path.is_absolute()
-            || !path
-                .components()
-                .all(|p| matches!(p, std::path::Component::Normal(_)))
-        {
-            return Err(failure("git_invalid_path"));
-        }
-        Ok(bytes)
-    }
-}
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
@@ -120,7 +70,7 @@ pub enum GitChangeKind {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GitStatusEntry {
     pub area: GitArea,
-    pub path: GitPath,
+    pub path: WorkspacePath,
     pub kind: GitChangeKind,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -166,11 +116,11 @@ pub fn diff(
     private_root: &Path,
     binding: Option<&Binding>,
     area: GitArea,
-    path: &GitPath,
+    path: &WorkspacePath,
     cancel: Arc<AtomicBool>,
 ) -> io::Result<Option<GitDiff>> {
     expose((|| {
-        let bytes = path.bytes()?;
+        let bytes = path.bytes().map_err(|_| failure("git_invalid_path"))?;
         let Some(repo) =
             repository::Repository::open(workspace, identity, private_root, binding, cancel)?
         else {

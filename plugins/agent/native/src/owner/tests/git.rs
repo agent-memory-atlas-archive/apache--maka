@@ -384,6 +384,34 @@ async fn git_queries_use_the_selected_managed_linked_worktree_not_its_source_rep
             .await
             .unwrap();
         assert_eq!(changed_lines(&diff), ["-source base", "+managed current"]);
+        // Public browsing shares this exact managed-worktree exception, while
+        // the private parent and administration directories remain unreachable.
+        let files = f
+            .query(
+                "listFiles",
+                json!({
+                    "sessionId":session,"path":null,"after":null,
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            files["entries"],
+            json!([
+                {"path":{"bytesBase64":"dHJhY2tlZC50eHQ="},"kind":"file"},
+            ])
+        );
+        assert_eq!(files["next"], Value::Null);
+        assert!(
+            f.query(
+                "listFiles",
+                json!({
+                    "sessionId":session,"path":path("../"),"after":null,
+                })
+            )
+            .await
+            .is_err()
+        );
         let status = f
             .query("gitStatus", json!({"sessionId":session}))
             .await

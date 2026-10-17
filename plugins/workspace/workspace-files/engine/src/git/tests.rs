@@ -60,7 +60,7 @@ impl Fixture {
             &self.private,
             None,
             area,
-            &GitPath::from_bytes(name).unwrap(),
+            &WorkspacePath::from_bytes(name).unwrap(),
             cancel(),
         )
         .unwrap()
@@ -400,12 +400,16 @@ fn no_repository_is_distinct_from_invalid_path_and_changed_directory_identity() 
         None
     );
     assert_eq!(
-        GitPath::from_bytes(b"../private").unwrap_err().to_string(),
-        "git_invalid_path"
+        WorkspacePath::from_bytes(b"../private")
+            .unwrap_err()
+            .to_string(),
+        "workspace_path_invalid"
     );
     assert_eq!(
-        GitPath::from_bytes(b".git/config").unwrap_err().to_string(),
-        "git_invalid_path"
+        WorkspacePath::from_bytes(b".git/config")
+            .unwrap_err()
+            .to_string(),
+        "workspace_path_invalid"
     );
     let renamed = f._temp.path().join("renamed");
     fs::rename(&f.root, &renamed).unwrap();

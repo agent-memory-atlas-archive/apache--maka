@@ -286,7 +286,15 @@ export type RuntimeProtocol =
   | FormAsk
   | FormResponse
   | WorkspaceProcessConfiguration
-  | GitPath
+  | WorkspacePath
+  | AgentFileListRead
+  | AgentFileWatch
+  | AgentFileCursor
+  | AgentFilePage
+  | AgentFileEntry
+  | AgentFileKind
+  | AgentFileChange
+  | AgentFileUnavailable
   | GitArea
   | GitChangeKind
   | GitStatusEntry
@@ -4403,6 +4411,20 @@ export type FormResult =
     };
 export type QuestionRejection = 'invalid_input' | 'unavailable';
 export type WorkspaceProcessSessionKind = 'agent' | 'workhub';
+export type AgentFileKind = 'file' | 'directory' | 'symlink' | 'other';
+export type AgentFileChange =
+  | {
+      directoryIdentity: string;
+      kind: 'ready';
+    }
+  | {
+      kind: 'changed';
+    }
+  | {
+      reason: AgentFileUnavailable;
+      kind: 'unavailable';
+    };
+export type AgentFileUnavailable = 'directory_changed';
 export type GitArea = 'staged' | 'worktree' | 'untracked';
 export type GitChangeKind = 'added' | 'modified' | 'deleted' | 'type_changed' | 'conflicted';
 export type GitDiff =
@@ -10035,12 +10057,34 @@ export interface Policy {
    */
   denyGlobs: string[];
 }
-export interface GitPath {
+export interface WorkspacePath {
   bytesBase64: string;
+}
+export interface AgentFileListRead {
+  sessionId: string;
+  path: WorkspacePath | null;
+  after: AgentFileCursor | null;
+}
+export interface AgentFileCursor {
+  directoryIdentity: string;
+  after: WorkspacePath;
+}
+export interface AgentFileWatch {
+  sessionId: string;
+  path: WorkspacePath | null;
+}
+export interface AgentFilePage {
+  directoryIdentity: string;
+  entries: AgentFileEntry[];
+  next: AgentFileCursor | null;
+}
+export interface AgentFileEntry {
+  path: WorkspacePath;
+  kind: AgentFileKind;
 }
 export interface GitStatusEntry {
   area: GitArea;
-  path: GitPath;
+  path: WorkspacePath;
   kind: GitChangeKind;
 }
 export interface GitStatus {
@@ -10051,7 +10095,7 @@ export interface GitStatus {
 export interface AgentGitDiffRead {
   sessionId: string;
   area: GitArea;
-  path: GitPath;
+  path: WorkspacePath;
 }
 export interface TerminalList {
   sessionId: string;

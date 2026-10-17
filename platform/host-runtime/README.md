@@ -25,6 +25,8 @@ Runs checked service compositions and owns call admission, activation and retire
 
 A committed source is desired configuration. It becomes effective only after its instances converge. Updates preserve unchanged activations and their captured bindings; replacements wait for accepted calls and native resources to settle. Mutation receipts distinguish business results from cleanup, so a lost reply must be resolved through its original receipt.
 
+Retiring either party of a subscription requests cancellation of its original invocation. The Host still waits for the handler and its native resources to settle before closing the provider. Accepted queries and mutations retain their original completion and cleanup semantics.
+
 Complete source documents, including frozen remote contracts and package references, have a shared 2 MiB budget for admission, persistence and management. Read them in pages under one source revision; replace large documents through immutable resources.
 
 Persistence comes from the owned EventLog. Stable plugin data belongs to the Root, deployment and instance; an activation epoch identifies execution, not a new data owner.

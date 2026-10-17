@@ -24,6 +24,7 @@ publish.workspace = true
 
 [dependencies]
 base64 = "0.22.1"
+notify = "8.2.0"
 maka-agent-facts.workspace = true
 maka-plugin-core.workspace = true
 maka-sandbox.workspace = true

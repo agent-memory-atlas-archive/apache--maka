@@ -17,7 +17,8 @@
  * under the License.
  */
 
-pub use maka_fs_tools::git::{GitArea, GitChangeKind, GitDiff, GitPath, GitStatus, GitStatusEntry};
+use super::WorkspacePath;
+pub use maka_fs_tools::git::{GitArea, GitChangeKind, GitDiff, GitStatus, GitStatusEntry};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -27,5 +28,5 @@ use serde::Deserialize;
 pub struct GitDiffRead {
     pub session_id: String,
     pub area: GitArea,
-    pub path: GitPath,
+    pub path: WorkspacePath,
 }

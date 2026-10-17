@@ -276,6 +276,13 @@ impl Handler for Agent {
                         .map_err(|_| "agent_git_output_unavailable")?;
                     Ok(result)
                 }
+                "listFiles" => {
+                    let result = encode(owner.list_files(decode(input)?, context.scope()).await?)?;
+                    maka_plugin_core::json::check_delivery(&result, 512 * 1024)
+                        .map_err(|_| "agent_files_output_unavailable")?;
+                    Ok(result)
+                }
+                "watchFiles" => owner.watch_files(decode(input)?, context).await,
                 "gitDiff" => {
                     let result = encode(owner.git_diff(decode(input)?, context.scope()).await?)?;
                     maka_plugin_core::json::check_delivery(&result, 512 * 1024)
