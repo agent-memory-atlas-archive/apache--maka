@@ -137,6 +137,20 @@ struct Log {
 }
 
 impl Cli {
+    pub(super) fn logs_to_stderr(&self) -> bool {
+        // Interactive products own the terminal; only headless roles write logs
+        // to stderr. Libraries never install a process-global subscriber.
+        matches!(
+            self.command,
+            Some(
+                Command::Host(_)
+                    | Command::Application(crate::application::Command::Serve(_))
+                    | Command::Code(_)
+                    | Command::Acp(_)
+            )
+        )
+    }
+
     pub(super) fn error_exit_code(&self) -> u8 {
         if matches!(self.command, Some(Command::Host(HostCommand::Candidate(_)))) {
             70
@@ -258,6 +272,51 @@ impl Cli {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn only_headless_roles_log_to_stderr() {
+        for arguments in [
+            vec!["maka", "host", "serve", "--root", "/tmp/logging-host"],
+            vec!["maka", "host", "init", "--root", "/tmp/logging-host"],
+            vec![
+                "maka",
+                "application",
+                "serve",
+                "--root",
+                "/tmp/logging-host",
+                "--deployment",
+                "00000000-0000-0000-0000-000000000001",
+                "--endpoints",
+                "/tmp/endpoints",
+            ],
+            vec!["maka", "code", "--log", "/tmp/logging.sqlite"],
+            vec!["maka", "acp"],
+        ] {
+            assert!(
+                Cli::try_parse_from(&arguments).unwrap().logs_to_stderr(),
+                "{arguments:?}"
+            );
+        }
+        for arguments in [
+            vec!["maka"],
+            vec!["maka", "desktop"],
+            vec!["maka", "application", "launch"],
+            vec![
+                "maka",
+                "application",
+                "run",
+                "--root",
+                "/tmp/logging-ui",
+                "--deployment",
+                "00000000-0000-0000-0000-000000000001",
+            ],
+        ] {
+            assert!(
+                !Cli::try_parse_from(&arguments).unwrap().logs_to_stderr(),
+                "{arguments:?}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn entry_launches_the_product_and_preserves_operator_parsing() {

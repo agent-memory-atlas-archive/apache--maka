@@ -73,8 +73,10 @@ tokio = { workspace = true, features = ["process"] }
 tokio-util = { workspace = true, features = ["io-util"] }
 uuid.workspace = true
 tempfile.workspace = true
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "tracing-log"] }
 
 [dev-dependencies]
+log = "0.4"
 unicode-width.workspace = true
 schemars.workspace = true
 maka-agent-ports.workspace = true

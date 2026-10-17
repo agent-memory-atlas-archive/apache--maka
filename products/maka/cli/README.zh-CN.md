@@ -31,6 +31,8 @@
 
 启动时自动发现并连接本机 Host；不存在则自动启动。TUI 与 Desktop 可以共享同一个 Host。默认退出 UI 时，若没有其他客户端连接，Host 也会退出。TUI 中可用 Ctrl+Alt+Q 仅关闭界面，让已接受的后台任务继续运行，重连后观察结果。
 
+无界面命令（`host`、`application serve`、`code` 和 `acp`）在运行时初始化前安装进程日志订阅器。警告和错误（包括 SQLx 慢查询警告）写入 stderr，不带 ANSI 样式；stdout 保留给命令结果和协议帧。默认不输出普通 DEBUG 查询日志。交互式产品仍自行管理终端输出。
+
 ## 产品更新、恢复与 URL 安装
 
 更新独立 Host 已选的内置插件时，先停止该 Host，再指定它的 State Root：

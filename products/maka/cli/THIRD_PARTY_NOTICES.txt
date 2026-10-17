@@ -1142,6 +1142,7 @@ tar@0.4.46 (MIT OR Apache-2.0); authors declared by package: Alex Crichton <alex
 tempfile@3.27.0 (MIT OR Apache-2.0); authors declared by package: Steven Allen <steven@stebalien.com>, The Rust Project Developers, Ashley Mannix <ashleymannix@live.com.au>, Jason White <me@jasonwhite.io>
 tendril@0.4.3 (MIT/Apache-2.0); authors declared by package: Keegan McAllister <mcallister.keegan@gmail.com>, Simon Sapin <simon.sapin@exyr.org>, Chris Morgan <me@chrismorgan.info>
 tendril@0.5.1 (MIT OR Apache-2.0); authors declared by package: Keegan McAllister <mcallister.keegan@gmail.com>, Simon Sapin <simon.sapin@exyr.org>, Chris Morgan <me@chrismorgan.info>
+thread_local@1.1.10 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antras <amanieu@gmail.com>
 ttf-parser@0.25.1 (MIT OR Apache-2.0); authors declared by package: Caleb Maclennan <caleb@alerque.com>, Laurenz Stampfl <laurenz.stampfl@gmail.com>, Yevhenii Reizner <razrfalcon@gmail.com>, خالد حسني (Khaled Hosny) <khaled@aliftype.com>
 tungstenite@0.24.0 (MIT OR Apache-2.0); authors declared by package: Alexey Galakhov, Daniel Abramov
 tungstenite@0.29.0 (MIT OR Apache-2.0); authors declared by package: Alexey Galakhov, Daniel Abramov
@@ -1412,6 +1413,7 @@ https://crates.io/api/v1/crates/tar/0.4.46/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tempfile/3.27.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tendril/0.4.3/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tendril/0.5.1/download :: LICENSE-APACHE
+https://crates.io/api/v1/crates/thread_local/1.1.10/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/ttf-parser/0.25.1/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tungstenite/0.24.0/download :: LICENSE-APACHE
 https://crates.io/api/v1/crates/tungstenite/0.29.0/download :: LICENSE-APACHE
@@ -5188,12 +5190,14 @@ lock_api@0.4.14 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antr
 parking_lot@0.12.5 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antras <amanieu@gmail.com>
 parking_lot_core@0.9.12 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antras <amanieu@gmail.com>
 rustc_version@0.4.1 (MIT OR Apache-2.0)
+thread_local@1.1.10 (MIT OR Apache-2.0); authors declared by package: Amanieu d'Antras <amanieu@gmail.com>
 
 https://crates.io/api/v1/crates/atomic/0.5.3/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/lock_api/0.4.14/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/parking_lot/0.12.5/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/parking_lot_core/0.9.12/download :: LICENSE-MIT
 https://crates.io/api/v1/crates/rustc_version/0.4.1/download :: LICENSE-MIT
+https://crates.io/api/v1/crates/thread_local/1.1.10/download :: LICENSE-MIT
 
 Copyright (c) 2016 The Rust Project Developers
 
@@ -32251,6 +32255,32 @@ DEALINGS IN THE SOFTWARE.
 
 ================================================================================
 
+sharded-slab@0.1.7 (MIT); authors declared by package: Eliza Weisman <eliza@buoyant.io>
+
+https://crates.io/api/v1/crates/sharded-slab/0.1.7/download :: LICENSE
+
+Copyright (c) 2019 Eliza Weisman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+================================================================================
+
 shell-words@1.1.1 (MIT/Apache-2.0); authors declared by package: Tomasz Miąsko <tomasz.miasko@gmail.com>
 
 https://crates.io/api/v1/crates/shell-words/1.1.1/download :: LICENSE-APACHE
@@ -34484,11 +34514,15 @@ SOFTWARE.
 tokio-native-tls@0.3.1 (MIT); authors declared by package: Tokio Contributors <team@tokio.rs>
 tracing-attributes@0.1.31 (MIT); authors declared by package: Tokio Contributors <team@tokio.rs>, Eliza Weisman <eliza@buoyant.io>, David Barsky <dbarsky@amazon.com>
 tracing-core@0.1.36 (MIT); authors declared by package: Tokio Contributors <team@tokio.rs>
+tracing-log@0.2.0 (MIT); authors declared by package: Tokio Contributors <team@tokio.rs>
+tracing-subscriber@0.3.23 (MIT); authors declared by package: Eliza Weisman <eliza@buoyant.io>, David Barsky <me@davidbarsky.com>, Tokio Contributors <team@tokio.rs>
 tracing@0.1.44 (MIT); authors declared by package: Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>
 
 https://crates.io/api/v1/crates/tokio-native-tls/0.3.1/download :: LICENSE
 https://crates.io/api/v1/crates/tracing-attributes/0.1.31/download :: LICENSE
 https://crates.io/api/v1/crates/tracing-core/0.1.36/download :: LICENSE
+https://crates.io/api/v1/crates/tracing-log/0.2.0/download :: LICENSE
+https://crates.io/api/v1/crates/tracing-subscriber/0.3.23/download :: LICENSE
 https://crates.io/api/v1/crates/tracing/0.1.44/download :: LICENSE
 
 Copyright (c) 2019 Tokio Contributors

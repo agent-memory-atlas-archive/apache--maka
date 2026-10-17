@@ -908,6 +908,7 @@ sha2@0.10.9		X									X
 sha2@0.11.1		X									X					
 sha3@0.10.9		X									X					
 shake@0.1.0		X									X					
+sharded-slab@0.1.7											X					
 shell-words@1.1.1		X									X					
 shlex@1.3.0		X									X					
 shlex@2.0.1		X									X					
@@ -988,6 +989,7 @@ thiserror-impl@1.0.69		X									X
 thiserror-impl@2.0.20		X									X					
 thiserror@1.0.69		X									X					
 thiserror@2.0.20		X									X					
+thread_local@1.1.10		X									X					
 tiff@0.11.3											X					
 time-core@0.1.9		X									X					
 time-macros@0.2.32		X									X					
@@ -1026,6 +1028,8 @@ tower-service@0.3.3											X
 tower@0.5.3											X					
 tracing-attributes@0.1.31											X					
 tracing-core@0.1.36											X					
+tracing-log@0.2.0											X					
+tracing-subscriber@0.3.23											X					
 tracing@0.1.44											X					
 tree_magic_mini@3.2.2											X					
 try-lock@0.2.5											X					

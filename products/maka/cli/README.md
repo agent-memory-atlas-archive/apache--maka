@@ -31,6 +31,8 @@ The first installation asks for workspace trust inside the TUI, before starting 
 
 Startup discovers the local Host and connects to it, or starts one automatically. TUI and Desktop can share that Host. By default, quitting a UI also stops the Host when no other client remains. Use Ctrl+Alt+Q in the TUI to close only the UI and keep accepted background tasks running; reconnect to observe their results.
 
+Headless commands (`host`, `application serve`, `code` and `acp`) install process logging before runtime initialization. Warnings and errors, including SQLx slow-query warnings, go to stderr without ANSI styling; stdout remains available for command results and protocol frames. Ordinary DEBUG query logs are disabled. Interactive products keep control of their terminal output.
+
 ## Product updates, recovery and URL installation
 
 To update a standalone Host's selected bundled plugins, stop that Host and use its State Root:

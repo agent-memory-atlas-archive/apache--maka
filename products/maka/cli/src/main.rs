@@ -30,6 +30,7 @@ mod distribution;
 mod endpoint;
 mod host_client;
 mod initialize;
+mod logging;
 mod operation;
 mod sandbox;
 mod serve;
@@ -143,11 +144,18 @@ fn main() -> std::process::ExitCode {
     if let Some(exit) = desktop::bootstrap() {
         return exit;
     }
+    let cli = args::Cli::parse();
+    if cli.logs_to_stderr()
+        && let Err(error) = logging::initialize()
+    {
+        eprintln!("logging startup: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
     match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
     {
-        Ok(runtime) => runtime.block_on(run()),
+        Ok(runtime) => runtime.block_on(run(cli)),
         Err(error) => {
             eprintln!("runtime startup: {error}");
             std::process::ExitCode::FAILURE
@@ -194,8 +202,7 @@ fn sandbox_helper(role: &str) -> std::io::Result<()> {
         })
 }
 
-async fn run() -> std::process::ExitCode {
-    let cli = args::Cli::parse();
+async fn run(cli: args::Cli) -> std::process::ExitCode {
     let error_exit = cli.error_exit_code();
     let result = cli.run().await;
     match result {
