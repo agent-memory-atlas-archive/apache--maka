@@ -134,9 +134,9 @@ impl RunTools {
         Ok(self.request(current))
     }
 
-    /// Handoff seals settled history and Host capabilities, not a new model step.
-    /// Live bindings are sampled afresh by the successor after restoration.
-    pub fn handoff_definitions(&self) -> Vec<ToolDefinition> {
+    /// Replay seals settled history and registered capabilities, not live state.
+    /// Each model step captures live bindings after invocation admission.
+    pub fn replay_definitions(&self) -> Vec<ToolDefinition> {
         self.request(self.availability.clone()).definitions()
     }
 

@@ -46,7 +46,8 @@ pub struct ContinuationClaim {
     pub id: String,
     pub source: RunBoundary,
     pub base: SessionBase,
-    /// Engine-owned provider replay evidence, separate from the raw source digest.
+    /// Engine-owned replay evidence over canonical input and registered tools.
+    /// ModelRequested records the actual request after live tool binding.
     pub replay: ReplayEvidence,
 }
 

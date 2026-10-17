@@ -180,20 +180,13 @@ pub(super) async fn inspect(
     if let crate::RunWork::Handoff { pause, .. } = &input.work {
         tools.restore(&pause.execution.tools)?;
     }
-    let definitions = if matches!(input.work, crate::RunWork::Handoff { .. }) {
-        tools.handoff_definitions()
-    } else {
-        tools
-            .capture(&input.configuration.cwd, cancellation.clone())
-            .await?
-            .definitions()
-    };
+    let definitions = tools.replay_definitions();
     // Resume validates names from the full explicit inventory, including tools
     // not yet advertised through lazy discovery.
     let mut available: std::collections::HashSet<_> = catalog.names().into_iter().collect();
     available.extend(definitions.iter().map(|definition| definition.name.clone()));
     // A handoff replays settled facts, including rejected calls to unavailable
-    // tools. It never executes them again; the live catalog is checked above.
+    // tools. It never executes them again; the registered catalog is checked above.
     for message in prompt
         .iter()
         .filter(|_| !matches!(input.work, crate::RunWork::Handoff { .. }))

@@ -53,6 +53,165 @@ async fn resume_input(fixture: &Fixture, source: &Value) -> Value {
         "sourceHighWater":source["highWater"], "model":fixture.selection().await})
 }
 
+fn assert_computer_state(request: &Value, expected: &str) {
+    let tool = request["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "cua_repl")
+        .expect("real Computer tool descriptor");
+    assert!(
+        tool["function"]["description"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("Current REPL state: {expected}.")),
+        "{tool}"
+    );
+}
+
+async fn assert_computer_output(fixture: &Fixture, session: &str, expected: &str) {
+    use maka_agent_facts::event::{Fact, ToolOutcome};
+    use maka_agent_facts::tool_output::DurableToolProjection;
+
+    let facts = service_tools::facts(fixture, session).await;
+    let outcome = facts
+        .iter()
+        .rev()
+        .find_map(|fact| match fact {
+            Fact::ToolSettled { outcome, .. } => Some(outcome),
+            _ => None,
+        })
+        .expect("actual Computer settlement");
+    let ToolOutcome::Succeeded {
+        model_projection: DurableToolProjection::Text { text },
+        ..
+    } = outcome
+    else {
+        panic!("expected successful Computer text output: {outcome:?}");
+    };
+    assert_eq!(text, &format!("{expected}\nREPL state: \"ready\""));
+}
+
+async fn computer_resume_replays_original_input_without_duplicate_effects(stop: bool) {
+    use maka_agent_facts::event::Fact;
+    use maka_agent_facts::interaction::InteractionRequest;
+
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fixture = Fixture::with_services(
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+            None,
+            None,
+            Some(service_tools::Setup::computer()),
+        )
+        .await;
+        let session = fixture.create("Resume with Computer").await;
+
+        // Establish a real approved Computer VM before interrupting another run.
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert_computer_state(&request(&mut socket).await, "fresh");
+        service_tools::named_tool_response(
+            &mut socket,
+            "cua_repl",
+            json!({"code":"globalThis.resumeCounter = 40; nodeRepl.write(globalThis.resumeCounter);"}),
+        )
+        .await;
+        let mut commits = fixture.store.subscribe_commits();
+        let approval = loop {
+            commits.borrow_and_update();
+            if let Some(record) = fixture
+                .store
+                .pending_interactions(&session)
+                .await
+                .unwrap()
+                .into_iter()
+                .next()
+            {
+                break record;
+            }
+            commits.changed().await.unwrap();
+        };
+        assert!(matches!(&approval.request, InteractionRequest::ClientCapability { target, .. } if target == &maka_workspace_api::computer::target()));
+        assert_eq!(fixture.mutation(2, "respond", json!({"sessionId":session,"requestId":approval.request_id,"answer":{"kind":"client_capability","decision":"allow"}}), Uuid::new_v4()).await.unwrap()["kind"], "recorded");
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        assert_computer_output(&fixture, &session, "40").await;
+        response(&mut socket).await;
+        fixture.drained().await;
+
+        let sent = fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert_computer_state(&request(&mut socket).await, "ready");
+        if stop {
+            assert_eq!(fixture.mutation(2, "stop", json!({"sessionId":session,"invocationId":sent["invocationId"]}), Uuid::new_v4()).await.unwrap()["requested"], true);
+        } else {
+            let body = json!({"error":{"message":"resume fixture model failure","type":"invalid_request_error","code":"invalid_request"}}).to_string();
+            socket.write_all(format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        }
+        drop(socket);
+        fixture.drained().await;
+        let source = fixture.query("execution", json!({"sessionId":session,"invocationId":sent["invocationId"]})).await.unwrap()["execution"].clone();
+        assert_eq!(source["state"], if stop { "cancelled" } else { "failed" }, "{source}");
+
+        // A later message must not replace the selected source's original input.
+        fixture.mutation(2, "send", json!({"sessionId":session,"message":"Later unrelated Computer request","model":fixture.selection().await}), Uuid::new_v4()).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        response(&mut socket).await;
+        fixture.drained().await;
+
+        let input = resume_input(&fixture, &source).await;
+        let operation = Uuid::new_v4();
+        let resumed = fixture.mutation(2, "resume", input.clone(), operation).await.unwrap();
+        assert_eq!(resumed["kind"], "started", "{resumed}");
+        assert_ne!(resumed["execution"]["invocationId"], source["invocationId"]);
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let replay = request(&mut socket).await;
+        assert_computer_state(&replay, "ready");
+        let last_user = replay["messages"].as_array().unwrap().iter().rev().find(|message| message["role"] == "user").unwrap();
+        assert_eq!(last_user["content"], "Hello");
+        assert!(!replay.to_string().contains("Later unrelated Computer request"));
+        service_tools::named_tool_response(&mut socket, "cua_repl", json!({"code":"nodeRepl.write(++globalThis.resumeCounter);"})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        assert_computer_output(&fixture, &session, "41").await;
+        response(&mut socket).await;
+        fixture.drained().await;
+        let completed = fixture.query("execution", json!({"sessionId":session,"invocationId":resumed["execution"]["invocationId"]})).await.unwrap();
+        assert_eq!(completed["execution"]["state"], "completed");
+        assert_eq!(fixture.mutation(2, "resume", input.clone(), operation).await.unwrap(), resumed);
+        assert_eq!(fixture.mutation(2, "resume", input, Uuid::new_v4()).await.unwrap(), json!({"kind":"parked","reason":"already_continued"}));
+        assert_eq!(fixture.query("execution", json!({"sessionId":session,"invocationId":source["invocationId"]})).await.unwrap()["execution"], source);
+        let facts = service_tools::facts(&fixture, &session).await;
+        assert_eq!(facts.iter().filter(|fact| matches!(fact, Fact::ToolDispatched { name, input, .. } if name == "cua_repl" && input["code"] == "nodeRepl.write(++globalThis.resumeCounter);")).count(), 1);
+
+        // Read the real VM again: duplicate resume must not have incremented it.
+        fixture.send(&session).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert_computer_state(&request(&mut socket).await, "ready");
+        service_tools::named_tool_response(&mut socket, "cua_repl", json!({"code":"nodeRepl.write(globalThis.resumeCounter);"})).await;
+        let (mut socket, _) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        assert_computer_output(&fixture, &session, "41").await;
+        response(&mut socket).await;
+        fixture.drained().await;
+        assert!(fixture.store.pending_interactions(&session).await.unwrap().is_empty());
+        fixture.app.shutdown().await.unwrap();
+        fixture.config.shutdown().await.unwrap();
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn computer_resume_stopped_replays_original_input_without_duplicate_effects() {
+    computer_resume_replays_original_input_without_duplicate_effects(true).await;
+}
+
+#[tokio::test]
+async fn computer_resume_model_failure_replays_original_input_without_duplicate_effects() {
+    computer_resume_replays_original_input_without_duplicate_effects(false).await;
+}
+
 #[tokio::test]
 async fn exact_receipt_resumes_original_input_and_deduplicates_after_prerequisites_disappear() {
     tokio::time::timeout(Duration::from_secs(45), async {

@@ -99,7 +99,7 @@ pub(super) async fn run(
                     let replay = crate::continuation::replay(
                         input,
                         prompt,
-                        tools.handoff_definitions(),
+                        tools.replay_definitions(),
                         cancellation,
                     )
                     .ok()?;

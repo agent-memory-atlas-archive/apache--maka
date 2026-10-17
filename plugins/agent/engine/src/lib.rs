@@ -247,9 +247,9 @@ impl Inner {
 #[derive(Clone)]
 pub struct Engine(Arc<Inner>);
 
-/// Engine-derived replay proof and its immutable input. Preparation may call
-/// plugin providers; durable admission revalidates the discovery basis without
-/// calling them again. A changed basis requires fresh preparation.
+/// Engine-derived replay proof and its immutable input. Preparation uses registered
+/// tools; model steps capture live bindings only after durable admission revalidates
+/// the discovery basis. A changed basis requires fresh preparation.
 pub struct PreparedContinuation {
     engine: std::sync::Weak<Inner>,
     input: RunInput,
