@@ -25,7 +25,8 @@ fn command(tui: &mut Pty, name: &str) {
     tui.send(b"\x1b[F");
     tui.send(&[0x7f; 40]);
     tui.send(name.as_bytes());
-    click(tui, &format!("› {name}"));
+    tui.wait_for(&format!("› {name}"));
+    tui.send(b"\r");
 }
 fn value(input: &serde_json::Value) -> serde_json::Value {
     let message = input["messages"]
@@ -75,7 +76,7 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     click(&mut tui, "Set up WorkHub");
     click(&mut tui, "› Workspace");
     click(&mut tui, "Create here");
-    tui.wait_for("Message…");
+    tui.wait_until(|s| s.contains("Message…") && !s.contains("Restoring draft…"));
     click(&mut tui, "Graph / Swarm");
     click(&mut tui, "Start Swarm");
     tui.wait_for("swarm #1");
@@ -175,7 +176,12 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     evidence(&tui, "graph-pinned-history");
     click(&mut tui, "Close");
     command(&mut tui, "New conversation");
-    tui.wait_for("Ready to start");
+    tui.wait_until(|s| {
+        s.contains("What would you like to accomplish?")
+            && s.contains("Message…")
+            && !s.contains("Restoring draft…")
+            && !s.contains("Close commands")
+    });
     click(&mut tui, "Graph / Swarm");
     tui.wait_for("Mode: Ordinary conversation");
     click(&mut tui, "Start Graph");
@@ -192,6 +198,9 @@ fn default_product_graph_delegates_and_keeps_separate_conversation_epochs() {
     let mut tui = Pty::spawn(&["application", "launch", "--root", ui.to_str().unwrap()]);
     tui.wait_until_with_timeout(|s| s.contains("Settings"), Duration::from_secs(60));
     command(&mut tui, "WorkHub");
+    tui.wait_until(|s| {
+        s.contains("Message…") && !s.contains("Restoring draft…") && !s.contains("Close commands")
+    });
     click(&mut tui, "Graph / Swarm");
     tui.wait_for("swarm #1");
     tui.wait_for("Selected final result");

@@ -25,6 +25,7 @@ use unicode_width::UnicodeWidthStr;
 
 mod chat;
 
+#[track_caller]
 fn click(tui: &mut Pty, label: &str) {
     tui.wait_for(label);
     let screen = tui.screen.snapshot().unwrap().screen;
