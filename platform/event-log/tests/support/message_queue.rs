@@ -80,6 +80,7 @@ pub fn admission(
         source: RootSourceMessage {
             unprepared_content: id.into(),
             message: DeliveredMessage {
+                origin: None,
                 message_id: id.into(),
                 content: id.into(),
                 submitted_content_digest: format!("sha256:{}", "c".repeat(64)),

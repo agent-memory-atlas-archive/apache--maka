@@ -294,6 +294,7 @@ impl Owner {
         let message: MessageInput = fire.intent.body().to_string().into();
         let delivered = RootSourceMessage {
             message: DeliveredMessage {
+                origin: None,
                 message_id: format!("m_{identity}"),
                 submitted_content_digest: message.content_digest().map_err(reason)?,
                 content: message.clone(),

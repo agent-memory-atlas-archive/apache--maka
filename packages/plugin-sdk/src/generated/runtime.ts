@@ -4562,6 +4562,18 @@ export type AgentDeliveryPage =
       pending: AgentPendingInteractions;
       kind: 'interactions';
     };
+/**
+ * Trusted producer attribution, preserved independently of editable content.
+ */
+export type MessageOrigin =
+  | {
+      taskId: string;
+      kind: 'workhub_task';
+    }
+  | {
+      graphId: string;
+      kind: 'workhub_graph';
+    };
 export type AgentQueueKind = 'in_flight' | 'steering' | 'followup';
 export type AgentQueueMessageResult =
   | {
@@ -9972,6 +9984,7 @@ export interface AgentQueue {
   entries: AgentQueueEntry[];
 }
 export interface AgentQueueEntry {
+  origin?: MessageOrigin | null;
   messageId: string;
   kind: AgentQueueKind;
   preview: string;
@@ -9987,6 +10000,7 @@ export interface AgentQueueMutation {
   edit: AgentQueueAction;
 }
 export interface AgentHistoryChunk {
+  origin?: MessageOrigin | null;
   compaction?: HistoryCompaction | null;
   /**
    * Display metadata only, on the first user-message fragment; no storage capability.
@@ -10320,6 +10334,7 @@ export interface AgentHistorySourceRead {
  * standalone JSON. Image descriptors carry no artifact read authorization.
  */
 export interface HistorySource {
+  origin?: MessageOrigin | null;
   sequence: number;
   /**
    * Host-recorded milliseconds of this immutable row; not a client clock.

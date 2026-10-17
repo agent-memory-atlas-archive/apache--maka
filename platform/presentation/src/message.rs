@@ -110,6 +110,8 @@ pub enum Content {
         data: ImportedNote,
     },
     User {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        origin: Option<maka_agent_facts::message::MessageOrigin>,
         text: String,
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         imported: bool,

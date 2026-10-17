@@ -28,7 +28,7 @@ use maka_agent_ports::session::history::SourceFormat;
 use maka_agent_ports::session::history::SourcePosition;
 use maka_agent_ports::session::history::SourceRole;
 use maka_agent_ports::session::history::SourceSegment;
-use sqlx::Connection;
+use sqlx::{Connection, Row};
 
 fn source_sql() -> String {
     format!("WITH original AS (SELECT
@@ -48,6 +48,7 @@ fn source_sql() -> String {
         CASE json_extract(payload, '$.content.kind') WHEN 'text' THEN 'text' WHEN 'json' THEN 'json'
         WHEN 'image' THEN 'image_descriptor' WHEN 'operation' THEN 'json' END ELSE 'text' END AS format,
     json_extract(payload, '$.type') AS role,
+    CASE WHEN json_extract(payload, '$.type') = 'user' THEN payload -> '$.origin' END AS message_origin,
     json_extract(payload, '$.ts') AS timestamp,
     json_type(payload, '$.thinking.text') IS 'text' AS thinking,
     json_type(payload, '$.failureMessage') IS 'text' AS failure_message,
@@ -59,7 +60,7 @@ fn source_sql() -> String {
             CASE json_type(body, ?4) WHEN 'text' THEN json_extract(body, ?4) ELSE body -> ?4 END END AS body,
         CASE WHEN ?4 IS NULL THEN format WHEN format = 'json' THEN
             CASE json_type(body, ?4) WHEN 'text' THEN 'text' ELSE 'json' END END AS format,
-        role, timestamp, thinking, failure_message, error_class, operation FROM original)", body = super::history::BODY)
+        role, timestamp, thinking, failure_message, error_class, operation, message_origin FROM original)", body = super::history::BODY)
 }
 
 impl EventLog {
@@ -151,10 +152,9 @@ impl EventLog {
                     }
                     let sql = source_sql();
                     let header = format!(
-                        "{sql} SELECT format, length(CAST(body AS BLOB)), role, thinking, failure_message, error_class, timestamp, operation FROM source"
+                        "{sql} SELECT format, length(CAST(body AS BLOB)), role, thinking, failure_message, error_class, timestamp, operation, message_origin FROM source"
                     );
-                    let (format, total, role, thinking, failure_message, error_class, timestamp, operation): (Option<String>, Option<i64>, String, bool, bool, bool, i64, bool) =
-                        sqlx::query_as(sqlx::AssertSqlSafe(header.as_str()))
+                    let header = sqlx::query(sqlx::AssertSqlSafe(header.as_str()))
                             .bind(&session)
                             .bind(sequence_sql)
                             .bind(selected)
@@ -162,6 +162,15 @@ impl EventLog {
                             .fetch_optional(&mut *tx)
                             .await?
                             .ok_or_else(|| invalid("history source was not found"))?;
+                    let format: Option<String> = header.try_get(0)?;
+                    let total: Option<i64> = header.try_get(1)?;
+                    let role: String = header.try_get(2)?;
+                    let thinking: bool = header.try_get(3)?;
+                    let failure_message: bool = header.try_get(4)?;
+                    let error_class: bool = header.try_get(5)?;
+                    let timestamp: i64 = header.try_get(6)?;
+                    let operation: bool = header.try_get(7)?;
+                    let origin: Option<String> = header.try_get(8)?;
                     let total = sequence_number(
                         total.ok_or_else(|| invalid("field is not a history source"))?,
                     )?;
@@ -263,6 +272,7 @@ impl EventLog {
                         None
                     };
                     let source = HistorySource {
+                        origin: origin.map(|value| serde_json::from_str(&value)).transpose()?,
                         sequence,
                         timestamp: sequence_number(timestamp)?,
                         role,

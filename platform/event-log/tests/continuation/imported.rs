@@ -132,6 +132,7 @@ async fn foreign_openings_and_pauses_remain_evidence_without_local_recovery_or_r
     let message = RootSourceMessage {
         unprepared_content: "fresh".into(),
         message: DeliveredMessage {
+            origin: None,
             message_id: "new-message".into(),
             content: "fresh".into(),
             submitted_content_digest: maka_agent_facts::input::MessageInput::from("fresh")

@@ -43,6 +43,7 @@ fn source(id: &str, text: &str) -> RootSourceMessage {
     RootSourceMessage {
         unprepared_content: text.into(),
         message: DeliveredMessage {
+            origin: None,
             message_id: id.into(),
             content: text.into(),
             submitted_content_digest: format!("sha256:{}", "b".repeat(64)),

@@ -159,6 +159,7 @@ async fn history_pages_preserve_utf8_nul_suffixes_archive_and_frozen_fences() {
             };
             for chunk in chunks {
                 if matches!(chunk.role, Role::ToolCall | Role::ToolResult) {
+                    assert!(chunk.origin.is_none());
                     assert_eq!((chunk.offset, chunk.total_bytes), (0, 0));
                     assert!(chunk.text.is_empty());
                     assert!(chunk.tool.is_some());
@@ -1232,6 +1233,7 @@ async fn empty_projection_boundaries_obey_the_exact_json_window_budget() {
             }]);
         }
         let message = DeliveredMessage {
+            origin: None,
             message_id: format!("empty-{index}"),
             submitted_content_digest: content.content_digest().unwrap(),
             content: content.clone(),
@@ -2034,4 +2036,180 @@ async fn failed_turn_and_retry_diagnostics_are_visible_with_exact_sources_and_fe
             .count(),
         3
     );
+}
+
+#[tokio::test]
+async fn notification_origin_survives_every_history_and_source_fragment_within_json_budgets() {
+    use maka_agent_facts::input::DeliveredMessage;
+    use maka_agent_facts::message::RootSourceMessage;
+    use maka_agent_facts::message::{MessageDisposition, MessageOrigin, Placement};
+    use maka_agent_ports::session::history::{SourceField, SourcePosition};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("notification.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    log.create_session("notice", "create", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    let text = "通知😀\0suffix\n".repeat(300);
+    let content: maka_agent_facts::input::MessageInput = text.clone().into();
+    let origin = MessageOrigin::WorkhubGraph {
+        graph_id: "agent_graph_actual".into(),
+    };
+    let source = RootSourceMessage {
+        unprepared_content: content.clone(),
+        message: DeliveredMessage {
+            message_id: "notification".into(),
+            submitted_content_digest: content.content_digest().unwrap(),
+            content: content.clone(),
+            origin: Some(origin.clone()),
+        },
+        submitted_placement: Placement::CurrentTurn,
+        disposition: MessageDisposition::TurnStarted,
+        submitted_intent: None,
+    };
+    let opening = event(
+        "notice",
+        Fact::InvocationOpened {
+            configuration: None,
+            input: InvocationInput::Message {
+                content,
+                source_messages: vec![source.clone()],
+                request_fingerprint: None,
+            },
+        },
+    );
+    log.admit_message(
+        maka_event_log::message_admissions::PendingMessageAdmission {
+            execution: maka_event_log::message_admissions::PendingExecution {
+                owner: "maka-runtime-host".into(),
+                basis: serde_json::Value::Null,
+            },
+            steering_invocation: None,
+            required_tools: Default::default(),
+            invocation: opening.event().invocation.clone(),
+            source,
+            admitted_at: 1,
+        },
+    )
+    .await
+    .unwrap();
+    log.append(&opening).await.unwrap();
+    let through = log
+        .append(&event(
+            "notice",
+            Fact::InvocationEnded {
+                outcome: InvocationOutcome::Completed,
+            },
+        ))
+        .await
+        .unwrap();
+    assert!(log.prepare_transcript("notice", through, 32).await.unwrap());
+    log.close().await.unwrap();
+    let log = EventLog::open(&path).await.unwrap();
+    let mut position = Position::Start;
+    let mut assembled = String::new();
+    let mut fragments = 0;
+    let mut source_sequence = None;
+    let mut pages = 0;
+    loop {
+        let page = log
+            .history_text("notice", through, position, false, 256, 2, 1536)
+            .await
+            .unwrap();
+        assert!(serde_json::to_vec(&page).unwrap().len() <= 1536);
+        let Page::Ready { chunks, after, .. } = page else {
+            panic!("prepared")
+        };
+        for chunk in chunks {
+            assert_eq!(chunk.role, Role::User);
+            assert_eq!(chunk.message_id, "notification");
+            assert_eq!(chunk.origin.as_ref(), Some(&origin));
+            assert_eq!(chunk.offset, assembled.len() as u64);
+            source_sequence = Some(chunk.sequence);
+            assembled.push_str(&chunk.text);
+            fragments += 1;
+        }
+        pages += 1;
+        assert!(pages < 100, "history continuation must advance");
+        let Some(cursor) = after else {
+            break;
+        };
+        position = Position::After { cursor };
+    }
+    assert!(fragments > 2);
+    assert_eq!(assembled, text);
+    let sequence = source_sequence.unwrap();
+    let mut offset = 0;
+    let mut assembled = String::new();
+    loop {
+        let source = log
+            .history_source(
+                "notice",
+                through,
+                sequence,
+                SourceField::Body,
+                None,
+                SourcePosition::After { offset },
+                256,
+                1536,
+            )
+            .await
+            .unwrap();
+        assert_eq!(source.origin.as_ref(), Some(&origin));
+        assert!(serde_json::to_vec(&source).unwrap().len() <= 1536);
+        assert_eq!(source.offset, offset);
+        assert!(!source.text.is_empty());
+        assembled.push_str(&source.text);
+        offset += source.text.len() as u64;
+        if offset == source.total_bytes {
+            break;
+        }
+    }
+    assert_eq!(assembled, text);
+    let source = log
+        .history_source(
+            "notice",
+            through,
+            sequence,
+            SourceField::Body,
+            None,
+            SourcePosition::Start,
+            1024,
+            4096,
+        )
+        .await
+        .unwrap();
+    let exact_budget = serde_json::to_vec(&source).unwrap().len();
+    assert!(exact_budget > 1024);
+    assert!(
+        log.history_source(
+            "notice",
+            through,
+            sequence,
+            SourceField::Body,
+            None,
+            SourcePosition::Start,
+            1024,
+            exact_budget - 1
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        log.history_source(
+            "notice",
+            through,
+            sequence,
+            SourceField::Body,
+            None,
+            SourcePosition::Start,
+            1024,
+            exact_budget
+        )
+        .await
+        .unwrap()
+        .origin,
+        Some(origin)
+    );
+    log.close().await.unwrap();
 }

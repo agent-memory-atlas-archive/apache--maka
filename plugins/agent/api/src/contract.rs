@@ -914,6 +914,8 @@ pub struct Queue {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentQueueEntry")]
 pub struct QueueEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<maka_agent_facts::message::MessageOrigin>,
     pub message_id: String,
     pub kind: QueueKind,
     #[schemars(length(max = 80))]
@@ -1030,6 +1032,8 @@ pub struct HistoryAttachment {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AgentHistoryChunk")]
 pub struct HistoryChunk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<maka_agent_facts::message::MessageOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<maka_agent_ports::session::history::Compaction>,
     /// Display metadata only, on the first user-message fragment; no storage capability.

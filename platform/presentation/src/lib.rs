@@ -172,17 +172,34 @@ impl InvocationView {
                     ..
                 } = input
                 {
-                    messages.push(user::project(
-                        if source_messages.len() == 1 {
-                            &source_messages[0].message.message_id
-                        } else {
-                            &event.id
-                        },
-                        &event.invocation.turn_id,
-                        ts,
-                        content,
-                        self.max_text_bytes,
-                    )?);
+                    if source_messages
+                        .iter()
+                        .any(|source| source.message.origin.is_some())
+                    {
+                        for source in source_messages {
+                            messages.push(user::project(
+                                &source.message.message_id,
+                                &event.invocation.turn_id,
+                                ts,
+                                &source.message.content,
+                                source.message.origin.as_ref(),
+                                self.max_text_bytes,
+                            )?);
+                        }
+                    } else {
+                        messages.push(user::project(
+                            if source_messages.len() == 1 {
+                                &source_messages[0].message.message_id
+                            } else {
+                                &event.id
+                            },
+                            &event.invocation.turn_id,
+                            ts,
+                            content,
+                            None,
+                            self.max_text_bytes,
+                        )?);
+                    }
                 } else if input.inherited_claim().is_none() {
                     return Err(ProjectionError::Unsupported("Code invocation"));
                 }
@@ -247,6 +264,7 @@ impl InvocationView {
                             &event.invocation.turn_id,
                             ts,
                             &message.content,
+                            message.origin.as_ref(),
                             self.max_text_bytes,
                         )?);
                     }

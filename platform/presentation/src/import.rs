@@ -44,6 +44,7 @@ pub(super) fn project(
     };
     let content = match &record.content {
         import::Content::User { text } => Content::User {
+            origin: None,
             text: text.clone(),
             imported: true,
             display_text: None,

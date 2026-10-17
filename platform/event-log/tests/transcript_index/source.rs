@@ -155,6 +155,7 @@ async fn literal_tool_fields_reach_every_byte_without_summarizing_json_or_crossi
                         )
                         .await
                         .unwrap();
+                    assert!(source.origin.is_none());
                     assert_eq!(source.format, SourceFormat::Json);
                     assert_eq!(
                         source.role,

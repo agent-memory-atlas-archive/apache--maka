@@ -62,6 +62,7 @@ impl Owner {
                 .entries
                 .iter()
                 .map(|entry| QueueEntry {
+                    origin: entry.source.message.origin.clone(),
                     message_id: entry.source.message.message_id.clone(),
                     kind: match entry.source.disposition {
                         MessageDisposition::TurnStarted => QueueKind::InFlight,

@@ -89,6 +89,7 @@ async fn attachment_references_remain_structured_after_reopen() {
             Fact::MessageSteered {
                 source: None,
                 message: Box::new(DeliveredMessage {
+                    origin: None,
                     message_id: "same-client-id".into(),
                     content: input.clone(),
                     submitted_content_digest: format!("sha256:{}", "a".repeat(64)),

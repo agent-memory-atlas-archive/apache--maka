@@ -25,6 +25,27 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+/// Trusted producer attribution, preserved independently of editable content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum MessageOrigin {
+    WorkhubTask { task_id: String },
+    WorkhubGraph { graph_id: String },
+}
+impl MessageOrigin {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::WorkhubTask { task_id } => crate::interaction::entity_id(task_id),
+            Self::WorkhubGraph { graph_id } => crate::interaction::entity_id(graph_id),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Placement {
@@ -227,6 +248,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_delivery_bytes_and_content_identity_remain_unchanged() {
+        let legacy = r#"{"message_id":"legacy","content":{"text":"hello","display_text":null},"submitted_content_digest":"sha256:492ad580202470bc57f23703f4cfbfc657e4133aaa385a1a307fa39b1e0c4543"}"#;
+        let mut message: DeliveredMessage = serde_json::from_str(legacy).unwrap();
+        message.validate().unwrap();
+        assert_eq!(message.origin, None);
+        assert_eq!(serde_json::to_string(&message).unwrap(), legacy);
+        let digest = message.content.content_digest().unwrap();
+        assert_eq!(digest, message.submitted_content_digest);
+        message.origin = Some(MessageOrigin::WorkhubTask {
+            task_id: "task-original".into(),
+        });
+        assert_eq!(message.content.content_digest().unwrap(), digest);
+    }
+
+    #[test]
     fn atomic_starts_preserve_intent_without_accepting_mixed_queue_sources() {
         let mut sources: Vec<_> = ["first", "second"]
             .into_iter()
@@ -234,6 +270,7 @@ mod tests {
                 let content = MessageInput::from(text);
                 RootSourceMessage {
                     message: DeliveredMessage {
+                        origin: None,
                         message_id: text.into(),
                         submitted_content_digest: content.content_digest().unwrap(),
                         content: content.clone(),
@@ -254,6 +291,11 @@ mod tests {
             .collect();
         let content = aggregate(sources.iter().map(|s| &s.message.content));
         assert!(validate_sources(&content, &sources).is_ok());
+        sources[0].message.origin = Some(MessageOrigin::WorkhubTask {
+            task_id: "invalid/id".into(),
+        });
+        assert!(validate_sources(&content, &sources).is_err());
+        sources[0].message.origin = None;
         sources[1]
             .submitted_intent
             .as_mut()

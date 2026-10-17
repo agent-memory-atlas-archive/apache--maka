@@ -339,6 +339,8 @@ pub enum SourceSegment {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HistorySource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<maka_agent_facts::message::MessageOrigin>,
     #[schemars(range(min = 1, max = 9_007_199_254_740_991u64))]
     pub sequence: u64,
     /// Host-recorded milliseconds of this immutable row; not a client clock.
@@ -365,6 +367,8 @@ pub struct HistorySource {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Chunk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<maka_agent_facts::message::MessageOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<Compaction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

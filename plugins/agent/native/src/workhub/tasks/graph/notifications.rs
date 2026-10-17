@@ -172,6 +172,9 @@ impl Hub {
                         &assignment.return_route,
                         &identity,
                         text,
+                        maka_agent_facts::message::MessageOrigin::WorkhubGraph {
+                            graph_id: source.graph_id.to_string(),
+                        },
                     )
                     .await?
                 else {

@@ -253,7 +253,7 @@ impl EventLog {
                         ).bind(&session).bind(sql_number(sequence)?).fetch_one(&mut *tx).await?;
                         Some(maka_agent_ports::session::history::Compaction { duration_ms: sequence_number(duration)? })
                     } else { None };
-                    let chunk = Chunk { field, timing, compaction,
+                    let chunk = Chunk { field, timing, compaction, origin: row.origin,
                         message_id: row.message, turn_id: row.turn, timestamp: row.timestamp, role,
                         sequence, offset: start, total_bytes: row.total, text: text.to_owned(), attachments, tool,
                     };
@@ -335,6 +335,7 @@ async fn boundaries(
 }
 
 struct Header {
+    origin: Option<maka_agent_facts::message::MessageOrigin>,
     message: String,
     turn: String,
     timestamp: u64,
@@ -355,11 +356,16 @@ async fn header(
         return Ok(row);
     }
     let row = sqlx::query(
-        "SELECT source.message_id, source.turn_id, cached.timestamp, cached.role, length(cached.body)
+        "SELECT source.message_id, source.turn_id, cached.timestamp, cached.role, length(cached.body),
+            CASE WHEN cached.role = 'user' THEN source.payload -> '$.origin' END
             FROM transcript_rows source JOIN transcript_text cached USING(session_id, sequence)
             WHERE source.session_id = ?1 AND source.sequence = ?2 AND cached.field = ?3"
     ).bind(session).bind(sql_number(sequence)?).bind(field_name(field)).fetch_one(tx).await?;
     Ok(Header {
+        origin: row
+            .try_get::<Option<String>, _>(5)?
+            .map(|value| serde_json::from_str(&value))
+            .transpose()?,
         message: row.try_get(0)?,
         turn: row.try_get(1)?,
         timestamp: sequence_number(row.try_get(2)?)?,
@@ -398,6 +404,7 @@ async fn conversation_tool(
                 | (Some("code_mode"), Some("code_cell" | "tool_search"))
         ));
     Ok(Some(Header {
+        origin: None,
         message: row.try_get(0)?,
         turn: row.try_get(1)?,
         timestamp: sequence_number(row.try_get(2)?)?,

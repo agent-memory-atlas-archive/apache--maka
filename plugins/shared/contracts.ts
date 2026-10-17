@@ -86,6 +86,7 @@ export interface Theme {
   markdown: MarkdownAppearance;
 }
 export interface Message {
+  origin?: AgentHistoryChunk['origin'];
   compaction?: { durationMs: number };
   pending?: boolean;
   id: string;
@@ -415,6 +416,7 @@ const themeSchema = object({
 const messageSchema = object(
   {
     pending: { type: 'boolean' },
+    origin: native.agent.interface.methods.history.output.$defs.AgentHistoryChunk.properties.origin,
     id: string,
     contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
     role: {

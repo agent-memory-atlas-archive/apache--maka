@@ -20,7 +20,7 @@
 use maka_agent_facts::event::Fact;
 use maka_agent_facts::event::InvocationInput;
 use maka_agent_facts::event::InvocationOutcome;
-use maka_agent_facts::message::MessageDisposition as Disposition;
+use maka_agent_facts::message::{MessageDisposition as Disposition, MessageOrigin};
 use maka_event_log::{
     EventLog, StoreError,
     message_queue::{QueueCommandKind as Kind, QueueEdit},
@@ -42,6 +42,9 @@ async fn submit_receipt_is_atomic_and_survives_edit_delivery_cancellation_and_ep
     let owner = invocation("original");
     append(&log, &owner, opening()).await;
     let mut pending = admission(&owner, "queued", Disposition::Followup);
+    pending.source.message.origin = Some(MessageOrigin::WorkhubTask {
+        task_id: "task-original".into(),
+    });
     pending.required_tools.insert("Shell".into());
     pending.source.message.content.preparation.push(serde_json::from_value(json!({
         "source":{"kind":"input","name":"review","packageId":"reviewer","entryId":"entry","activation":"1","revision":"1"},
@@ -72,6 +75,7 @@ async fn submit_receipt_is_atomic_and_survives_edit_delivery_cancellation_and_ep
         .await
         .unwrap();
     assert_eq!(receipt.queue_revision, before.revision + 1);
+    assert_eq!(receipt.origin, pending.source.message.origin);
     let updated = log
         .edit_message_queue(
             "session",
@@ -110,6 +114,7 @@ async fn submit_receipt_is_atomic_and_survives_edit_delivery_cancellation_and_ep
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(edited.source.message.origin, pending.source.message.origin);
     assert_eq!(edited.source.message.content.text, "edited");
     assert_eq!(edited.source.unprepared_content.text, "edited");
     assert_eq!(
@@ -133,6 +138,11 @@ async fn submit_receipt_is_atomic_and_survives_edit_delivery_cancellation_and_ep
         .admit_queued_message("epoch", updated.revision, late.clone())
         .await
         .unwrap();
+    let legacy_receipt = r#"{"execution_digest":"sha256:3b305fd182e5bd18cd9daa0c7e99341f91f8731222779336f8b6586131a8dd9e","content_digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","submitted_placement":"next_turn","submitted_intent":null,"disposition":"followup","preparation":[],"queue_revision":3}"#;
+    assert_eq!(
+        serde_json::to_string(&late_receipt).unwrap(),
+        legacy_receipt
+    );
     let successor = invocation("successor");
     append(
         &log,
@@ -158,6 +168,21 @@ async fn submit_receipt_is_atomic_and_survives_edit_delivery_cancellation_and_ep
             .await
             .unwrap(),
         Some(receipt.clone())
+    );
+    // The compact receipt remains authoritative after delivery removes the pending row.
+    let mut changed_origin = pending.clone();
+    changed_origin.source.message.origin = Some(MessageOrigin::WorkhubTask {
+        task_id: "task-other".into(),
+    });
+    assert!(matches!(
+        log.admit_queued_message("epoch", 0, changed_origin).await,
+        Err(StoreError::InvalidTransition(_))
+    ));
+    assert_eq!(
+        log.admit_queued_message("epoch", 0, pending.clone())
+            .await
+            .unwrap(),
+        receipt
     );
     let revision = log.message_queue("session").await.unwrap().revision;
     log.edit_message_queue(

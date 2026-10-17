@@ -737,6 +737,7 @@ export function historyView<N extends Node>(
       ? messageView(presentation, 'tui', props.theme, props.locale, {
           id: 'find-preview-row',
           role: header.role,
+          origin: header.origin,
           timestamp: header.timestamp,
           tool: header.tool,
           text:

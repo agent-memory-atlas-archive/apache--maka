@@ -241,9 +241,14 @@ async fn queue_edits_cancel_or_deliver_once_with_atomic_revision_and_original_ow
     let targets = ["session".into()];
     let version = log.observation_versions(&targets).await.unwrap()["session"];
     for id in ["one", "two", "three"] {
-        log.admit_message(admission(&first, id, Disposition::Followup))
-            .await
-            .unwrap();
+        let mut pending = admission(&first, id, Disposition::Followup);
+        if id == "two" {
+            pending.source.message.origin =
+                Some(maka_agent_facts::message::MessageOrigin::WorkhubGraph {
+                    graph_id: "graph-original".into(),
+                });
+        }
+        log.admit_message(pending).await.unwrap();
     }
     notices.changed().await.unwrap();
     assert_eq!(
@@ -382,6 +387,10 @@ async fn queue_edits_cancel_or_deliver_once_with_atomic_revision_and_original_ow
         entry.invocation, first,
         "promotion does not rewrite original admission ownership"
     );
+    let origin = Some(maka_agent_facts::message::MessageOrigin::WorkhubGraph {
+        graph_id: "graph-original".into(),
+    });
+    assert_eq!(entry.source.message.origin, origin);
     assert_eq!(entry.steering_target(), &second);
     assert_eq!(entry.required_tools, ["Read".into()].into());
     assert_eq!(entry.source.submitted_placement, Placement::NextTurn);
@@ -418,7 +427,7 @@ async fn queue_edits_cancel_or_deliver_once_with_atomic_revision_and_original_ow
         .unwrap();
     assert_eq!(proof.event.invocation, second);
     assert!(
-        matches!(&proof.event.fact, Fact::MessageSteered { message, .. } if message.content.preparation == [receipt])
+        matches!(&proof.event.fact, Fact::MessageSteered { message, .. } if message.content.preparation == [receipt] && message.origin == origin)
     );
     let queue = log.message_queue("session").await.unwrap();
     let cancelled = log

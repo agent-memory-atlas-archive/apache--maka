@@ -214,6 +214,9 @@ impl Hub {
                             &assignment.return_route,
                             &identity,
                             text,
+                            maka_agent_facts::message::MessageOrigin::WorkhubTask {
+                                task_id: id.into(),
+                            },
                         )
                         .await?
                     else {

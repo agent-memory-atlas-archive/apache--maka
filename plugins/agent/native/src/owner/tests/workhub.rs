@@ -786,6 +786,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         task_response(&mut socket,json!({"operation":"route","worker":"worker","target":{"kind":"existing","sessionId":worker},"note":"Process this assigned work","model":fixture.selection().await})).await;
         let mut worker_calls=0;
         let mut task_watch = None;
+        let mut routed_task_id = None;
         for _ in 0..3 {
             let (mut socket,_)=listener.accept().await.unwrap();
             let input=request(&mut socket).await;
@@ -793,6 +794,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
                 worker_calls+=1;
                 let page = list_watch.recv().await.unwrap();
                 let id = page["entries"][0]["taskId"].clone();
+                routed_task_id = Some(id.as_str().unwrap().to_owned());
                 task_watch = Some(fixture.app.client().subscribe(imported(&fixture, hub::EXPORT).await, "watchTask".into(), json!({"taskId": id}), scope(&fixture.issuer,true), Attachments::default().into()).await.unwrap());
                 assert_eq!(task_watch.as_mut().unwrap().recv().await.unwrap()["taskId"], id);
                 assert!(input["messages"].to_string().contains("Hello"));
@@ -818,6 +820,7 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         idle(&fixture,EXPORT,&coordinator).await;
         idle(&fixture,"worker",&worker).await;
         let task_id=first_task(&fixture).await;
+        assert_eq!(routed_task_id.as_deref(), Some(task_id.as_str()));
         assert_eq!(query_import(&fixture,hub::EXPORT,"tasks",json!({})).await["entries"][0]["title"],"Hello");
         let task=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task_id})).await;
         assert_eq!(task["status"]["kind"],"started");
@@ -833,6 +836,18 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         let record = records.entries.into_iter().find(|entry| entry.key.ends_with(&format!("tasks/{task_id}"))).unwrap();
         let maka_capabilities::storage::Data::Present(mut value) = record.record.data else { panic!("task data"); };
         assert!(!value["notification"]["admission"].is_null());
+        let frozen_admission = value["notification"]["admission"].clone();
+        let notification_message_id = frozen_admission["source"]["message_id"].as_str().unwrap().to_owned();
+        // The same body submitted through the public API has no trusted provenance.
+        let notice_body = frozen_admission["source"]["content"]["text"].as_str().unwrap();
+        let spoofed = fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":notice_body,"model":fixture.selection().await,
+            "origin":{"kind":"workhub_task","taskId":task_id}}),Uuid::new_v4()).await;
+        let ordinary = fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":notice_body,"model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
+        let ordinary_message_id = ordinary["messageId"].as_str().unwrap().to_owned();
+        let (mut socket,_) = listener.accept().await.unwrap();
+        request(&mut socket).await;
+        response(&mut socket).await;
+        idle(&fixture,EXPORT,&coordinator).await;
         value["notification"]["accepted"] = json!(false);
         fixture.store.plugin_data_batch(&namespace, vec![maka_capabilities::storage::Mutation {
             key: record.key, expected_revision: Some(record.record.revision), data: maka_capabilities::storage::Data::Present(value),
@@ -859,7 +874,53 @@ async fn workhub_real_model_routes_original_input_and_recovers_child_receipt_wit
         }
         assert_eq!(fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap().len(),1);
         assert!(tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_err());
+        // Read the immutable notice after outbox replay and worker reactivation;
+        // display attribution must not depend on the worker's current observation.
+        let records = fixture.store.plugin_data_scan(&namespace, maka_capabilities::storage::Scan {prefix:String::new(),after:None}).await.unwrap();
+        let replayed = records.entries.into_iter().find(|entry| entry.key.ends_with(&format!("tasks/{task_id}"))).unwrap();
+        let maka_capabilities::storage::Data::Present(replayed) = replayed.record.data else {panic!("task data");};
+        let canonical = fixture.store.scoped_prefix(maka_agent_facts::event::LogScope::Session {id:coordinator.clone()},256,4*1024*1024).await.unwrap();
+        let sources: Vec<_> = canonical.events.iter().filter_map(|row| match &row.event.fact {
+            Fact::InvocationOpened {input:maka_agent_facts::input::InvocationInput::Message {source_messages,..},..} => Some(source_messages.as_slice()),
+            _ => None,
+        }).flatten().filter(|source| source.message.message_id == notification_message_id)
+            .map(|source| serde_json::to_value(&source.message).unwrap()).collect();
+        let mut history_request = json!({"sessionId":coordinator,"position":{"kind":"start"}});
+        let ordinary_sources: Vec<_> = canonical.events.iter().filter_map(|row| match &row.event.fact {
+            Fact::InvocationOpened {input:maka_agent_facts::input::InvocationInput::Message {source_messages,..},..} => Some(source_messages.as_slice()),
+            _ => None,
+        }).flatten().filter(|source| source.message.message_id == ordinary_message_id)
+            .map(|source| serde_json::to_value(&source.message).unwrap()).collect();
+        let mut notice_chunks = Vec::new();
+        let mut ordinary_chunks = Vec::new();
+        let mut history_finished = false;
+        for _ in 0..128 {
+            let page = fixture.query("history",history_request.clone()).await.unwrap();
+            history_request["through"] = page["through"].clone();
+            if page["kind"] == "preparing" {continue;}
+            notice_chunks.extend(page["chunks"].as_array().unwrap().iter()
+                .filter(|chunk| chunk["role"] == "user" && chunk["messageId"] == notification_message_id)
+                .cloned());
+            ordinary_chunks.extend(page["chunks"].as_array().unwrap().iter()
+                .filter(|chunk| chunk["role"] == "user" && chunk["messageId"] == ordinary_message_id)
+                .cloned());
+            if page["after"].is_null() {history_finished = true;break;}
+            history_request["position"] = json!({"kind":"after","cursor":page["after"]});
+        }
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+        let expected_origin = json!({"kind":"workhub_task","taskId":task_id});
+        assert_eq!(frozen_admission["source"]["origin"], expected_origin, "actual task notification must freeze structured origin before admission");
+        assert_eq!(replayed["notification"]["admission"], frozen_admission, "outbox replay must retain the original notification identity and origin");
+        assert_eq!(sources.len(),1,"outbox replay must not duplicate the canonical notice");
+        assert_eq!(sources[0]["origin"],expected_origin);
+        assert!(history_finished,"history must reach its captured fence");
+        assert!(!notice_chunks.is_empty(),"public history must contain the actual frozen notification message");
+        for chunk in notice_chunks {assert_eq!(chunk["origin"],expected_origin);}
+        assert!(spoofed.is_err(),"public send must reject an origin setter");
+        assert_eq!(ordinary_sources.len(),1);
+        assert!(ordinary_sources[0].get("origin").is_none(),"matching notice wording cannot stamp trusted source metadata");
+        assert!(!ordinary_chunks.is_empty());
+        for chunk in ordinary_chunks {assert!(chunk.get("origin").is_none());}
     }).await.unwrap();
 }
 

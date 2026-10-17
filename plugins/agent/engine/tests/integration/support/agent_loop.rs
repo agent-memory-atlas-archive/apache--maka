@@ -142,6 +142,7 @@ fn source(
     maka_agent_facts::message::RootSourceMessage {
         unprepared_content: content.clone(),
         message: maka_agent_facts::input::DeliveredMessage {
+            origin: None,
             message_id: id.into(),
             content,
             submitted_content_digest: format!("sha256:{}", "a".repeat(64)),

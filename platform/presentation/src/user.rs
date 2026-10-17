@@ -25,6 +25,7 @@ pub(super) fn project(
     turn: &str,
     ts: u64,
     content: &MessageInput,
+    origin: Option<&maka_agent_facts::message::MessageOrigin>,
     max_text_bytes: usize,
 ) -> Result<Message, ProjectionError> {
     if content.text_bytes() > max_text_bytes {
@@ -35,6 +36,7 @@ pub(super) fn project(
         turn_id: turn.into(),
         ts,
         content: Content::User {
+            origin: origin.cloned(),
             imported: false,
             text: content.text.clone(),
             display_text: content.display_text.clone(),

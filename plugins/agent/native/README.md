@@ -53,4 +53,6 @@ The default composition enables `plans`. The Plan command switches an idle conve
 
 WorkHub coordinator conversations can select Graph or Swarm. Graph decisions and original WorkHub task assignments commit atomically; the existing task owner retains dispatch, dependency input capture, control receipts and cleanup. The five Graph tools expose published targets, bounded work/result/history reads, updates and yielding. Swarm wakes the supervisor for attention or a settled batch. Historical inputs must name selected final results from an earlier finished epoch; result inputs use bounded 16 KiB previews with complete result pagination available. Original session, epoch and permission boundaries remain enforced across stop, queueing and restart.
 
+WorkHub task and graph notifications retain their recorded source in history and have distinct message labels.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

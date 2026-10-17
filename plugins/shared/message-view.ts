@@ -18,10 +18,21 @@
  */
 
 import type { HistorySource } from '../../packages/plugin-sdk/src/index.js';
-import type { Theme, ToolDisplayStatus } from './contracts.js';
+import type { Message, Theme, ToolDisplayStatus } from './contracts.js';
 import { copy } from './locale-catalogs/message-view.js';
 import { toolPresentation } from '../agent/tool-details/index.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
+
+export function messageOriginCaption(origin: Message['origin'], locale: string): string | null {
+  if (!origin) return null;
+  const text = copy(locale);
+  switch (origin.kind) {
+    case 'workhub_task':
+      return text.workhubTask;
+    case 'workhub_graph':
+      return text.workhubGraph;
+  }
+}
 
 export function sourceFieldLabel(locale: string, field: HistorySource['field']): string {
   const text = copy(locale);
@@ -138,6 +149,7 @@ export function messageView<N extends Node>(
     separateBefore?: boolean;
     id: string;
     role: HistorySource['role'] | 'thinking';
+    origin?: Message['origin'];
     timestamp: number | null;
     text: string;
     tool: HistorySource['tool'];
@@ -161,7 +173,7 @@ export function messageView<N extends Node>(
     message.role === 'thinking'
       ? text.findFieldThinking
       : message.role === 'user'
-        ? text.you
+        ? (messageOriginCaption(message.origin, locale) ?? text.you)
         : message.role === 'assistant'
           ? text.assistant
           : message.role === 'tool_call'
@@ -286,11 +298,20 @@ export function messageView<N extends Node>(
                   submitSpace: true,
                 })
               : gutter(),
-            ui.box('body-' + message.id, [body], {
-              gap: 0,
-              surface: user,
-              terminal: { grow: 1, shrink: true },
-            }),
+            ui.box(
+              'body-' + message.id,
+              [
+                ...(user && message.origin
+                  ? [ui.text('role-' + message.id, caption, 12, theme.muted)]
+                  : []),
+                body,
+              ],
+              {
+                gap: 0,
+                surface: user,
+                terminal: { grow: 1, shrink: true },
+              },
+            ),
             ...(time
               ? [
                   ui.box(

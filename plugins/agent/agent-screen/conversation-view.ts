@@ -21,6 +21,7 @@ import type { Action, RowsProps } from '../../../packages/plugin-sdk/src/index.j
 import type { Theme, TimelineProps } from '../../shared/contracts.js';
 import { copy, tuiText } from './locale.js';
 import { sameValue } from '../../shared/value.js';
+import { messageOriginCaption } from '../../shared/message-view.js';
 import { fill, pixels, type Node, type Presentation } from '../../shared/view.js';
 
 import { attachmentFiles, attachmentSummary, pasteView } from '../../shared/attachments.js';
@@ -353,9 +354,10 @@ export function conversationView<N extends Node>(
         label: theme.ascii ? 'x' : '×',
         enabled,
       };
+      const origin = messageOriginCaption(entry.origin, locale);
       return {
         key: entry.messageId,
-        text: `${tuiText(locale, entry.kind === 'steering' ? 'task-steering' : 'task-followup')} · ${entry.preview}`,
+        text: `${origin ? origin + ' · ' : ''}${tuiText(locale, entry.kind === 'steering' ? 'task-steering' : 'task-followup')} · ${entry.preview}`,
         actions:
           entry.kind === 'followup'
             ? [

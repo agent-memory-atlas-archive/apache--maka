@@ -983,6 +983,7 @@ impl Owner {
         };
         let delivered = RootSourceMessage {
             message: DeliveredMessage {
+                origin: None,
                 message_id: format!("m_{identity}"),
                 submitted_content_digest: unprepared
                     .content_digest()

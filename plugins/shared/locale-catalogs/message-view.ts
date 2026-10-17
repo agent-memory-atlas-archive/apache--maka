@@ -62,6 +62,8 @@ import {
   msg_unknown,
   msg_waiting,
   msg_you,
+  msg_workhubTask,
+  msg_workhubGraph,
 } from '../locale-messages.js';
 
 // This feature owns this explicit message catalog; shared messages remain tree-shakeable.
@@ -110,6 +112,8 @@ const messages = {
   unknown: msg_unknown,
   waiting: msg_waiting,
   you: msg_you,
+  workhubTask: msg_workhubTask,
+  workhubGraph: msg_workhubGraph,
 };
 export const copy = /* @__PURE__ */ createCopy(messages);
 export type Copy = ReturnType<typeof copy>;

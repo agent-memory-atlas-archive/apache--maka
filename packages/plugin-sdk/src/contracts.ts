@@ -11516,6 +11516,16 @@ export const contracts = {
               AgentHistoryChunk: {
                 type: 'object',
                 properties: {
+                  origin: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/MessageOrigin',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   compaction: {
                     anyOf: [
                       {
@@ -11603,6 +11613,40 @@ export const contracts = {
                   'totalBytes',
                   'text',
                   'tool',
+                ],
+              },
+              MessageOrigin: {
+                description:
+                  'Trusted producer attribution, preserved independently of editable content.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      taskId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workhub_task',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'taskId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      graphId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workhub_graph',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'graphId'],
+                  },
                 ],
               },
               HistoryCompaction: {
@@ -17633,6 +17677,16 @@ export const contracts = {
               AgentQueueEntry: {
                 type: 'object',
                 properties: {
+                  origin: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/MessageOrigin',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   messageId: {
                     type: 'string',
                   },
@@ -17646,6 +17700,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['messageId', 'kind', 'preview'],
+              },
+              MessageOrigin: {
+                description:
+                  'Trusted producer attribution, preserved independently of editable content.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      taskId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workhub_task',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'taskId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      graphId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workhub_graph',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'graphId'],
+                  },
+                ],
               },
               AgentQueueKind: {
                 type: 'string',
@@ -22734,6 +22822,16 @@ export const contracts = {
                   'One literal UTF-8 excerpt of an immutable field. JSON excerpts need not be\nstandalone JSON. Image descriptors carry no artifact read authorization.',
                 type: 'object',
                 properties: {
+                  origin: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/MessageOrigin',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   sequence: {
                     type: 'integer',
                     format: 'uint64',
@@ -22814,6 +22912,40 @@ export const contracts = {
                   'totalBytes',
                   'text',
                   'tool',
+                ],
+              },
+              MessageOrigin: {
+                description:
+                  'Trusted producer attribution, preserved independently of editable content.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      taskId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workhub_task',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'taskId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      graphId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workhub_graph',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'graphId'],
+                  },
                 ],
               },
               HistorySourceRole: {
@@ -23634,6 +23766,16 @@ export const contracts = {
               AgentQueueEntry: {
                 type: 'object',
                 properties: {
+                  origin: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/MessageOrigin',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   messageId: {
                     type: 'string',
                   },
@@ -23647,6 +23789,40 @@ export const contracts = {
                 },
                 additionalProperties: false,
                 required: ['messageId', 'kind', 'preview'],
+              },
+              MessageOrigin: {
+                description:
+                  'Trusted producer attribution, preserved independently of editable content.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      taskId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workhub_task',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'taskId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      graphId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'workhub_graph',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'graphId'],
+                  },
+                ],
               },
               AgentQueueKind: {
                 type: 'string',

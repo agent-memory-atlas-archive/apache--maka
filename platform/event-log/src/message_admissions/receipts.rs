@@ -32,6 +32,8 @@ use sqlx::{Connection, SqliteConnection};
 pub struct MessageSubmitReceipt {
     pub execution_digest: String,
     pub content_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<maka_agent_facts::message::MessageOrigin>,
     pub submitted_placement: Placement,
     pub submitted_intent: Option<SubmittedTurnIntent>,
     pub disposition: MessageDisposition,
@@ -41,6 +43,7 @@ pub struct MessageSubmitReceipt {
 impl MessageSubmitReceipt {
     pub fn matches(&self, source: &RootSourceMessage) -> bool {
         self.content_digest == source.message.submitted_content_digest
+            && self.origin == source.message.origin
             && self.submitted_placement == source.submitted_placement
             && self.submitted_intent == source.submitted_intent
     }
@@ -115,6 +118,7 @@ impl EventLog {
                     let receipt = MessageSubmitReceipt {
                         execution_digest,
                         content_digest: source.message.submitted_content_digest.clone(),
+                        origin: source.message.origin.clone(),
                         submitted_placement: source.submitted_placement,
                         submitted_intent: source.submitted_intent.clone(),
                         disposition: source.disposition,

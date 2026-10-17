@@ -19,6 +19,9 @@
 
 import type { Message } from './locale.js';
 
+export const msg_workhubTask: Message = ['WorkHub task', 'WorkHub 任务', 'WorkHub 任務'];
+export const msg_workhubGraph: Message = ['WorkHub graph', 'WorkHub 图', 'WorkHub 圖'];
+
 export const msg_graphEpoch: Message = ['View epoch', '查看轮次', '查看輪次'];
 export const msg_graphChanged: Message = [
   'The epoch changed. Review the current state before trying again.',

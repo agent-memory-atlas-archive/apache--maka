@@ -129,6 +129,7 @@ async fn handoff_output_keeps_one_public_identity_and_all_physical_evidence_afte
     source_messages.push(RootSourceMessage {
         unprepared_content: content.clone(),
         message: DeliveredMessage {
+            origin: None,
             message_id: "user-message".into(),
             submitted_content_digest: content.content_digest().unwrap(),
             content: content.clone(),
@@ -151,6 +152,7 @@ async fn handoff_output_keeps_one_public_identity_and_all_physical_evidence_afte
                     Fact::MessageSteered {
                         source: None,
                         message: Box::new(DeliveredMessage {
+                            origin: None,
                             message_id: "steered-message".into(),
                             submitted_content_digest: content.content_digest().unwrap(),
                             content,

@@ -19,6 +19,7 @@
 
 //! WorkHub follow-ups use the original Agent admission gate and durable queue.
 use super::*;
+use maka_agent_facts::message::MessageOrigin;
 use maka_event_log::message_admissions::{PendingExecution, PendingMessageAdmission};
 
 #[derive(Serialize, Deserialize)]
@@ -66,6 +67,7 @@ impl Owner {
         route: &ReturnRoute,
         identity: &str,
         text: String,
+        origin: MessageOrigin,
     ) -> Result<Option<PendingMessageAdmission>, String> {
         let runs = self.runs.lock().await;
         if runs.closing || self.stop.is_cancelled() {
@@ -116,6 +118,7 @@ impl Owner {
         let message: MessageInput = text.into();
         let delivered = RootSourceMessage {
             message: DeliveredMessage {
+                origin: Some(origin),
                 message_id: format!("m_{identity}"),
                 submitted_content_digest: message
                     .content_digest()

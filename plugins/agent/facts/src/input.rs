@@ -161,12 +161,17 @@ pub struct DeliveredMessage {
     pub message_id: String,
     pub content: MessageInput,
     pub submitted_content_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::message::MessageOrigin>,
 }
 
 impl DeliveredMessage {
     pub fn validate(&self) -> Result<(), &'static str> {
         validate_receipts(&self.content.preparation)?;
         crate::interaction::entity_id(&self.message_id)?;
+        if let Some(origin) = &self.origin {
+            origin.validate()?;
+        }
         if !crate::archive::valid_projection_digest(&self.submitted_content_digest) {
             return Err("invalid submitted message digest");
         }

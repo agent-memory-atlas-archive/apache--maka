@@ -439,6 +439,7 @@ impl Handler for Agent {
                             chunks: chunks
                                 .into_iter()
                                 .map(|chunk| HistoryChunk {
+                                    origin: chunk.origin,
                                     compaction: chunk.compaction,
                                     attachments: chunk
                                         .attachments

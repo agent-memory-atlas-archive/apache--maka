@@ -142,6 +142,7 @@ function historyMessage(chunk: NonNullable<State['window']>['page']['chunks'][nu
   return {
     id: chunkId(chunk),
     ...(chunk.compaction ? { compaction: chunk.compaction } : {}),
+    ...(chunk.origin ? { origin: chunk.origin } : {}),
     contentKey: 'body-' + chunkId(chunk),
     role: chunk.field === 'thinking' ? 'thinking' : chunk.role,
     timestamp: chunk.timestamp,

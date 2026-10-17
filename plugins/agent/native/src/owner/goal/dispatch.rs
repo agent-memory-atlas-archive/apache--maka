@@ -50,6 +50,7 @@ fn admission(
         },
         source: RootSourceMessage {
             message: DeliveredMessage {
+                origin: None,
                 message_id: invocation.invocation_id.replacen("i_", "m_", 1),
                 submitted_content_digest: message.content_digest().map_err(reason)?,
                 content: message.clone(),

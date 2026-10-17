@@ -238,6 +238,7 @@ fn pending(
         source: RootSourceMessage {
             unprepared_content: request.content.clone(),
             message: DeliveredMessage {
+                origin: None,
                 message_id: uuid::Uuid::new_v4().to_string(),
                 submitted_content_digest: request.content.content_digest().unwrap(),
                 content: request.content.clone(),

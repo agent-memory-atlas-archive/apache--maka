@@ -190,7 +190,39 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
         assert_eq!(restored["work"][0]["resultId"], result_id);
         assert_eq!(query_import(&fixture, hub::EXPORT, "task", json!({"taskId":view["work"][0]["taskId"]})).await["operation"], task["operation"]);
         assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err());
+        let namespace = maka_capabilities::storage::Namespace::new(hub::IMPLEMENTATION,maka_plugin_core::scope::Scope::Profile).unwrap();
+        let records = fixture.store.plugin_data_scan(&namespace,maka_capabilities::storage::Scan {prefix:String::new(),after:None}).await.unwrap();
+        let notice = records.entries.into_iter().find(|entry| entry.key.ends_with(&format!("tasks/{}",view["work"][0]["taskId"].as_str().unwrap()))).unwrap();
+        let maka_capabilities::storage::Data::Present(notice) = notice.record.data else {panic!("task data");};
+        let admission = &notice["notification"]["admission"];
+        let notice_id = admission["source"]["message_id"].as_str().unwrap();
+        let facts = fixture.store.scoped_prefix(maka_agent_facts::event::LogScope::Session {id:session.into()},512,8*1024*1024).await.unwrap();
+        let sources: Vec<_> = facts.events.iter().filter_map(|row| match &row.event.fact {
+            Fact::InvocationOpened {input:maka_agent_facts::input::InvocationInput::Message {source_messages,..},..} => Some(source_messages.as_slice()),
+            _ => None,
+        }).flatten().filter(|source| source.message.message_id == notice_id)
+            .map(|source|serde_json::to_value(&source.message).unwrap()).collect();
+        let mut history_request = json!({"sessionId":session,"position":{"kind":"start"}});
+        let mut notice_chunks = Vec::new();
+        let mut history_finished = false;
+        for _ in 0..128 {
+            let page = fixture.query("history",history_request.clone()).await.unwrap();
+            history_request["through"] = page["through"].clone();
+            if page["kind"] == "preparing" {continue;}
+            notice_chunks.extend(page["chunks"].as_array().unwrap().iter()
+                .filter(|chunk| chunk["role"] == "user" && chunk["messageId"] == notice_id).cloned());
+            if page["after"].is_null() {history_finished = true;break;}
+            history_request["position"] = json!({"kind":"after","cursor":page["after"]});
+        }
         fixture.app.shutdown().await.unwrap(); fixture.config.shutdown().await.unwrap();
+        let expected = json!({"kind":"workhub_graph","graphId":epoch["epoch"]["graphId"]});
+        assert_ne!(epoch["epoch"]["graphId"],view["work"][0]["taskId"]);
+        assert_eq!(admission["source"]["origin"],expected,"aggregate graph wake belongs to the graph, not its outbox task");
+        assert_eq!(sources.len(),1);
+        assert_eq!(sources[0]["origin"],expected);
+        assert!(history_finished);
+        assert!(!notice_chunks.is_empty());
+        for chunk in notice_chunks {assert_eq!(chunk["origin"],expected);}
     }).await.unwrap();
 }
 

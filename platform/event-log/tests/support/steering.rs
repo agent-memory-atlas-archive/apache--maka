@@ -154,6 +154,7 @@ pub fn steering(session: &str, id: &str) -> EventWrite {
         Fact::MessageSteered {
             source: None,
             message: Box::new(DeliveredMessage {
+                origin: None,
                 message_id: id.into(),
                 content,
                 submitted_content_digest: format!("sha256:{}", "a".repeat(64)),

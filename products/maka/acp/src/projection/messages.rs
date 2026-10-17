@@ -124,6 +124,7 @@ mod tests {
             "!"
         );
         let mut chunk = HistoryChunk {
+            origin: None,
             compaction: None,
             attachments: Vec::new(),
             timing: None,
@@ -149,11 +150,13 @@ mod tests {
         assert_eq!(update["sessionUpdate"], "agent_message");
         assert_eq!(update["messageId"], "m");
         assert_eq!(update["content"][0]["text"], "revised");
+        assert!(update["_meta"]["maka"].get("origin").is_none());
     }
     #[test]
     fn missing_history_fragment_is_rejected() {
         let mut projection = Projection::default();
         let chunk = HistoryChunk {
+            origin: None,
             compaction: None,
             attachments: Vec::new(),
             timing: None,
@@ -174,6 +177,9 @@ mod tests {
     fn attachment_only_user_message_keeps_safe_descriptions_during_replay() {
         let mut projection = Projection::default();
         let chunk = HistoryChunk {
+            origin: Some(maka_agent_facts::message::MessageOrigin::WorkhubTask {
+                task_id: "task-original".into(),
+            }),
             compaction: None,
             attachments: vec![maka_agent_api::contract::HistoryAttachment {
                 name: "photo.png".into(),
@@ -196,6 +202,14 @@ mod tests {
         let update = serde_json::to_value(&projection.chunk(&chunk).unwrap()[0]).unwrap();
         assert_eq!(update["sessionUpdate"], "user_message");
         assert_eq!(
+            update["_meta"]["maka"]["origin"],
+            serde_json::json!({
+                "kind": "workhub_task", "taskId": "task-original"
+            })
+        );
+        assert_eq!(update["_meta"]["maka"]["hostMessageId"], "u");
+        assert_eq!(update["_meta"]["maka"]["turnId"], "t");
+        assert_eq!(
             update["_meta"]["maka"]["attachments"][0]["name"],
             "photo.png"
         );
@@ -210,6 +224,7 @@ mod tests {
     fn diagnostic_history_replays_as_marked_text_without_tool_metadata() {
         let mut projection = Projection::default();
         let mut chunk = HistoryChunk {
+            origin: None,
             compaction: None,
             attachments: Vec::new(),
             timing: None,

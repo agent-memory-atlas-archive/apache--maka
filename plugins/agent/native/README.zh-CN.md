@@ -53,4 +53,6 @@ Maka 默认组合启用 `automaticTitles`。通过 `automaticTitle: true` 创建
 
 WorkHub 协调会话可以选择 Graph 或 Swarm。Graph 决策与原 WorkHub 任务记录原子提交；原任务所有者继续负责派发、依赖输入捕获、控制回执和清理。五个 Graph 工具提供已发布目标、工作／结果／历史的有界读取、更新和让出执行。Swarm 在需要处理或整批工作结束时唤醒协调者。跨轮次输入必须引用较早已完成轮次选定的最终结果；输入采用 16 KiB 结果预览，完整结果仍可分页读取。停止、排队和重启后仍检查原会话、轮次和权限边界。
 
+WorkHub 任务和 Graph 通知在历史中保留其记录的来源，并使用独立的消息标签。
+
 [源码](src/lib.rs) · [Cargo 配置](Cargo.toml)

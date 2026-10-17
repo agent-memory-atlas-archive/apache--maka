@@ -73,7 +73,8 @@ function nodes(node) {
       ]
     : [];
 }
-function client() {
+function client(locale = 'en') {
+  module.activate({ locale });
   let out = module.component.mount({}, values);
   const c = {
     get out() {
@@ -1408,4 +1409,103 @@ test('background readers, inspectors, dialogs and other pages disable read ackno
   assert.equal(c.find(oldReader).props.markReadEnabled, false);
   c.child(oldReader, 'markRead', { sessionId: 'Task A', sequence: 4, field: 'body' });
   assert.equal(c.action('markRead'), undefined);
+});
+
+test('structured WorkHub history reaches localized captions and pending queue labels', async () => {
+  const targets = await Promise.all(
+    ['tui', 'desktop'].map((target) => import(`../dist/packages/timeline/${target}.js`)),
+  );
+  for (const [locale, taskCaption, graphCaption, ordinaryCaption, nextCaption] of [
+    ['en', 'WorkHub task', 'WorkHub graph', 'You', 'Next turn'],
+    ['zh-CN', 'WorkHub 任务', 'WorkHub 图', '你', '下一轮'],
+    ['zh-TW', 'WorkHub 任務', 'WorkHub 圖', '你', '下一輪'],
+  ]) {
+    const taskOrigin = { kind: 'workhub_task', taskId: 'wt_original_assignment' };
+    const graphOrigin = { kind: 'workhub_graph', graphId: 'agent_graph_original' };
+    const ordinaryId = `m_wh_${'a'.repeat(64)}`;
+    const c = client(locale)
+      .observe(3)
+      .history(
+        page(3, [
+          chunk(1, 'Worker finished', { role: 'user', origin: taskOrigin }),
+          chunk(2, 'Graph finished', { role: 'user', origin: graphOrigin }),
+          chunk(3, 'WorkHub task wt_original_assignment has ended. Report its outcome.', {
+            role: 'user',
+            messageId: ordinaryId,
+          }),
+        ]),
+      );
+    const props = c.find(c.reader()).props;
+    assert.deepEqual(
+      props.messages.map((message) => message.origin),
+      [taskOrigin, graphOrigin, undefined],
+    );
+    for (const timeline of targets) {
+      const schema = timeline.activate().Timeline.contract.interface.props;
+      const validate = new Ajv({ strict: false }).compile({
+        ...schema.properties.messages,
+        $defs: schema.$defs,
+      });
+      assert.equal(validate(props.messages), true, JSON.stringify(validate.errors));
+      const output = timeline.component.mount(props, {});
+      const tree = nodes(output.frame.view);
+      assert.equal(
+        tree.find((node) => node.key === 'role-message-1').text.split(' · ')[0],
+        taskCaption,
+      );
+      assert.equal(
+        tree.find((node) => node.key === 'role-message-2').text.split(' · ')[0],
+        graphCaption,
+      );
+      // The ordinary message retains its normal caption; matching text/ID is not provenance.
+      const ordinary = tree.find((node) => node.key === `role-${ordinaryId}`);
+      if (ordinary) assert.equal(ordinary.text.split(' · ')[0], ordinaryCaption);
+      else
+        assert.equal(
+          tree.find((node) => node.key === `message-${ordinaryId}`).label,
+          ordinaryCaption,
+        );
+    }
+    assert.ok(c.state.watch);
+    c.event({
+      kind: 'action',
+      key: c.state.watch.key,
+      event: {
+        status: 'updated',
+        value: {
+          kind: 'queue',
+          queue: {
+            revision: 1,
+            entries: [
+              {
+                messageId: 'task-pending',
+                kind: 'followup',
+                preview: 'Task update',
+                origin: taskOrigin,
+              },
+              {
+                messageId: 'graph-pending',
+                kind: 'followup',
+                preview: 'Graph update',
+                origin: graphOrigin,
+              },
+              {
+                messageId: ordinaryId,
+                kind: 'followup',
+                preview: 'WorkHub task update',
+              },
+            ],
+          },
+        },
+      },
+    });
+    assert.deepEqual(
+      c.find('queue').props.rows.map((row) => row.text),
+      [
+        `${taskCaption} · ${nextCaption} · Task update`,
+        `${graphCaption} · ${nextCaption} · Graph update`,
+        `${nextCaption} · WorkHub task update`,
+      ],
+    );
+  }
 });

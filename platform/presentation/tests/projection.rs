@@ -411,3 +411,127 @@ fn interrupted_request_without_output_has_a_durable_diagnostic_not_an_assistant_
     );
     assert!(view.overlay().is_empty());
 }
+
+#[test]
+fn annotated_openings_preserve_source_identity_and_unannotated_batches_stay_aggregated() {
+    use maka_agent_facts::input::DeliveredMessage;
+    use maka_agent_facts::message::RootSourceMessage;
+    use maka_agent_facts::message::{MessageDisposition, MessageOrigin, Placement};
+    let source = |id: &str, text: &str, origin| {
+        let mut content: MessageInput = text.into();
+        content.display_text = Some(format!("visible {text}"));
+        content.attachments = Some(
+            serde_json::from_value(json!([
+                {"kind":"other","name":id,"mimeType":"text/plain","bytes":1,
+                 "ref":{"kind":"session_file","sessionId":"session","relativePath":id}}
+            ]))
+            .unwrap(),
+        );
+        content.inline_references = Some(
+            serde_json::from_value(json!([
+                {"kind":"workspace_file","value":text,"label":"reference","start":0}
+            ]))
+            .unwrap(),
+        );
+        RootSourceMessage {
+            unprepared_content: content.clone(),
+            message: DeliveredMessage {
+                message_id: id.into(),
+                submitted_content_digest: content.content_digest().unwrap(),
+                content,
+                origin,
+            },
+            submitted_placement: Placement::CurrentTurn,
+            disposition: MessageDisposition::TurnStarted,
+            submitted_intent: None,
+        }
+    };
+    for annotated in [false, true] {
+        let sources = vec![
+            source("human", "human", None),
+            source(
+                "notice",
+                "notice",
+                annotated.then(|| MessageOrigin::WorkhubTask {
+                    task_id: "wt_actual".into(),
+                }),
+            ),
+        ];
+        let content = maka_agent_facts::message::aggregate(
+            sources.iter().map(|source| &source.message.content),
+        );
+        let mut opening = events(InvocationOutcome::Completed).remove(0);
+        opening.event.id = "opening".into();
+        opening.event.fact = Fact::InvocationOpened {
+            configuration: None,
+            input: InvocationInput::Message {
+                content: content.clone(),
+                source_messages: sources.clone(),
+                request_fingerprint: None,
+            },
+        };
+        let mut view = InvocationView::new(8192).unwrap();
+        let rows = view.push(&opening).unwrap();
+        assert_eq!(rows.len(), if annotated { 3 } else { 2 });
+        if annotated {
+            for (row, source) in rows.iter().zip(&sources) {
+                assert_eq!(row.message.id, source.message.message_id);
+                let Content::User {
+                    text,
+                    display_text,
+                    attachments,
+                    inline_references,
+                    origin,
+                    ..
+                } = &row.message.content
+                else {
+                    panic!("user source")
+                };
+                assert_eq!(text, &source.message.content.text);
+                assert_eq!(display_text, &source.message.content.display_text);
+                assert_eq!(attachments, &source.message.content.attachments);
+                assert_eq!(inline_references, &source.message.content.inline_references);
+                assert_eq!(origin, &source.message.origin);
+            }
+            assert!(rows[0].sequence < rows[1].sequence && rows[1].sequence < rows[2].sequence);
+            let mut delivered = sources[1].message.clone();
+            delivered.message_id = "graph-steering".into();
+            delivered.origin = Some(MessageOrigin::WorkhubGraph {
+                graph_id: "agent_graph_actual".into(),
+            });
+            let mut steered = opening;
+            steered.sequence += 1;
+            steered.event.id = "steering".into();
+            steered.event.fact = Fact::MessageSteered {
+                message: Box::new(delivered),
+                source: None,
+            };
+            let rows = view.push(&steered).unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                serde_json::to_value(&rows[0].message).unwrap()["origin"],
+                json!({"kind":"workhub_graph","graphId":"agent_graph_actual"})
+            );
+        } else {
+            assert_eq!(rows[0].message.id, "opening");
+            let json = serde_json::to_value(&rows[0].message).unwrap();
+            assert_eq!(
+                json,
+                json!({
+                    "id":"opening","turnId":"turn","ts":1000,"type":"user",
+                    "text":"human\n\nnotice","displayText":"visible human\n\nvisible notice",
+                    "attachments":[
+                        {"kind":"other","name":"human","mimeType":"text/plain","bytes":1,
+                         "ref":{"kind":"session_file","sessionId":"session","relativePath":"human"}},
+                        {"kind":"other","name":"notice","mimeType":"text/plain","bytes":1,
+                         "ref":{"kind":"session_file","sessionId":"session","relativePath":"notice"}}
+                    ],
+                    "inlineReferences":[
+                        {"kind":"workspace_file","value":"human","label":"reference","start":0},
+                        {"kind":"workspace_file","value":"notice","label":"reference","start":15}
+                    ]
+                })
+            );
+        }
+    }
+}

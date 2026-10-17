@@ -60,6 +60,7 @@ async fn turn(log: &EventLog, session: &str, turn: &str, file: bool) {
     unprepared.text = format!("{turn} before preparation");
     let source = maka_agent_facts::message::RootSourceMessage {
         message: maka_agent_facts::input::DeliveredMessage {
+            origin: None,
             message_id: format!("message-{turn}"),
             content: content.clone(),
             submitted_content_digest: unprepared.content_digest().unwrap(),
@@ -1127,6 +1128,7 @@ async fn draft_abandonment_serializes_with_acceptance_and_preserves_identity_aft
         source: RootSourceMessage {
             unprepared_content: "new input".into(),
             message: DeliveredMessage {
+                origin: None,
                 message_id: format!("new-{session}"),
                 content: "new input".into(),
                 submitted_content_digest: maka_agent_facts::input::MessageInput::from("new input")
