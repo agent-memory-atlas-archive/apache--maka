@@ -254,6 +254,7 @@ mod tests {
                 session,
                 0,
                 Chunk {
+                    model: None,
                     origin: None,
                     field: Default::default(),
                     message_id: id.into(),

@@ -1033,6 +1033,8 @@ pub struct HistoryAttachment {
 #[schemars(rename = "AgentHistoryChunk")]
 pub struct HistoryChunk {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<maka_agent_ports::session::history::HistoryModel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<maka_agent_facts::message::MessageOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<maka_agent_ports::session::history::Compaction>,

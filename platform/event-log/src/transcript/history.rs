@@ -253,7 +253,10 @@ impl EventLog {
                         ).bind(&session).bind(sql_number(sequence)?).fetch_one(&mut *tx).await?;
                         Some(maka_agent_ports::session::history::Compaction { duration_ms: sequence_number(duration)? })
                     } else { None };
-                    let chunk = Chunk { field, timing, compaction, origin: row.origin,
+                    let model = if role == Role::Assistant {
+                        super::model::resolve(&mut tx, &session, sequence, sql_number(through)?).await?
+                    } else { None };
+                    let chunk = Chunk { field, timing, compaction, origin: row.origin, model,
                         message_id: row.message, turn_id: row.turn, timestamp: row.timestamp, role,
                         sequence, offset: start, total_bytes: row.total, text: text.to_owned(), attachments, tool,
                     };

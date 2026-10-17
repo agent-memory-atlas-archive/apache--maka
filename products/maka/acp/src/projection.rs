@@ -58,6 +58,9 @@ impl Projection {
     pub fn chunk(&mut self, chunk: &HistoryChunk) -> Result<Vec<acp::SessionUpdate>, crate::Error> {
         if chunk.offset == 0 {
             let mut meta = message_meta(&chunk.turn_id, &chunk.message_id);
+            if let Some(model) = &chunk.model {
+                meta["maka"]["model"] = serde_json::to_value(model)?;
+            }
             if let Some(origin) = &chunk.origin {
                 meta["maka"]["origin"] = serde_json::to_value(origin)?;
             }

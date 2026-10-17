@@ -19,6 +19,10 @@
 
 import type { Message } from './locale.js';
 
+export const msg_historyModel: Message = ['Model', '模型', '模型'];
+export const msg_historyRequestedModel: Message = ['Requested model', '请求模型', '請求模型'];
+export const msg_historyImportedModel: Message = ['Imported model', '导入来源模型', '匯入來源模型'];
+
 export const msg_workhubTask: Message = ['WorkHub task', 'WorkHub 任务', 'WorkHub 任務'];
 export const msg_workhubGraph: Message = ['WorkHub graph', 'WorkHub 图', 'WorkHub 圖'];
 

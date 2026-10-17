@@ -1600,3 +1600,69 @@ test('WorkHub browses with opaque cursors and uses task detail metadata instead 
     });
   }
 });
+
+test('historical captions use recorded response models and keep requested and imported evidence distinct', async () => {
+  const native = {
+    kind: 'native',
+    requestedModelId: 'request-alias',
+    reportedModelId: 'response-model-2026',
+  };
+  const requested = { kind: 'native', requestedModelId: 'unreported-alias', reportedModelId: null };
+  const imported = { kind: 'imported', modelId: 'source-recorded-model' };
+  const targets = await Promise.all(
+    ['tui', 'desktop'].map(async (target) => ({
+      target,
+      timeline: await import(`../dist/packages/timeline/${target}.js`),
+    })),
+  );
+  for (const [locale, modelLabel, requestedLabel, importedLabel, thinkingLabel] of [
+    ['en', 'Model', 'Requested model', 'Imported model', 'Thinking'],
+    ['zh-CN', '模型', '请求模型', '导入来源模型', '思考'],
+    ['zh-TW', '模型', '請求模型', '匯入來源模型', '思考'],
+  ]) {
+    const c = client(locale)
+      .observe(5)
+      .history(
+        page(5, [
+          chunk(1, 'Answer from reported model', { model: native }),
+          chunk(2, 'Reasoning from reported model', { field: 'thinking', model: native }),
+          chunk(3, 'Answer without reported model', { model: requested }),
+          chunk(4, 'Imported answer', { model: imported }),
+          chunk(5, 'Answer without recorded model'),
+        ]),
+      );
+    c.child('models', 'resolved', {
+      selectionKey: String(c.state.epoch),
+      selection: {
+        ...recapModel,
+        choice: {
+          ...recapModel.choice,
+          selection: { ...recapModel.choice.selection, modelId: 'current-picker-model' },
+        },
+      },
+    });
+    const props = c.find(c.reader()).props;
+    assert.deepEqual(
+      props.messages.map((message) => message.model),
+      [native, native, requested, imported, undefined],
+    );
+    for (const { target, timeline } of targets) {
+      const tree = nodes(timeline.component.mount(props, {}).frame.view);
+      for (const [id, expected] of [
+        ['message-1', `Maka · ${modelLabel}: response-model-2026`],
+        ['thinking-message-2', `${thinkingLabel} · ${modelLabel}: response-model-2026`],
+        ['message-3', `Maka · ${requestedLabel}: unreported-alias`],
+        ['message-4', `Maka · ${importedLabel}: source-recorded-model`],
+      ]) {
+        const caption = tree.find((node) => node.key === 'role-' + id).text;
+        assert.equal(caption.split(' · ').slice(0, 2).join(' · '), expected);
+      }
+      if (target === 'desktop')
+        assert.equal(
+          tree.find((node) => node.key === 'role-message-5').text.split(' · ')[0],
+          'Maka',
+        );
+      else assert.equal(tree.find((node) => node.key === 'message-message-5').label, 'Maka');
+    }
+  }
+});

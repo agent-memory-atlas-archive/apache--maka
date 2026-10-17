@@ -215,6 +215,41 @@ async fn external_output_is_durable_observation_not_native_dispatch_and_rebuilds
             .await
             .unwrap()
     );
+    let maka_agent_ports::session::history::Page::Ready { chunks, .. } = log
+        .history_text(
+            "session",
+            through,
+            maka_agent_ports::session::history::Position::Start,
+            true,
+            8192,
+            32,
+            64 * 1024,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("ready")
+    };
+    let answer = chunks
+        .iter()
+        .find(|chunk| chunk.text == "final authoritative answer")
+        .expect("actual executor answer");
+    assert!(chunks.iter().all(|chunk| chunk.model.is_none()));
+    let source = log
+        .history_source(
+            "session",
+            through,
+            answer.sequence,
+            maka_agent_ports::session::history::SourceField::Body,
+            None,
+            maka_agent_ports::session::history::SourcePosition::After { offset: 6 },
+            8192,
+            64 * 1024,
+        )
+        .await
+        .unwrap();
+    assert_eq!(source.text, "authoritative answer");
+    assert!(source.model.is_none(), "executor ID is not an LLM model");
     let prefix = log.prefix(100, 1024 * 1024).await.unwrap();
     let mut view = maka_presentation::InvocationView::new(1024 * 1024).unwrap();
     let mut rows = vec![];

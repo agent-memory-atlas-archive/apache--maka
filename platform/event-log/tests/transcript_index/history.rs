@@ -1612,7 +1612,7 @@ async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_read
         Content::Assistant {
             text: body.clone(),
             thinking: Some(thinking.clone()),
-            model: None,
+            model: Some("imported-evidence-model".into()),
         },
         Content::Assistant {
             text: String::new(),
@@ -1649,6 +1649,30 @@ async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_read
         .await
         .unwrap()
     {}
+    let Page::Ready { chunks, .. } = log
+        .history_text(
+            "thinking",
+            through,
+            Position::Start,
+            true,
+            8192,
+            8,
+            64 * 1024,
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("ready")
+    };
+    let imported_message = chunks
+        .iter()
+        .find(|chunk| chunk.text == body)
+        .unwrap()
+        .message_id
+        .clone();
+    let imported_model = maka_agent_ports::session::history::HistoryModel::Imported {
+        model_id: "imported-evidence-model".into(),
+    };
     let expected = vec![
         "question".to_owned(),
         thinking.clone(),
@@ -1704,6 +1728,10 @@ async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_read
                         .collect::<Vec<_>>();
                     assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
                     for (chunk, key) in chunks.into_iter().zip(keys) {
+                        assert_eq!(
+                            chunk.model.as_ref(),
+                            (chunk.message_id == imported_message).then_some(&imported_model)
+                        );
                         if chunk.field == HistoryField::Thinking {
                             assert!(include);
                             assert_eq!(chunk.role, Role::Assistant);
@@ -1831,6 +1859,7 @@ async fn thinking_windows_preserve_field_order_bytes_and_explicit_body_only_read
         .await
         .unwrap();
     assert_eq!(source.text, thinking);
+    assert_eq!(source.model.as_ref(), Some(&imported_model));
     assert!(
         log.history_text(
             "thinking",
@@ -2212,4 +2241,318 @@ async fn notification_origin_survives_every_history_and_source_fragment_within_j
         Some(origin)
     );
     log.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn response_models_follow_exact_steps_fences_and_retained_copied_history() {
+    use maka_agent_facts::event::EventWrite;
+    use maka_agent_ports::session::history::{
+        HistoryField, HistoryModel, SourceField, SourcePosition,
+    };
+    use maka_event_log::sessions::{SessionCopy, SessionRetirement};
+    type Expected = BTreeMap<String, (HistoryField, String, HistoryModel)>;
+    async fn step(
+        log: &EventLog,
+        invocation: &Invocation,
+        id: &str,
+        requested: &str,
+        reported: Option<&str>,
+        parts: &[(TextKind, &str)],
+    ) -> (u64, Expected) {
+        let write = |fact| EventWrite::plain(RuntimeEvent::new(invocation.clone(), fact)).unwrap();
+        let mut request = request(id);
+        let Fact::ModelRequested { model_id, .. } = &mut request else {
+            unreachable!()
+        };
+        *model_id = requested.into();
+        log.append(&write(request)).await.unwrap();
+        let metadata = HistoryModel::Native {
+            requested_model_id: requested.into(),
+            reported_model_id: reported.map(str::to_owned),
+        };
+        let mut expected = Expected::new();
+        let mut accepted = Vec::new();
+        for (index, (kind, text)) in parts.iter().enumerate() {
+            let part_id = format!("{id}-{index}");
+            let observed = |event| Fact::ModelObserved {
+                step_id: format!("step-{id}"),
+                event,
+            };
+            let start = write(observed(ModelEvent::PartStarted {
+                id: part_id.clone(),
+                text_kind: *kind,
+                provider_options: None,
+            }));
+            expected.insert(
+                start.event().id.clone(),
+                (
+                    if *kind == TextKind::Thinking {
+                        HistoryField::Thinking
+                    } else {
+                        HistoryField::Body
+                    },
+                    (*text).into(),
+                    metadata.clone(),
+                ),
+            );
+            log.append(&start).await.unwrap();
+            for event in [
+                ModelEvent::PartDelta {
+                    id: part_id.clone(),
+                    text: (*text).into(),
+                    provider_options: None,
+                },
+                ModelEvent::PartFinished {
+                    id: part_id,
+                    provider_options: None,
+                },
+            ] {
+                log.append(&write(observed(event))).await.unwrap();
+            }
+            accepted.push(ModelPart::Text {
+                text_kind: *kind,
+                text: (*text).into(),
+                provider_options: None,
+            });
+        }
+        log.append(&write(Fact::ModelObserved {
+            step_id: format!("step-{id}"),
+            event: ModelEvent::ResponseMetadata {
+                id: None,
+                model: reported.map(str::to_owned),
+                timestamp: None,
+            },
+        }))
+        .await
+        .unwrap();
+        log.append(&write(Fact::ModelObserved {
+            step_id: format!("step-{id}"),
+            event: ModelEvent::Finished {
+                reason: maka_agent_facts::model::ModelFinishReason::Stop,
+                usage: ModelUsage::default(),
+                provider_options: None,
+            },
+        }))
+        .await
+        .unwrap();
+        let through = log
+            .append(&write(Fact::ModelCompleted {
+                step_id: format!("step-{id}"),
+                output: ModelStep {
+                    parts: accepted,
+                    finish_reason: maka_agent_facts::model::ModelFinishReason::Stop,
+                    usage: ModelUsage::default(),
+                    provider_options: None,
+                    response_id: None,
+                    model: reported.map(str::to_owned),
+                    timestamp: None,
+                },
+            }))
+            .await
+            .unwrap();
+        (through, expected)
+    }
+    async fn read(log: &EventLog, session: &str, through: u64, expected: &Expected) {
+        assert!(log.prepare_transcript(session, through, 32).await.unwrap());
+        for reverse in [false, true] {
+            let mut position = if reverse {
+                Position::Tail
+            } else {
+                Position::Start
+            };
+            let mut actual = BTreeMap::<String, String>::new();
+            let mut done = false;
+            for _ in 0..128 {
+                let page = log
+                    .history_text(session, through, position, true, 37, 2, 4096)
+                    .await
+                    .unwrap();
+                assert!(serde_json::to_vec(&page).unwrap().len() <= 4096);
+                let Page::Ready {
+                    chunks,
+                    before,
+                    after,
+                    ..
+                } = page
+                else {
+                    panic!("prepared")
+                };
+                for chunk in chunks {
+                    if chunk.role != Role::Assistant {
+                        assert!(chunk.model.is_none());
+                        continue;
+                    }
+                    let (field, text, model) = &expected[&chunk.message_id];
+                    assert_eq!(chunk.field, *field);
+                    assert_eq!(chunk.model.as_ref(), Some(model));
+                    let assembled = actual.entry(chunk.message_id.clone()).or_default();
+                    if reverse {
+                        assembled.insert_str(0, &chunk.text);
+                    } else {
+                        assembled.push_str(&chunk.text);
+                    }
+                    // Independently read the same literal field starting inside the message.
+                    let source = log
+                        .history_source(
+                            session,
+                            through,
+                            chunk.sequence,
+                            if *field == HistoryField::Thinking {
+                                SourceField::Thinking
+                            } else {
+                                SourceField::Body
+                            },
+                            None,
+                            SourcePosition::After {
+                                offset: chunk.offset,
+                            },
+                            19,
+                            4096,
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(source.model.as_ref(), Some(model));
+                    assert_eq!(
+                        source.text,
+                        text[chunk.offset as usize..][..source.text.len()]
+                    );
+                }
+                let Some(cursor) = (if reverse { before } else { after }) else {
+                    done = true;
+                    break;
+                };
+                position = if reverse {
+                    Position::Before { cursor }
+                } else {
+                    Position::After { cursor }
+                };
+            }
+            assert!(done, "bounded pages must finish");
+            assert_eq!(
+                actual,
+                expected
+                    .iter()
+                    .map(|(id, (_, text, _))| (id.clone(), text.clone()))
+                    .collect()
+            );
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("response-models.sqlite");
+    let log = EventLog::open(&path).await.unwrap();
+    log.create_session("models", "create", &serde_json::json!({}), 1)
+        .await
+        .unwrap();
+    let first = Invocation {
+        session_id: "models".into(),
+        turn_id: "one-turn".into(),
+        run_id: "first-run".into(),
+        invocation_id: "first-invocation".into(),
+    };
+    let write = |invocation: &Invocation, fact| {
+        EventWrite::plain(RuntimeEvent::new(invocation.clone(), fact)).unwrap()
+    };
+    log.append(&write(&first, opening())).await.unwrap();
+    let body = "first body 中😀\0tail\n".repeat(12);
+    let thinking = "first reasoning 🦀\n".repeat(8);
+    let (first_fence, first_expected) = step(
+        &log,
+        &first,
+        "one",
+        "requested-alias",
+        Some("reported-concrete"),
+        &[(TextKind::Thinking, &thinking), (TextKind::Text, &body)],
+    )
+    .await;
+    let (_, second_expected) = step(
+        &log,
+        &first,
+        "two",
+        "second-request",
+        None,
+        &[(TextKind::Text, "second step without reported identity")],
+    )
+    .await;
+    let copied_fence = log
+        .append(&write(
+            &first,
+            Fact::InvocationEnded {
+                outcome: InvocationOutcome::Cancelled {
+                    source: "user".into(),
+                },
+            },
+        ))
+        .await
+        .unwrap();
+    let mut copied_expected = first_expected.clone();
+    copied_expected.extend(second_expected);
+    let revision = log
+        .get_session::<Value>("models")
+        .await
+        .unwrap()
+        .unwrap()
+        .revision;
+    log.copy_session(
+        SessionCopy {
+            source_session_id: "models".into(),
+            target_session_id: "model-copy".into(),
+            expected_source_revision: revision,
+            purpose: maka_agent_facts::session::CopyPurpose::Branch {
+                turn_id: None,
+                side_conversation: false,
+            },
+        },
+        &serde_json::json!({}),
+        2,
+    )
+    .await
+    .unwrap();
+    let successor = Invocation {
+        run_id: "successor-run".into(),
+        invocation_id: "successor-invocation".into(),
+        ..first
+    };
+    log.append(&write(&successor, opening())).await.unwrap();
+    let (_, successor_expected) = step(
+        &log,
+        &successor,
+        "three",
+        "resumed-request",
+        Some("resumed-reported"),
+        &[(TextKind::Text, "same turn, distinct physical invocation")],
+    )
+    .await;
+    let through = log
+        .append(&write(
+            &successor,
+            Fact::InvocationEnded {
+                outcome: InvocationOutcome::Completed,
+            },
+        ))
+        .await
+        .unwrap();
+    let mut all_expected = copied_expected.clone();
+    all_expected.extend(successor_expected);
+    read(&log, "models", first_fence, &first_expected).await;
+    read(&log, "models", through, &all_expected).await;
+    read(&log, "model-copy", through, &copied_expected).await;
+    let revision = log
+        .get_session::<Value>("models")
+        .await
+        .unwrap()
+        .unwrap()
+        .revision;
+    log.begin_session_removal("models", revision).await.unwrap();
+    assert_eq!(
+        log.finish_session_retirement("models").await.unwrap(),
+        SessionRetirement::Removed
+    );
+    assert_eq!(
+        log.collect_session_material(None).await.unwrap(),
+        maka_event_log::sessions::MaterialCollection::Retained("models".into())
+    );
+    log.close().await.unwrap();
+    let reopened = EventLog::open(&path).await.unwrap();
+    read(&reopened, "model-copy", copied_fence, &copied_expected).await;
+    reopened.close().await.unwrap();
 }

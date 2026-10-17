@@ -62,6 +62,9 @@ import {
   msg_unknown,
   msg_waiting,
   msg_you,
+  msg_historyModel,
+  msg_historyRequestedModel,
+  msg_historyImportedModel,
   msg_workhubTask,
   msg_workhubGraph,
 } from '../locale-messages.js';
@@ -112,6 +115,9 @@ const messages = {
   unknown: msg_unknown,
   waiting: msg_waiting,
   you: msg_you,
+  historyModel: msg_historyModel,
+  historyRequestedModel: msg_historyRequestedModel,
+  historyImportedModel: msg_historyImportedModel,
   workhubTask: msg_workhubTask,
   workhubGraph: msg_workhubGraph,
 };

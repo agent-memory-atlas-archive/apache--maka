@@ -19,7 +19,7 @@
 
 import type { HistorySource } from '../../packages/plugin-sdk/src/index.js';
 import type { Message, Theme, ToolDisplayStatus } from './contracts.js';
-import { copy } from './locale-catalogs/message-view.js';
+import { copy, type Copy } from './locale-catalogs/message-view.js';
 import { toolPresentation } from '../agent/tool-details/index.js';
 import { fill, compactLabel, type Node, type Presentation } from './view.js';
 
@@ -31,6 +31,18 @@ export function messageOriginCaption(origin: Message['origin'], locale: string):
       return text.workhubTask;
     case 'workhub_graph':
       return text.workhubGraph;
+  }
+}
+
+function historyModelCaption(model: Message['model'], text: Copy): string | null {
+  if (!model) return null;
+  switch (model.kind) {
+    case 'native':
+      return model.reportedModelId === null
+        ? `${text.historyRequestedModel}: ${model.requestedModelId}`
+        : `${text.historyModel}: ${model.reportedModelId}`;
+    case 'imported':
+      return `${text.historyImportedModel}: ${model.modelId}`;
   }
 }
 
@@ -150,6 +162,7 @@ export function messageView<N extends Node>(
     id: string;
     role: HistorySource['role'] | 'thinking';
     origin?: Message['origin'];
+    model?: Message['model'];
     timestamp: number | null;
     text: string;
     tool: HistorySource['tool'];
@@ -169,7 +182,11 @@ export function messageView<N extends Node>(
     tool = message.role === 'tool_call' || message.role === 'tool_result',
     expanded = message.expanded,
     body = message.body;
-  const caption =
+  const modelCaption =
+    message.role === 'assistant' || message.role === 'thinking'
+      ? historyModelCaption(message.model, text)
+      : null;
+  const roleCaption =
     message.role === 'thinking'
       ? text.findFieldThinking
       : message.role === 'user'
@@ -181,6 +198,7 @@ export function messageView<N extends Node>(
             : message.role === 'failure'
               ? text.findFieldFailure
               : text.toolOutput;
+  const caption = modelCaption ? roleCaption + ' · ' + modelCaption : roleCaption;
   const { name, status, tone, ascii, symbol } = tool
     ? toolLabel(message, locale)
     : { name: null, status: null, tone: 'subtle' as const, ascii: '*', symbol: '•' };
@@ -301,7 +319,7 @@ export function messageView<N extends Node>(
             ui.box(
               'body-' + message.id,
               [
-                ...(user && message.origin
+                ...((user && message.origin) || modelCaption
                   ? [ui.text('role-' + message.id, caption, 12, theme.muted)]
                   : []),
                 body,

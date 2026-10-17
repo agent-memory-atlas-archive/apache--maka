@@ -271,7 +271,11 @@ impl EventLog {
                     } else {
                         None
                     };
+                    let model = if role == SourceRole::Assistant {
+                        super::model::resolve(&mut tx, &session, sequence, sql_number(through)?).await?
+                    } else { None };
                     let source = HistorySource {
+                        model,
                         origin: origin.map(|value| serde_json::from_str(&value)).transpose()?,
                         sequence,
                         timestamp: sequence_number(timestamp)?,

@@ -11516,6 +11516,16 @@ export const contracts = {
               AgentHistoryChunk: {
                 type: 'object',
                 properties: {
+                  model: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryModel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   origin: {
                     anyOf: [
                       {
@@ -11613,6 +11623,42 @@ export const contracts = {
                   'totalBytes',
                   'text',
                   'tool',
+                ],
+              },
+              HistoryModel: {
+                description: 'Model identity recorded for the exact historical assistant step.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      requestedModelId: {
+                        type: 'string',
+                      },
+                      reportedModelId: {
+                        type: ['string', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'native',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'requestedModelId', 'reportedModelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      modelId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'imported',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'modelId'],
+                  },
                 ],
               },
               MessageOrigin: {
@@ -22822,6 +22868,16 @@ export const contracts = {
                   'One literal UTF-8 excerpt of an immutable field. JSON excerpts need not be\nstandalone JSON. Image descriptors carry no artifact read authorization.',
                 type: 'object',
                 properties: {
+                  model: {
+                    anyOf: [
+                      {
+                        $ref: '#/$defs/HistoryModel',
+                      },
+                      {
+                        type: 'null',
+                      },
+                    ],
+                  },
                   origin: {
                     anyOf: [
                       {
@@ -22912,6 +22968,42 @@ export const contracts = {
                   'totalBytes',
                   'text',
                   'tool',
+                ],
+              },
+              HistoryModel: {
+                description: 'Model identity recorded for the exact historical assistant step.',
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      requestedModelId: {
+                        type: 'string',
+                      },
+                      reportedModelId: {
+                        type: ['string', 'null'],
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'native',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'requestedModelId', 'reportedModelId'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      modelId: {
+                        type: 'string',
+                      },
+                      kind: {
+                        type: 'string',
+                        const: 'imported',
+                      },
+                    },
+                    additionalProperties: false,
+                    required: ['kind', 'modelId'],
+                  },
                 ],
               },
               MessageOrigin: {

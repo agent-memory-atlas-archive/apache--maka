@@ -87,6 +87,7 @@ export interface Theme {
 }
 export interface Message {
   origin?: AgentHistoryChunk['origin'];
+  model?: AgentHistoryChunk['model'];
   compaction?: { durationMs: number };
   pending?: boolean;
   id: string;
@@ -417,6 +418,7 @@ const messageSchema = object(
   {
     pending: { type: 'boolean' },
     origin: native.agent.interface.methods.history.output.$defs.AgentHistoryChunk.properties.origin,
+    model: native.agent.interface.methods.history.output.$defs.AgentHistoryChunk.properties.model,
     id: string,
     contentKey: { type: 'string', minLength: 1, maxLength: 123, pattern: '^[A-Za-z0-9_-]+$' },
     role: {

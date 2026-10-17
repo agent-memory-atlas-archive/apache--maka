@@ -25,6 +25,8 @@ Exposes Agent execution as native application services. `provide` registers fact
 
 The service owns its activation and delegates runs to `maka-agent-engine`. Session history, controls and tool calls use admitted scopes and original operation receipts. Files, processes, skills and other services are explicit dependencies selected by composition.
 
+Historical answers and thinking retain each step's requested model and any provider-reported model. History and source excerpts preserve this evidence across model changes, copies and restarts. The UI labels an unreported model as requested and imported model metadata as imported; executor output carries no inferred model identity.
+
 The [independent public-client acceptance](../../../products/maka/cli/src/acp/tests/public_client.rs) runs the real Agent in a public Host with a controlled HTTP model, without an ACP, TUI or GPUI adapter. It verifies fenced history pagination, watch continuation, a pending question across complete client detachment and reconnect, and response followed by an exact invocation stop. The existing fixture supplies the original endpoint and epoch; reconnect does not resend the message. See the [client contract entrypoint](../api/README.md) for integration.
 
 ```sh

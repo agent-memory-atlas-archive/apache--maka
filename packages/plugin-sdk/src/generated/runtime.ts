@@ -4612,6 +4612,19 @@ export type AgentQueueAction =
       messageIds: [string, ...string[]];
       kind: 'reorder';
     };
+/**
+ * Model identity recorded for the exact historical assistant step.
+ */
+export type HistoryModel =
+  | {
+      requestedModelId: string;
+      reportedModelId: string | null;
+      kind: 'native';
+    }
+  | {
+      modelId: string;
+      kind: 'imported';
+    };
 export type AttachmentKind = 'image' | 'pdf' | 'doc' | 'code' | 'other';
 export type HistoryTurnOutcome = 'completed' | 'failed' | 'aborted';
 /**
@@ -10016,6 +10029,7 @@ export interface AgentQueueMutation {
   edit: AgentQueueAction;
 }
 export interface AgentHistoryChunk {
+  model?: HistoryModel | null;
   origin?: MessageOrigin | null;
   compaction?: HistoryCompaction | null;
   /**
@@ -10350,6 +10364,7 @@ export interface AgentHistorySourceRead {
  * standalone JSON. Image descriptors carry no artifact read authorization.
  */
 export interface HistorySource {
+  model?: HistoryModel | null;
   origin?: MessageOrigin | null;
   sequence: number;
   /**

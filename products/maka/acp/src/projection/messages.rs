@@ -124,6 +124,7 @@ mod tests {
             "!"
         );
         let mut chunk = HistoryChunk {
+            model: None,
             origin: None,
             compaction: None,
             attachments: Vec::new(),
@@ -144,18 +145,36 @@ mod tests {
         chunk.text = "!".into();
         assert!(projection.chunk(&chunk).unwrap().is_empty());
         chunk.offset = 0;
-        chunk.text = "revised".into();
+        chunk.model = Some(maka_agent_ports::session::history::HistoryModel::Native {
+            requested_model_id: "requested-alias".into(),
+            reported_model_id: Some("reported-concrete".into()),
+        });
+        chunk.text = "re".into();
         chunk.total_bytes = 7;
+        assert!(projection.chunk(&chunk).unwrap().is_empty());
+        chunk.offset = 2;
+        chunk.text = "vised".into();
         let update = serde_json::to_value(&projection.chunk(&chunk).unwrap()[0]).unwrap();
         assert_eq!(update["sessionUpdate"], "agent_message");
         assert_eq!(update["messageId"], "m");
         assert_eq!(update["content"][0]["text"], "revised");
         assert!(update["_meta"]["maka"].get("origin").is_none());
+        let expected = serde_json::json!({"kind":"native","requestedModelId":"requested-alias","reportedModelId":"reported-concrete"});
+        assert_eq!(update["_meta"]["maka"]["model"], expected);
+        chunk.offset = 0;
+        chunk.field = HistoryField::Thinking;
+        chunk.text = "Check".into();
+        chunk.total_bytes = 5;
+        let thinking = serde_json::to_value(&projection.chunk(&chunk).unwrap()[0]).unwrap();
+        assert_eq!(thinking["sessionUpdate"], "agent_thought");
+        assert_eq!(thinking["content"][0]["text"], "Check");
+        assert_eq!(thinking["_meta"]["maka"]["model"], expected);
     }
     #[test]
     fn missing_history_fragment_is_rejected() {
         let mut projection = Projection::default();
         let chunk = HistoryChunk {
+            model: None,
             origin: None,
             compaction: None,
             attachments: Vec::new(),
@@ -177,6 +196,7 @@ mod tests {
     fn attachment_only_user_message_keeps_safe_descriptions_during_replay() {
         let mut projection = Projection::default();
         let chunk = HistoryChunk {
+            model: None,
             origin: Some(maka_agent_facts::message::MessageOrigin::WorkhubTask {
                 task_id: "task-original".into(),
             }),
@@ -224,6 +244,7 @@ mod tests {
     fn diagnostic_history_replays_as_marked_text_without_tool_metadata() {
         let mut projection = Projection::default();
         let mut chunk = HistoryChunk {
+            model: None,
             origin: None,
             compaction: None,
             attachments: Vec::new(),

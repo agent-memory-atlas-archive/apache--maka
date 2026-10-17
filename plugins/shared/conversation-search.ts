@@ -738,6 +738,7 @@ export function historyView<N extends Node>(
           id: 'find-preview-row',
           role: header.role,
           origin: header.origin,
+          model: header.model,
           timestamp: header.timestamp,
           tool: header.tool,
           text:

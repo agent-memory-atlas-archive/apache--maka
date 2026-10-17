@@ -85,14 +85,21 @@ async fn explicit_models_switch_in_one_session_and_stale_selection_has_no_admiss
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
-            for expected in ["fixture-model", "second-model"] {
+            for (expected, text, reported) in [
+                ("fixture-model", "Answer from the requested alias", Some("fixture-model-2026-10-01")),
+                ("second-model", "Answer without provider model metadata", None),
+            ] {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let body = request(&mut socket).await;
                 assert_eq!(body["model"], expected);
-                response(&mut socket).await;
+                let mut delta = json!({"id":"selected-model","choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
+                if let Some(reported) = reported {delta["model"] = json!(reported);}
+                let end = json!({"id":"selected-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}});
+                let body = format!("data: {delta}\n\ndata: {end}\n\ndata: [DONE]\n\n");
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
             }
         });
-        let fixture = Fixture::new(&base, None).await;
+        let mut fixture = Fixture::new(&base, None).await;
         let session = fixture.create("Per-message model choice").await;
         let stale = fixture.selection().await;
         edit(&fixture, |changes| {
@@ -143,8 +150,44 @@ async fn explicit_models_switch_in_one_session_and_stale_selection_has_no_admiss
             fixture.drained().await;
         }
         server.await.unwrap();
+        let mut historical_answers = Vec::new();
+        let mut current_model_after_restart = Value::Null;
+        for after_restart in [false,true] {
+            if after_restart {
+                edit(&fixture,|changes|changes.enabled_model_ids.as_mut().unwrap().push("current-picker-model".into())).await;
+                let selected = fixture.selection().await;
+                let saved = fixture.mutation(2,"selectBackend",json!({"sessionId":session,"backend":{
+                    "kind":"model","connectionId":selected.connection_id,"modelId":"current-picker-model","thinkingLevel":null
+                }}),Uuid::new_v4()).await.unwrap();
+                assert_eq!(saved["kind"],"committed");
+                todo_tests::reopen(&mut fixture).await;
+                current_model_after_restart = fixture.query("observe",json!({"sessionId":session})).await.unwrap()["session"]["backend"]["modelId"].clone();
+            }
+            let mut history_request = json!({"sessionId":session,"position":{"kind":"start"}});
+            let mut assistant_chunks = Vec::new();
+            let mut history_finished = false;
+            for _ in 0..128 {
+                let page = fixture.query("history",history_request.clone()).await.unwrap();
+                history_request["through"] = page["through"].clone();
+                if page["kind"] == "preparing" {continue;}
+                assistant_chunks.extend(page["chunks"].as_array().unwrap().iter()
+                    .filter(|chunk|chunk["role"] == "assistant")
+                    .map(|chunk|json!({"text":chunk["text"],"model":chunk["model"]})));
+                if page["after"].is_null() {history_finished = true;break;}
+                history_request["position"] = json!({"kind":"after","cursor":page["after"]});
+            }
+            historical_answers.push((assistant_chunks,history_finished));
+        }
         fixture.app.shutdown().await.unwrap();
         fixture.config.shutdown().await.unwrap();
+        assert_eq!(current_model_after_restart,"current-picker-model");
+        for (assistant_chunks,history_finished) in historical_answers {
+        assert!(history_finished,"history must reach its captured fence");
+        assert_eq!(assistant_chunks,json!([
+            {"text":"Answer from the requested alias","model":{"kind":"native","requestedModelId":"fixture-model","reportedModelId":"fixture-model-2026-10-01"}},
+            {"text":"Answer without provider model metadata","model":{"kind":"native","requestedModelId":"second-model","reportedModelId":null}}
+        ]).as_array().unwrap().clone(),"history must associate each actual answer with its own requested and provider-reported model evidence");
+        }
     })
     .await
     .unwrap();
