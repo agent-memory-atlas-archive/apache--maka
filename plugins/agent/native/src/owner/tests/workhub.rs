@@ -1244,6 +1244,11 @@ fn is_worker_notice(input: &Value) -> bool {
 async fn coordinator_request(listener: &TcpListener) -> (TcpStream, Value) {
     loop {
         let (mut socket, _) = listener.accept().await.unwrap();
+        // Host retirement can close a connected transport before it writes an
+        // HTTP request. Once any byte exists, the original parser stays strict.
+        if socket.peek(&mut [0; 1]).await.unwrap() == 0 {
+            continue;
+        }
         let input = request(&mut socket).await;
         assert!(is_coordinator(&input), "unexpected model request: {input}");
         if is_worker_notice(&input) {
@@ -1975,3 +1980,32 @@ async fn workhub_dependencies_wait_cancel_and_dispatch_once_with_complete_origin
 
 #[path = "workhub_graph.rs"]
 mod graph_tests;
+
+#[tokio::test]
+async fn coordinator_http_fixture_accepts_empty_disconnect_but_rejects_partial_headers() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let receiving = tokio::spawn(async move { coordinator_request(&listener).await.1 });
+        drop(TcpStream::connect(address).await.unwrap());
+        let expected = json!({"messages":[{"role":"system","content":"WorkHub coordinator"}]});
+        let body = serde_json::to_vec(&expected).unwrap();
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client.write_all(format!("POST /v1/chat/completions HTTP/1.1\r\nAuthorization: Bearer private-fixture-key\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+        client.write_all(&body).await.unwrap();
+        assert_eq!(receiving.await.unwrap(), expected);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let receiving = tokio::spawn(async move { coordinator_request(&listener).await.1 });
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client.write_all(b"POST /v1/chat/completions HTTP/1.1\r\n").await.unwrap();
+        client.shutdown().await.unwrap();
+        let failure = receiving.await.unwrap_err();
+        assert!(failure.is_panic());
+        let panic = failure.into_panic();
+        let text = panic.downcast_ref::<String>().map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied()).unwrap();
+        assert!(text.contains("EOF before complete HTTP headers: buffered_bytes=36"), "{text}");
+    }).await.unwrap();
+}

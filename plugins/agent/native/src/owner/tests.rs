@@ -823,7 +823,12 @@ async fn request_with_key(socket: &mut TcpStream, key: &str) -> Value {
     let boundary = loop {
         let mut buffer = [0; 4096];
         let count = socket.read(&mut buffer).await.unwrap();
-        assert_ne!(count, 0);
+        assert_ne!(
+            count,
+            0,
+            "EOF before complete HTTP headers: buffered_bytes={}",
+            bytes.len()
+        );
         bytes.extend_from_slice(&buffer[..count]);
         assert!(bytes.len() < 512 * 1024);
         if let Some(at) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
