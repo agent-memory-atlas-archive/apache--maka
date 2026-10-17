@@ -49,7 +49,11 @@ for (const target of ['tui', 'desktop'])
       event({ kind: 'action', key: out.actions[0].key, event: { status: 'succeeded', value } });
     const selected = {
       choice: {
-        selection: { connectionId: 'fixture', modelId: 'chosen', revision: 2 },
+        selection: {
+          connectionId: '00000000-0000-0000-0000-000000000001',
+          modelId: 'chosen',
+          revision: 2,
+        },
         connectionName: 'Fixture',
         label: 'Chosen',
         thinkingLevels: ['medium'],
@@ -103,7 +107,15 @@ for (const target of ['tui', 'desktop'])
     assert.ok(save(action.input));
     assert.deepEqual(action.input.entries[0].tools, ['Read']);
     assert.equal(action.input.entries[0].isolatedWorkspace, true);
-    assert.deepEqual(action.input.entries[0].model, selected.choice.selection);
+    assert.deepEqual(action.input.entries[0].model, {
+      connectionId: '00000000-0000-0000-0000-000000000001',
+      modelId: 'chosen',
+    });
+    assert.equal(action.input.entries[0].thinkingLevel, 'medium');
+    assert.deepEqual(action.recovery.input.entries[0].model, {
+      connectionId: '00000000-0000-0000-0000-000000000001',
+      modelId: 'chosen',
+    });
     const reference = {
       contract: { name: 'maka.workhub.Coordinator', version: 1 },
       method: 'savePresets',
@@ -137,7 +149,11 @@ for (const target of ['tui', 'desktop'])
     finish({ names: ['Read', 'Write', 'WebSearch'] });
     raw('edit-agent-1');
     assert.equal(out.frame.state.draftRevision, 4);
-    assert.equal(out.frame.state.draft.model.modelId, 'chosen');
+    assert.deepEqual(out.frame.state.draft.model, {
+      connectionId: '00000000-0000-0000-0000-000000000001',
+      modelId: 'chosen',
+    });
+    assert.equal(out.frame.state.draft.thinkingLevel, 'medium');
     raw('remove');
     assert.equal(out.frame.state.removing, true);
     raw('cancel');

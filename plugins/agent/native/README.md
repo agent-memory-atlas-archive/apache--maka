@@ -59,4 +59,6 @@ WorkHub task and graph notifications retain their recorded source in history and
 
 WorkHub tasks list newest accepted work first. Each task detail includes its recorded title and acceptance time, which remain fixed across status changes and restarts. Pagination cursors preserve a position in the live list; refresh the first page to see newer work.
 
+Reusable WorkHub presets store an explicit connection and model. New ordinary and Graph tasks resolve that target against current settings, so unrelated connection edits do not invalidate the preset. Accepted tasks retain their captured selection and tools; changing or disabling a preset does not rewrite them. New routes report unavailable presets, connections or models before accepting work.
+
 [Source](src/lib.rs) · [Cargo manifest](Cargo.toml)

@@ -7275,16 +7275,12 @@ export interface WorkHubPreset {
    * Exact installed names; an empty list permits reasoning without tools.
    */
   tools: string[];
-  model: ModelSelection;
+  model: ConnectionTarget;
   thinkingLevel?: ThinkingLevel | null;
   enabled: boolean;
 }
-/**
- * Exact public selection observed by a caller, checked once at run admission.
- */
-export interface ModelSelection {
+export interface ConnectionTarget {
   connectionId: string;
-  revision: number;
   modelId: string;
 }
 export interface WorkHubGraphRead {
@@ -8110,6 +8106,14 @@ export interface AgentWorkRead {
   target: AgentWorkTarget;
   cursor?: AgentAnswerCursor | null;
 }
+/**
+ * Exact public selection observed by a caller, checked once at run admission.
+ */
+export interface ModelSelection {
+  connectionId: string;
+  revision: number;
+  modelId: string;
+}
 export interface SettingsModelCursor {
   query: string;
   connection: number;
@@ -8411,10 +8415,6 @@ export interface SettingsModelLimits {
   inputLimit: number | null;
   maxOutputTokens: number | null;
   compactionThreshold: number | null;
-}
-export interface ConnectionTarget {
-  connectionId: string;
-  modelId: string;
 }
 export interface SettingsUpdateModelSettings {
   selection: ModelSelection;

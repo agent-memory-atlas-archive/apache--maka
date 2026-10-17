@@ -20,11 +20,14 @@
 use super::*;
 
 async fn change(fixture: &Fixture, input: Value) -> Value {
+    workhub_mutation(fixture, "changeGraph", input).await
+}
+async fn workhub_mutation(fixture: &Fixture, method: &str, input: Value) -> Value {
     let client = fixture.app.client();
     let prepared = client
         .prepare_mutation(
             binding(fixture).await,
-            "changeGraph".into(),
+            method.into(),
             input,
             scope(&fixture.issuer, true),
             Uuid::new_v4(),
@@ -54,7 +57,7 @@ async fn change(fixture: &Fixture, input: Value) -> Value {
             outcome: OperationOutcome::Returned { value },
             cleanup: maka_plugin_core::operation::OperationCleanup::Confirmed,
         } => value,
-        other => panic!("graph control receipt: {other:?}"),
+        other => panic!("{method} receipt: {other:?}"),
     }
 }
 async fn graph(fixture: &Fixture, session: &str) -> Value {
@@ -128,6 +131,12 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
         let epoch = change(&fixture, json!({"sessionId":session,"action":{"kind":"start","mode":"swarm"}})).await;
         assert_eq!(epoch["kind"], "committed", "{epoch}");
         let directory = query_import(&fixture, "worker", "directories", json!({"kind":"roots"})).await["roots"][0]["selection"].clone();
+        let selection = fixture.selection().await;
+        let preset = json!({"id":"graph-reasoner","name":"Graph reasoner","description":"Frozen graph route", "worker":"worker","tools":[],"model":{"connectionId":selection.connection_id,"modelId":selection.model_id},"thinkingLevel":null,"enabled":true,"isolatedWorkspace":false});
+        let saved = workhub_mutation(&fixture, "savePresets", json!({"revision":null,"entries":[preset.clone()]})).await;
+        assert_eq!(saved["kind"],"saved","{saved}");
+        selection::edit(&fixture, |changes| changes.name = Some("Renamed after graph preset save".into())).await;
+        let frozen_model = serde_json::to_value(fixture.selection().await).unwrap();
         fixture.send(session).await.unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
         let input = request(&mut socket).await;
@@ -152,7 +161,7 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
         let (mut socket, _) = listener.accept().await.unwrap();
         request(&mut socket).await;
         let acceptance_lower_bound = maka_agent_authority::now();
-        graph_tool(&mut socket, "update_agent_graph", json!({"operation":"add_work","work":[{"target":{"kind":"worker","worker":"worker","title":"Graph child","workspace":directory,"tools":[],"model":fixture.selection().await},"instruction":"Produce the original graph result."}]})).await;
+        graph_tool(&mut socket, "update_agent_graph", json!({"operation":"add_work","work":[{"target":{"kind":"preset","preset":"graph-reasoner","title":"Graph child","workspace":directory},"instruction":"Produce the original graph result."}]})).await;
         let mut worker_calls = 0;
         let mut finished = false;
         while !finished {
@@ -161,6 +170,16 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
             if !is_coordinator(&input) {
                 worker_calls += 1;
                 assert!(input["messages"].to_string().contains("Produce the original graph result."));
+                assert_eq!(input["model"], "fixture-model", "graph preset must resolve its current explicit model");
+                assert!(input["tools"].is_null() || input["tools"].as_array().is_some_and(Vec::is_empty), "{input}");
+                // This request is already admitted. Editing the reusable preset
+                // must not change the accepted graph task or its original receipt.
+                let mut disabled = preset.clone();
+                disabled["enabled"] = json!(false);
+                disabled["tools"] = json!(["Read"]);
+                disabled["model"]["modelId"] = json!("future-preset-model");
+                let edited = workhub_mutation(&fixture, "savePresets", json!({"revision":saved["snapshot"]["revision"],"entries":[disabled]})).await;
+                assert_eq!(edited["kind"], "saved", "{edited}");
                 response(&mut socket).await;
             } else if input["messages"].to_string().contains("has new durable worker observations") {
                 let view = graph(&fixture, session).await;
@@ -194,11 +213,16 @@ async fn graph_real_model_dispatches_original_work_wakes_and_selects_actual_resu
         let restored_task = query_import(&fixture, hub::EXPORT, "task", json!({"taskId":view["work"][0]["taskId"]})).await;
         let restored_list = query_import(&fixture,hub::EXPORT,"tasks",json!({})).await;
         assert_eq!(restored_task["operation"], task["operation"]);
+        let original_result = query_import(&fixture, hub::EXPORT, "graphResult", json!({"sessionId":session,"graphId":epoch["epoch"]["graphId"],"workId":restored["work"][0]["workId"],"resultId":result_id,"offset":0})).await;
+        assert_eq!(original_result["text"], "Elegant response");
+        assert_eq!(query_import(&fixture, hub::EXPORT, "presets", json!({})).await["entries"][0]["enabled"], false);
         assert!(tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err());
         let namespace = maka_capabilities::storage::Namespace::new(hub::IMPLEMENTATION,maka_plugin_core::scope::Scope::Profile).unwrap();
         let records = fixture.store.plugin_data_scan(&namespace,maka_capabilities::storage::Scan {prefix:String::new(),after:None}).await.unwrap();
         let notice = records.entries.into_iter().find(|entry| entry.key.ends_with(&format!("tasks/{}",view["work"][0]["taskId"].as_str().unwrap()))).unwrap();
         let maka_capabilities::storage::Data::Present(notice) = notice.record.data else {panic!("task data");};
+        assert_eq!(notice["input"]["model"], frozen_model, "accepted graph selection must not be resolved from the edited preset");
+        assert_eq!(notice["target"]["tools"], json!([]));
         let admission = &notice["notification"]["admission"];
         let notice_id = admission["source"]["message_id"].as_str().unwrap();
         let facts = fixture.store.scoped_prefix(maka_agent_facts::event::LogScope::Session {id:session.into()},512,8*1024*1024).await.unwrap();

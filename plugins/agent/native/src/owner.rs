@@ -161,7 +161,7 @@ pub(crate) struct Owner {
     pub settings: Configuration,
     pub prefix: String,
     pub data_source: DataSource,
-    configuration: Arc<ConfigurationStore>,
+    pub(crate) configuration: Arc<ConfigurationStore>,
     credentials: crate::model::Credentials,
     revision: SourceRevision,
     behavior: Option<SystemPrompt>,

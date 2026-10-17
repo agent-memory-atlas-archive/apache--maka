@@ -43,6 +43,56 @@ impl Hub {
         };
         Ok(Presets { revision, entries })
     }
+    /// Resolve reusable intent only for a new route; accepted assignments keep
+    /// their original exact selection independently of later preset edits.
+    pub(super) async fn resolve_preset(
+        &self,
+        id: &str,
+    ) -> std::result::Result<(Preset, crate::ModelSelection), String> {
+        let preset = self
+            .presets()
+            .await?
+            .entries
+            .into_iter()
+            .find(|preset| preset.id == id)
+            .ok_or("workhub_preset_missing")?;
+        if !preset.enabled {
+            return Err("workhub_preset_disabled".into());
+        }
+        self.tasks
+            .workers
+            .get(&preset.worker)
+            .and_then(Option::as_ref)
+            .ok_or("workhub_worker_unavailable")?;
+        let connection = self
+            .agent
+            .0
+            .configuration
+            .catalog()
+            .await
+            .map_err(|_| "workhub_configuration_unavailable")?
+            .connections
+            .into_iter()
+            .find(|connection| {
+                connection.connection_id == preset.model.connection_id && connection.enabled
+            })
+            .ok_or("workhub_preset_connection_unavailable")?;
+        if maka_providers::definition(&connection.provider).is_err() {
+            return Err("workhub_preset_connection_unavailable".into());
+        }
+        if !connection
+            .enabled_model_ids
+            .contains(&preset.model.model_id)
+        {
+            return Err("workhub_preset_model_unavailable".into());
+        }
+        let selection = crate::ModelSelection {
+            connection_id: preset.model.connection_id.clone(),
+            revision: connection.revision,
+            model_id: preset.model.model_id.clone(),
+        };
+        Ok((preset, selection))
+    }
     pub(super) async fn save_presets(&self, input: Presets) -> std::result::Result<Result, String> {
         let mut ids = std::collections::BTreeSet::new();
         if input.entries.len() > 64
@@ -64,8 +114,7 @@ impl Hub {
                         .collect::<std::collections::BTreeSet<_>>()
                         .len()
                         != p.tools.len()
-                    || p.model.connection_id.is_empty()
-                    || p.model.model_id.is_empty()
+                    || maka_agent_facts::configuration::validation::target(&p.model).is_err()
             })
         {
             return Ok(Result::Invalid);

@@ -36,7 +36,7 @@ pub struct Preset {
     /// Exact installed names; an empty list permits reasoning without tools.
     #[schemars(extend("uniqueItems" = true))]
     pub tools: Vec<String>,
-    pub model: crate::ModelSelection,
+    pub model: maka_agent_facts::configuration::ConnectionTarget,
     pub thinking_level: Option<maka_agent_facts::execution::ThinkingLevel>,
     pub enabled: bool,
 }

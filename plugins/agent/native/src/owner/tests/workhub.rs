@@ -1737,20 +1737,33 @@ async fn workhub_presets_freeze_selected_worker_tools_and_recover_after_restart(
         let ready=resolve(&fixture,selection(&fixture).await,Uuid::new_v4()).await;
         let coordinator=ready["session"]["id"].as_str().unwrap().to_owned();
         let directory=query_import(&fixture,"worker","directories",json!({"kind":"roots"})).await["roots"][0]["selection"].clone();
-        let preset=json!({"id":"reasoner","name":"Reasoner","description":"Reason without tools", "worker":"worker", "tools":[], "model":fixture.selection().await,"thinkingLevel":null,"enabled":true,"isolatedWorkspace":true});
+        let selected=fixture.selection().await;
+        let mut preset=json!({"id":"reasoner","name":"Reasoner","description":"Reason without tools", "worker":"worker", "tools":[],
+            "model":{"connectionId":selected.connection_id,"modelId":selected.model_id},"thinkingLevel":null,"enabled":true,"isolatedWorkspace":true});
         let client=fixture.app.client();
-        let prepared=client.prepare_mutation(binding(&fixture).await,"savePresets".into(),json!({"revision":null,"entries":[preset]}),scope(&fixture.issuer,true),Uuid::new_v4(),Attachments::default().into()).await.unwrap();
+        let prepared=client.prepare_mutation(binding(&fixture).await,"savePresets".into(),json!({"revision":null,"entries":[preset.clone()]}),scope(&fixture.issuer,true),Uuid::new_v4(),Attachments::default().into()).await.unwrap();
         let original=prepared.reference().clone();
         let intent=fixture.store.record_application_intent(original.source.clone(),prepared.consumer().instance().clone(),original.clone(),Value::Null).await.unwrap();
         let reply=client.mutate(prepared,intent).await.unwrap().result().await;
         assert!(matches!(reply.receipt,Receipt::Recorded{outcome:OperationOutcome::Returned{ref value},cleanup:maka_plugin_core::operation::OperationCleanup::Confirmed} if value["kind"] == "saved"));
+        selection::edit(&fixture,|changes| changes.name=Some("Renamed connection after preset save".into())).await;
         fixture.mutation(2,"send",json!({"sessionId":coordinator,"message":"Delegate reasoning", "model":fixture.selection().await}),Uuid::new_v4()).await.unwrap();
         let (mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;
         task_response(&mut socket,json!({"operation":"route_preset","preset":"reasoner","title":"Restricted reasoning","workspace":directory,"note":"Solve the task"})).await;
         let mut task=None;
         for _ in 0..2 {
             let (mut socket,_)=listener.accept().await.unwrap();let input=request(&mut socket).await;
-            if is_coordinator(&input) {task=Some(tool_value(&input));} else {
+            if is_coordinator(&input) {
+                let result=tool_value(&input);
+                if result["status"]["kind"] != "started" {
+                    response(&mut socket).await;
+                    idle(&fixture,EXPORT,&coordinator).await;
+                    fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+                    assert_eq!(result["status"]["kind"],"started","saved preset must remain reusable after a connection display-name change: {result}");
+                }
+                task=Some(result);
+            } else {
+                assert_eq!(input["model"],"fixture-model");
                 assert!(input["tools"].is_null() || input["tools"].as_array().unwrap().is_empty());
             }
             response(&mut socket).await;
@@ -1760,6 +1773,14 @@ async fn workhub_presets_freeze_selected_worker_tools_and_recover_after_restart(
         idle(&fixture,EXPORT,&coordinator).await;idle(&fixture,"worker",worker).await;
         assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["session"]["tools"],json!([]));
         let observed=query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await;
+        let presets=query_import(&fixture,hub::EXPORT,"presets",json!({})).await;
+        preset["enabled"]=json!(false);
+        preset["tools"]=json!(["Read"]);
+        preset["model"]["modelId"]=json!("later-preset-model");
+        let prepared=client.prepare_mutation(binding(&fixture).await,"savePresets".into(),json!({"revision":presets["revision"],"entries":[preset]}),scope(&fixture.issuer,true),Uuid::new_v4(),Attachments::default().into()).await.unwrap();
+        let changed=client.mutate_owned(prepared).await.unwrap().result().await;
+        assert!(matches!(changed.receipt,Receipt::Recorded{outcome:OperationOutcome::Returned{ref value},cleanup:maka_plugin_core::operation::OperationCleanup::Confirmed} if value["kind"] == "saved"));
+        let advanced=control_turn(&fixture,&listener,&coordinator,json!({"operation":"advance","taskId":task["taskId"]})).await;
         let path=std::path::PathBuf::from(observed["session"]["workspace"]["path"].as_str().unwrap());
         assert!(path.starts_with(fixture.root.canonicalize().unwrap().join("subagent-worktrees")));
         std::fs::write(path.join("tracked.txt"),"worker patch\n").unwrap();
@@ -1774,8 +1795,32 @@ async fn workhub_presets_freeze_selected_worker_tools_and_recover_after_restart(
         assert_eq!(query_import(&fixture,hub::EXPORT,"presets",json!({})).await["entries"][0]["id"],"reasoner");
         let restored=query_import(&fixture,hub::EXPORT,"task",json!({"taskId":task["taskId"]})).await;
         assert_eq!(restored["status"]["invocationId"],task["status"]["invocationId"]);
-        assert_eq!(query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await["session"]["tools"],json!([]));
+        let restored_worker=query_import(&fixture,"worker","observe",json!({"sessionId":worker})).await;
+        fixture.send(&coordinator).await.unwrap();
+        let (mut socket,_)=coordinator_request(&listener).await;
+        task_response(&mut socket,json!({"operation":"route_preset","preset":"reasoner","title":"Must not route disabled preset","workspace":directory,"note":"No new assignment"})).await;
+        let (mut socket,refused)=coordinator_request(&listener).await;
+        let refused_result=refused["messages"].as_array().unwrap().iter().rev().find(|message|message["role"] == "tool").unwrap()["content"].clone();
+        response(&mut socket).await;
+        idle(&fixture,EXPORT,&coordinator).await;
+        let listed=query_import(&fixture,hub::EXPORT,"tasks",json!({})).await;
+        let persisted_presets=query_import(&fixture,hub::EXPORT,"presets",json!({})).await;
+        let intents=fixture.store.application_intents(fixture.app.source().unwrap().deployment,id(1),0,128).await.unwrap();
+        let unexpected_dispatch=tokio::time::timeout(Duration::from_millis(30),listener.accept()).await.is_ok();
         fixture.app.shutdown().await.unwrap();fixture.config.shutdown().await.unwrap();
+        for original_task in [&advanced,&restored] {
+            assert_eq!(original_task["taskId"],task["taskId"]);
+            assert_eq!(original_task["operation"],task["operation"]);
+            assert_eq!(original_task["status"]["sessionId"],worker);
+            assert_eq!(original_task["status"]["invocationId"],task["status"]["invocationId"]);
+        }
+        assert_eq!(restored_worker["session"]["tools"],json!([]));
+        assert_eq!(restored_worker["metrics"]["modelId"],"fixture-model");
+        assert_eq!(persisted_presets["entries"][0]["enabled"],false);
+        assert_eq!(refused_result,"workhub_preset_disabled");
+        assert_eq!(listed["entries"].as_array().unwrap().len(),1,"a disabled preset must not publish a new task");
+        assert_eq!(intents.iter().filter(|intent|intent.reference.method == "send").count(),1,"accepted task advance/restart must not dispatch another worker message");
+        assert!(!unexpected_dispatch);
     }).await.unwrap();
 }
 

@@ -486,13 +486,7 @@ impl Hub {
             {
                 return self.task(&id, true, None, cancellation).await;
             }
-            let preset = self
-                .presets()
-                .await?
-                .entries
-                .into_iter()
-                .find(|p| p.id == preset && p.enabled)
-                .ok_or("workhub_preset_unavailable")?;
+            let (preset, model) = self.resolve_preset(&preset).await?;
             Input::Route(Route {
                 dependencies,
                 worker: preset.worker,
@@ -503,7 +497,7 @@ impl Hub {
                     tools: Some(preset.tools),
                 },
                 note,
-                model: Some(preset.model),
+                model: Some(model),
                 thinking_level: preset.thinking_level,
                 executor: None,
             })

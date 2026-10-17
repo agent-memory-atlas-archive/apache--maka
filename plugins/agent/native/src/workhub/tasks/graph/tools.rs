@@ -518,13 +518,7 @@ impl Hub {
                 title,
                 workspace,
             } => {
-                let preset = self
-                    .presets()
-                    .await?
-                    .entries
-                    .into_iter()
-                    .find(|item| item.id == preset && item.enabled)
-                    .ok_or("workhub_preset_unavailable")?;
+                let (preset, model) = self.resolve_preset(&preset).await?;
                 (
                     preset.worker,
                     Target::New {
@@ -533,7 +527,7 @@ impl Hub {
                         isolated_workspace: preset.isolated_workspace,
                         tools: Some(preset.tools),
                     },
-                    Some(preset.model),
+                    Some(model),
                     preset.thinking_level,
                     None,
                 )

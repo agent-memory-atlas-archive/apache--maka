@@ -465,7 +465,10 @@ export function subagentSettings<N extends Node>(
           if (input.name === 'selected' && state.draft && !busy(state, props) && !state.removing) {
             const selected = input.event as SelectedModel;
             state.selection = selected;
-            state.draft.model = selected.choice.selection;
+            state.draft.model = {
+              connectionId: selected.choice.selection.connectionId,
+              modelId: selected.choice.selection.modelId,
+            };
             state.draft.thinkingLevel = selected.thinkingLevel;
           } else if (input.name === 'connections') state.notice = 'subagents-connections';
         } else if (input.kind === 'component' && input.name === 'changed') {
@@ -633,7 +636,7 @@ export function subagentSettings<N extends Node>(
                   worker: 'worker',
                   isolatedWorkspace: false,
                   tools: [],
-                  model: { connectionId: '', modelId: '', revision: 0 },
+                  model: { connectionId: '', modelId: '' },
                   thinkingLevel: null,
                   enabled: true,
                 });
